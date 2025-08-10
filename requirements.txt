@@ -1,0 +1,12 @@
+APScheduler==3.10.4
+asgiref==3.9.1
+Django==5.2.5
+django-apscheduler==0.6.2
+django-filter==24.3
+djangorestframework==3.15.2
+psutil==6.0.0
+pynvml==11.5.3
+pytz==2025.2
+six==1.17.0
+sqlparse==0.5.3
+tzlocal==5.3.1
