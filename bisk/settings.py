@@ -135,3 +135,20 @@ REST_FRAMEWORK = {
 }
 
 RUN_APSCHEDULER = False  # we’ll enable later; cron fallback will still work
+
+# Use the standard Ubuntu locations
+FFPROBE_PATH = "/usr/bin/ffprobe"
+FFMPEG_PATH = "/usr/bin/ffmpeg"
+FFPLAY_PATH = "/usr/bin/ffplay"
+
+# Fail fast if missing (can be skipped with an env flag)
+# This will stop any Django command (runserver, migrate, etc.) if a binary is missing—which is usually what you want on a Linux-only deployment.
+# If you occasionally want to skip the hard check (e.g., in CI), run with:
+# BISK_STRICT_BINARIES=0 python manage.py runserver
+import os
+import warnings
+
+if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
+    for _p in (FFPROBE_PATH, FFMPEG_PATH, FFPLAY_PATH):
+        if not os.path.exists(_p):
+            raise RuntimeError(f"Required binary not found: {_p}")

@@ -1,0 +1,8 @@
+# templates/admin/scheduler/schedulepolicy/change_list.html
+{% extends "admin/change_list.html" %}
+{% block object-tools-items %}
+    {{ block.super }}
+    <li>
+        <a class="addlink" href="{% url 'admin:scheduler_enforce_now' %}">Enforce now</a>
+    </li>
+{% endblock %}

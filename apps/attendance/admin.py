@@ -1,8 +1,11 @@
 # apps/attendance/admin.py
-from django.contrib import admin
+from django.urls import path, reverse
+from django.shortcuts import redirect
+from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.conf import settings
 from .models import Student, PeriodTemplate, PeriodOccurrence, AttendanceRecord
+from .services import roll_periods
 
 
 @admin.register(Student)
@@ -12,9 +15,35 @@ class StudentAdmin(admin.ModelAdmin):
     list_filter = ("is_active",)
 
 
+# @admin.register(PeriodTemplate)
+# class PeriodTemplateAdmin(admin.ModelAdmin):
+#     list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
+
 @admin.register(PeriodTemplate)
 class PeriodTemplateAdmin(admin.ModelAdmin):
     list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
+    actions = ["action_generate_next_7_days"]
+
+    @admin.action(description="Generate Period Occurrences for next 7 days")
+    def action_generate_next_7_days(self, request, queryset):
+        # You can ignore queryset and generate for all enabled templates (simplest),
+        # or filter by selected only. Let's respect selection:
+        # created_total = 0 # It was enabled.
+        # Temporarily disable is_active_on filter by selection; roll_periods() already checks templates.
+        created_total = roll_periods(days=7)
+        messages.success(request, f"Generated {created_total} occurrences (next 7 days).")
+
+    def get_urls(self):
+        urls = super().get_urls()
+        extra = [
+            path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d")
+        ]
+        return extra + urls
+
+    def roll_7d_view(self, request):
+        created = roll_periods(days=7)
+        messages.success(request, f"Generated {created} occurrences (next 7 days).")
+        return redirect("admin:attendance_periodtemplate_changelist")
 
 
 @admin.register(PeriodOccurrence)

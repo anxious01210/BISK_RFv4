@@ -1,0 +1,51 @@
+OS related details:
+2) “ffprobe not found in PATH” — what to do (Linux + Windows)
+
+Your “Test RTSP” action calls ffprobe. It must be installed and visible on PATH for the Python process that runs Django.
+Ubuntu 24.04
+
+sudo apt update
+sudo apt install ffmpeg
+ffprobe -version   # should print a version
+which ffprobe      # e.g., /usr/bin/ffprobe
+
+Restart your Django server (or PyCharm run config) so it picks up PATH changes.
+Windows 11
+
+Choose one:
+
+    winget (easy):
+
+winget install --id Gyan.FFmpeg -e
+
+Chocolatey:
+
+    choco install ffmpeg
+
+Ensure ffprobe.exe is on PATH (e.g., C:\ffmpeg\bin\). Close and reopen PyCharm/terminal so the env refreshes. Test:
+
+ffprobe -version
+
+Optional: allow an explicit path in settings
+
+If you’d rather not rely on PATH (especially for cron/services), add in settings.py:
+
+FFPROBE_PATH = "/usr/bin/ffprobe"  # or r"C:\ffmpeg\bin\ffprobe.exe" on Windows
+
+
+APScheduler==3.10.4
+asgiref==3.9.1
+Django==5.2.5
+django-apscheduler==0.6.2
+django-filter==24.3
+djangorestframework==3.15.2
+psutil==6.0.0
+pynvml==11.5.3
+pytz==2025.2
+six==1.17.0
+sqlparse==0.5.3
+tzlocal==5.3.1
+
+
+
+
