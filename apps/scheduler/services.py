@@ -1,26 +1,57 @@
 # apps/scheduler/services.py
-import os, sys, signal, subprocess, platform
 import os, sys, signal, subprocess
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from django.utils import timezone
 from .models import SchedulePolicy, RunningProcess
+from pathlib import Path
+from django.conf import settings
 
+hb_url = getattr(settings, "RUNNER_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
+hb_key = getattr(settings, "RUNNER_HEARTBEAT_KEY", "dev-key-change-me")
 
 def _in_window(now_t, s, e):
     # same-day or overnight
-    return (s <= e and s <= now_t < e) or (s > e and (now_t >= s or now_t < e))
+    # return (s <= e and s <= now_t < e) or (s > e and (now_t >= s or now_t < e))
+    # Full-day window
+    if s == e:
+        return True
+    # Same-day
+    if s < e:
+        return s <= now_t < e
+    # Overnight (spans midnight)
+    return (now_t >= s) or (now_t < e)
 
 
 def _start(camera, profile):
     py = sys.executable
-    script = "extras/recognize_ffmpeg.py" if profile.script_type == 1 else "extras/recognize_opencv.py"
-    args = [py, script, "--camera", str(camera.id), "--fps", str(profile.fps), "--det_set", str(profile.detection_set)]
+    # absolute path to runner script
+    script_name = "recognize_ffmpeg.py" if profile.script_type == 1 else "recognize_opencv.py"
+    script = str(Path(settings.BASE_DIR) / "extras" / script_name)
+
+    # heartbeat URL for the runner
+    hb_url = getattr(settings, "RUNNER_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
+
+    args = [
+        py, script,
+        "--camera", str(camera.id),
+        "--profile", str(profile.id),
+        "--fps", str(profile.fps),
+        "--det_set", str(profile.detection_set),
+        "--hb", hb_url,
+        "--hb_key", hb_key,
+    ]
     for k, v in (profile.extra_args or {}).items():
         args += [f"--{k}", str(v)]
-    # Linux: run in its own session so we can kill the process group
-    proc = subprocess.Popen(args, preexec_fn=os.setsid,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True)
+
+    # Linux: own session so we can kill the process group
+    proc = subprocess.Popen(
+        args,
+        preexec_fn=os.setsid,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+    )
     return proc.pid
 
 

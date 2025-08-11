@@ -20,6 +20,8 @@ from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework.routers import DefaultRouter
 from apps.attendance.api import AttendanceRecordViewSet  # will exist after step 5
+from apps.scheduler import api as sched_api
+from bisk import views as core_views
 
 router = DefaultRouter()
 router.register(r"attendance/records", AttendanceRecordViewSet, basename="attendance-records")
@@ -27,9 +29,12 @@ router.register(r"attendance/records", AttendanceRecordViewSet, basename="attend
 urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/", include(router.urls)),
+    path("api/runner/heartbeat/", sched_api.heartbeat, name="runner-heartbeat"),
+    path("dashboard/", core_views.dashboard, name="dashboard"),
+    path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),
+    path("dashboard/cameras/", core_views.cameras_dashboard, name="cameras-dashboard"),
 ]
 # bisk/urls.py
-
 
 
 # ✅ Serve media and static files in development

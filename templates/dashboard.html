@@ -1,0 +1,106 @@
+<!-- templates/dashboard.html -->
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>BISK • System Dashboard</title>
+    <style>
+        body {
+            font: 14px/1.5 system-ui, sans-serif;
+            margin: 24px;
+        }
+
+        .row {
+            margin: 12px 0;
+        }
+
+        .bar {
+            height: 14px;
+            background: #eee;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .fill {
+            height: 100%;
+            background: #4b9;
+            width: 0%;
+            transition: width .3s;
+        }
+
+        .label {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+
+        .gpu {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+<h2>System Stats</h2>
+
+<div class="row">
+    <div class="label"><span>CPU</span><span id="cpu_val">—%</span></div>
+    <div class="bar">
+        <div class="fill" id="cpu_bar"></div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="label"><span>Memory</span><span id="mem_val">—%</span></div>
+    <div class="bar">
+        <div class="fill" id="mem_bar"></div>
+    </div>
+</div>
+
+<div class="row">
+    <div class="label"><span>Disk (/)</span><span id="disk_val">—%</span></div>
+    <div class="bar">
+        <div class="fill" id="disk_bar"></div>
+    </div>
+</div>
+
+<div id="gpus"></div>
+
+<script>
+    async function poll() {
+        try {
+            const r = await fetch("/dashboard/system_stats/");
+            const j = await r.json();
+
+            const cpu = Math.round(j.cpu_percent || 0);
+            document.getElementById("cpu_val").textContent = cpu + "%";
+            document.getElementById("cpu_bar").style.width = cpu + "%";
+
+            const mem = Math.round((j.memory?.percent) || 0);
+            document.getElementById("mem_val").textContent = mem + "%";
+            document.getElementById("mem_bar").style.width = mem + "%";
+
+            const disk = Math.round((j.disk_root?.percent) || 0);
+            document.getElementById("disk_val").textContent = disk + "%";
+            document.getElementById("disk_bar").style.width = disk + "%";
+
+            const wrap = document.getElementById("gpus");
+            wrap.innerHTML = "";
+            (j.gpus || []).forEach(g => {
+                const pct = Math.round(g.mem_percent || 0);
+                const div = document.createElement("div");
+                div.className = "row gpu";
+                div.innerHTML = `
+            <div class="label"><span>GPU ${g.index}: ${g.name}</span><span>${pct}%</span></div>
+            <div class="bar"><div class="fill" style="width:${pct}%"></div></div>`;
+                wrap.appendChild(div);
+            });
+        } catch (e) {
+            console.warn(e);
+        }
+    }
+
+    poll();
+    setInterval(poll, 30000); // 30s
+</script>
+</body>
+</html>

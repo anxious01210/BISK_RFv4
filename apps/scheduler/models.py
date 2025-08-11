@@ -62,3 +62,22 @@ class RunningProcess(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]
+
+
+class RunnerHeartbeat(models.Model):
+    camera = models.ForeignKey("cameras.Camera", on_delete=models.CASCADE)
+    profile = models.ForeignKey("scheduler.StreamProfile", on_delete=models.CASCADE)
+    ts = models.DateTimeField(auto_now=True)
+    fps = models.FloatField(default=0)
+    detected = models.PositiveIntegerField(default=0)
+    matched = models.PositiveIntegerField(default=0)
+    latency_ms = models.FloatField(default=0)
+    last_error = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["camera", "profile", "ts"]),
+        ]
+
+    def __str__(self):
+        return f"HB cam={self.camera_id} prof={self.profile_id} @ {self.ts:%Y-%m-%d %H:%M:%S}"
