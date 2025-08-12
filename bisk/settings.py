@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+import warnings
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -103,6 +105,36 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+REST_FRAMEWORK = {
+    "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 50,
+}
+
+RUN_APSCHEDULER = False  # we’ll enable later; cron fallback will still work
+# Heartbeat endpoint used by runner processes
+RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8000/api/runner/heartbeat/"
+
+# Use the standard Ubuntu locations
+FFPROBE_PATH = "/usr/bin/ffprobe"
+FFMPEG_PATH = "/usr/bin/ffmpeg"
+FFPLAY_PATH = "/usr/bin/ffplay"
+
+# Fail fast if missing (can be skipped with an env flag)
+# This will stop any Django command (runserver, migrate, etc.) if a binary is missing—which is usually what you want on a Linux-only deployment.
+# If you occasionally want to skip the hard check (e.g., in CI), run with:
+# BISK_STRICT_BINARIES=0 python manage.py runserver
+
+
+if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
+    for _p in (FFPROBE_PATH, FFMPEG_PATH, FFPLAY_PATH):
+        if not os.path.exists(_p):
+            raise RuntimeError(f"Required binary not found: {_p}")
+
+RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
+# RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set a long random in prod
+RUNNER_HEARTBEAT_KEY = "dev-key-change-me"
+
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -123,38 +155,23 @@ STATIC_URL = 'static/'
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(BASE_DIR) / "media"
 
+# --- Snapshots (for thumbnails written by FFmpeg runners) ---
+SNAPSHOT_DIR = Path(MEDIA_ROOT) / "snapshots"
+SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)  # ensure exists at startup
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-REST_FRAMEWORK = {
-    "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 50,
-}
+# Heartbeat cadence & status thresholds (seconds)
+# The runner heartbeats will tick every HEARTBEAT_INTERVAL_SEC seconds.
+# Snapshots will be taken every HEARTBEAT_SNAPSHOT_EVERY heartbeats.
+# The admin status badges will flip between Online/Stale/Offline based on HEARTBEAT_STALE_SEC and HEARTBEAT_OFFLINE_SEC.
+HEARTBEAT_INTERVAL_SEC = 10
+HEARTBEAT_STALE_SEC    = 45
+HEARTBEAT_OFFLINE_SEC  = 120
 
-RUN_APSCHEDULER = False  # we’ll enable later; cron fallback will still work
-# Heartbeat endpoint used by runner processes
-RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8000/api/runner/heartbeat/"
+# (optional) how often to take a snapshot
+HEARTBEAT_SNAPSHOT_EVERY = 3
 
-# Use the standard Ubuntu locations
-FFPROBE_PATH = "/usr/bin/ffprobe"
-FFMPEG_PATH = "/usr/bin/ffmpeg"
-FFPLAY_PATH = "/usr/bin/ffplay"
-
-# Fail fast if missing (can be skipped with an env flag)
-# This will stop any Django command (runserver, migrate, etc.) if a binary is missing—which is usually what you want on a Linux-only deployment.
-# If you occasionally want to skip the hard check (e.g., in CI), run with:
-# BISK_STRICT_BINARIES=0 python manage.py runserver
-import os
-import warnings
-
-if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
-    for _p in (FFPROBE_PATH, FFMPEG_PATH, FFPLAY_PATH):
-        if not os.path.exists(_p):
-            raise RuntimeError(f"Required binary not found: {_p}")
-
-
-RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
-RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set a long random in prod

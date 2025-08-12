@@ -35,4 +35,15 @@ def heartbeat(request):
     RunningProcess.objects.filter(camera_id=camera_id, profile_id=profile_id).update(
         last_heartbeat=timezone.now(), status="running"
     )
+
+    # inside heartbeat() right before returning JsonResponse
+    rp = (RunningProcess.objects
+          .filter(camera_id=camera_id, profile_id=profile_id)
+          .order_by("-started_at", "-id")
+          .first())
+    if rp:
+        rp.last_heartbeat = timezone.now()
+        rp.status = "running"
+        rp.save(update_fields=["last_heartbeat", "status"])
+
     return JsonResponse({"ok": True, "ts": timezone.now().isoformat(timespec="seconds")})

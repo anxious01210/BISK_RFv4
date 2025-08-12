@@ -62,6 +62,9 @@ class RunningProcess(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]
+        constraints = [
+            models.UniqueConstraint(fields=["camera", "profile", "pid"], name="uniq_cam_prof_pid")
+        ]
 
 
 class RunnerHeartbeat(models.Model):

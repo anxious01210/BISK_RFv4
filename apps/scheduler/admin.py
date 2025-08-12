@@ -21,6 +21,14 @@ import datetime as _dt
 from django.urls import reverse
 from django.utils.html import format_html
 from .services import _stop, enforce_schedules  # Linux-only SIGTERM to process group
+from django.conf import settings
+
+# Status thresholds (seconds)
+ONLINE = getattr(settings, "HEARTBEAT_ONLINE_SEC", max(15, int(getattr(settings, "HEARTBEAT_INTERVAL_SEC", 10) * 1.5)))
+STALE = getattr(settings, "HEARTBEAT_STALE_SEC", 45)
+OFFLINE = getattr(settings, "HEARTBEAT_OFFLINE_SEC", 120)
+
+admin.site.empty_value_display = "—"
 
 
 # ----------------------------
@@ -216,12 +224,6 @@ class SchedulePolicyAdmin(admin.ModelAdmin):
         return redirect("admin:scheduler_schedulepolicy_changelist")
 
 
-# @admin.register(RunningProcess)
-# class RunningProcessAdmin(admin.ModelAdmin):
-#     list_display = ("camera", "profile", "pid", "status", "started_at", "last_heartbeat")
-#     list_filter = ("status", "profile__script_type")
-
-
 class RunningProcessForm(forms.ModelForm):
     class Meta:
         model = RunningProcess
@@ -277,8 +279,9 @@ class RunningProcessAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
         extra_context["title"] = "Running processes"
-        extra_context["subtitle"] = (
-            "System-managed. Use actions to stop/restart. The enforcer reconciles desired vs. running every minute."
+        extra_context["subtitle"] = mark_safe(
+            f"Live runner processes. Status derives from last heartbeat age: "
+            f"Offline &gt; {OFFLINE}s, Stale &gt; {STALE}s, Online ≤ {ONLINE}s."
         )
         return super().changelist_view(request, extra_context=extra_context)
 
@@ -308,12 +311,12 @@ class RunningProcessAdmin(admin.ModelAdmin):
         label = obj.status or "—"
         if obj.last_heartbeat:
             secs = (timezone.now() - obj.last_heartbeat).total_seconds()
-            if secs <= 15:
-                return format_html("<span style='color:#2a7;font-weight:600;'>Online</span>")
-            elif secs <= 45:
-                return format_html("<span style='color:#d88;font-weight:600;'>Stale</span>")
-            else:
+            if secs > OFFLINE:
                 return format_html("<span style='color:#b33;font-weight:600;'>Offline</span>")
+            if secs > STALE:
+                return format_html("<span style='color:#d88;font-weight:600;'>Stale</span>")
+            if secs <= ONLINE:
+                return format_html("<span style='color:#2a7;font-weight:600;'>Online</span>")
         return label
 
     status_col.short_description = "Status"
@@ -365,13 +368,6 @@ class RunningProcessAdmin(admin.ModelAdmin):
         )
 
 
-# @admin.register(RunnerHeartbeat)
-# class RunnerHeartbeatAdmin(admin.ModelAdmin):
-#     list_display = ("camera", "profile", "ts", "fps", "detected", "matched", "latency_ms", "last_error")
-#     list_filter = ("profile", "camera")
-#     search_fields = ("camera__name", "profile__name", "last_error")
-#     ordering = ("-ts",)
-
 # ============================
 # RunnerHeartbeat (admin)
 # ============================
@@ -415,7 +411,7 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
         extra_context = extra_context or {}
         extra_context["title"] = "Runner heartbeats"
         extra_context["subtitle"] = mark_safe(
-            "Latest telemetry per runner. ‘Stale’ &gt; 45s without a heartbeat; ‘Online’ ≤ 15s."
+            f"Latest telemetry per runner. ‘Stale’ &gt; {STALE}s; ‘Online’ ≤ {ONLINE}s."
         )
         return super().changelist_view(request, extra_context=extra_context)
 
@@ -427,11 +423,11 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
 
     def status_col(self, obj):
         secs = (timezone.now() - obj.ts).total_seconds()
-        if secs <= 15:
-            return mark_safe("<span style='color:#2a7;font-weight:600;'>Online</span>")
-        if secs <= 45:
-            return mark_safe(f"<span style='color:#d88;font-weight:600;'>Stale</span>")
-        return mark_safe(f"<span style='color:#b33;font-weight:600;'>Offline</span>")
+        if secs > OFFLINE:
+            return mark_safe("<span style='color:#b33;font-weight:600;'>Offline</span>")
+        if secs > STALE:
+            return mark_safe("<span style='color:#d88;font-weight:600;'>Stale</span>")
+        return mark_safe("<span style='color:#2a7;font-weight:600;'>Online</span>")
 
     status_col.short_description = "Status"
 

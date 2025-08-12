@@ -6,9 +6,19 @@ from django.utils import timezone
 from .models import SchedulePolicy, RunningProcess
 from pathlib import Path
 from django.conf import settings
+import psutil
 
 hb_url = getattr(settings, "RUNNER_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
 hb_key = getattr(settings, "RUNNER_HEARTBEAT_KEY", "dev-key-change-me")
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        p = psutil.Process(pid)
+        return p.is_running() and p.status() != psutil.STATUS_ZOMBIE
+    except psutil.Error:
+        return False
+
 
 def _in_window(now_t, s, e):
     # same-day or overnight
@@ -25,12 +35,11 @@ def _in_window(now_t, s, e):
 
 def _start(camera, profile):
     py = sys.executable
-    # absolute path to runner script
     script_name = "recognize_ffmpeg.py" if profile.script_type == 1 else "recognize_opencv.py"
     script = str(Path(settings.BASE_DIR) / "extras" / script_name)
 
-    # heartbeat URL for the runner
     hb_url = getattr(settings, "RUNNER_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
+    hb_key = getattr(settings, "RUNNER_HEARTBEAT_KEY", "dev-key-change-me")
 
     args = [
         py, script,
@@ -40,17 +49,20 @@ def _start(camera, profile):
         "--det_set", str(profile.detection_set),
         "--hb", hb_url,
         "--hb_key", hb_key,
+        "--rtsp", camera.rtsp_url,
+        "--ffmpeg", settings.FFMPEG_PATH,
+        "--ffprobe", settings.FFPROBE_PATH,
+        "--snapshots", str(settings.SNAPSHOT_DIR),
+        # NEW: drive runner timing from settings
+        "--hb_interval", str(getattr(settings, "HEARTBEAT_INTERVAL_SEC", 10)),
+        "--snapshot_every", str(getattr(settings, "HEARTBEAT_SNAPSHOT_EVERY", 3)),
     ]
     for k, v in (profile.extra_args or {}).items():
         args += [f"--{k}", str(v)]
 
-    # Linux: own session so we can kill the process group
     proc = subprocess.Popen(
         args,
-        preexec_fn=os.setsid,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        close_fds=True,
+        preexec_fn=os.setsid, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, close_fds=True
     )
     return proc.pid
 
@@ -93,7 +105,32 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                 for cam in p.cameras.all():
                     desired.add((cam.id, w.profile_id))
 
-    running = {(r.camera_id, r.profile_id): r for r in RunningProcess.objects.select_related("camera", "profile")}
+    # running = {(r.camera_id, r.profile_id): r for r in RunningProcess.objects.select_related("camera", "profile")}
+    running = {}
+    for r in RunningProcess.objects.select_related("camera", "profile"):
+        if _pid_alive(r.pid):
+            running[(r.camera_id, r.profile_id)] = r
+        else:
+            if r.status != "dead":
+                r.status = "dead"
+                r.save(update_fields=["status"])
+
+    # --- ADD THIS BLOCK: treat 'stale' (no heartbeat) as not-running ---
+    def _stale_secs(r):
+        if not r.last_heartbeat:
+            return 10 ** 9
+        return (timezone.now() - r.last_heartbeat).total_seconds()
+
+    for pair, r in list(running.items()):
+        if _stale_secs(r) > 60:  # tweak threshold as you like
+            try:
+                _stop(r.pid)  # SIGTERM process group
+            except Exception:
+                pass
+            r.status = "stopping"
+            r.save(update_fields=["status"])
+            running.pop(pair, None)  # remove so it will be restarted if desired
+
     started, stopped = [], []
 
     # Start missing
@@ -104,7 +141,22 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
         camera = pol.cameras.get(id=cam_id)
         profile = next(ww.profile for ww in pol.windows.all() if ww.profile_id == prof_id)
         pid = _start(camera, profile)
-        RunningProcess.objects.create(camera=camera, profile=profile, pid=pid)
+
+        # create one row for this spawn; avoid duplicates if the same pid was recorded
+        row, created = RunningProcess.objects.get_or_create(
+            camera=camera, profile=profile, pid=pid,
+            defaults={"status": "running"}  # optional; status will be updated by heartbeat
+        )
+        # ensure only the newest row for this (camera, profile) remains active
+        RunningProcess.objects.filter(camera=camera, profile=profile) \
+            .exclude(id=row.id).update(status="dead")
+
+        # if you keep a 'started' list for reporting, record it
+        # started.append((camera.id, profile.id))
+
+        row = RunningProcess.objects.create(camera=camera, profile=profile, pid=pid)
+        # mark any older rows for same pair as dead so they don’t get “revived” by heartbeats
+        RunningProcess.objects.filter(camera=camera, profile=profile).exclude(id=row.id).update(status="dead")
         started.append((camera.name, profile.name, pid))
 
     # Stop extras
