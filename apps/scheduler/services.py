@@ -1,12 +1,15 @@
 # apps/scheduler/services.py
-import os, sys, signal, subprocess
+import os, sys, signal, subprocess, time
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from django.utils import timezone
-from .models import SchedulePolicy, RunningProcess
+from .models import SchedulePolicy, RunningProcess, StreamProfile
 from pathlib import Path
 from django.conf import settings
 import psutil
+from django.db import transaction, IntegrityError
+from django.core.cache import cache
+from apps.cameras.models import Camera
 
 hb_url = getattr(settings, "RUNNER_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
 hb_key = getattr(settings, "RUNNER_HEARTBEAT_KEY", "dev-key-change-me")
@@ -20,6 +23,7 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+# TODO Test
 def _in_window(now_t, s, e):
     # same-day or overnight
     # return (s <= e and s <= now_t < e) or (s > e and (now_t >= s or now_t < e))
@@ -69,7 +73,8 @@ def _start(camera, profile):
 
 def _stop(pid: int):
     try:
-        os.killpg(pid, signal.SIGTERM)
+        pgid = os.getpgid(pid)
+        os.killpg(pgid, signal.SIGTERM)
     except ProcessLookupError:
         pass
 
@@ -87,84 +92,115 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
     Idempotent enforcer. If `policies` passed, only those policies are considered;
     otherwise all enabled policies.
     """
-    now_local = timezone.localtime()
-    desired = set()
+    lock_key = "bisk:enforce_schedules:lock"
+    token = f"{os.getpid()}-{time.time()}"
 
-    qs = (policies if policies is not None
-          else SchedulePolicy.objects.filter(is_enabled=True).prefetch_related(
-        "cameras", "windows", "exceptions", "windows__profile"
-    ))
+    # acquire (succeeds only if key doesn't exist)
+    if not cache.add(lock_key, token, timeout=30):
+        return EnforceResult(started=[], stopped=[], desired_count=0, running_count=0)
+    try:
+        now_local = timezone.localtime()
+        desired = set()
 
-    # Build desired state
-    for p in qs:
-        exc = {x.date: x for x in p.exceptions.all()}.get(now_local.date())
-        if exc and exc.mode == "off":
-            continue
-        for w in p.windows.filter(day_of_week=now_local.weekday()):
-            if _in_window(now_local.timetz().replace(tzinfo=None), w.start_time, w.end_time):
-                for cam in p.cameras.all():
-                    desired.add((cam.id, w.profile_id))
+        qs = (policies if policies is not None
+              else SchedulePolicy.objects.filter(is_enabled=True).prefetch_related(
+            "cameras", "windows", "exceptions", "windows__profile"
+        ))
 
-    # running = {(r.camera_id, r.profile_id): r for r in RunningProcess.objects.select_related("camera", "profile")}
-    running = {}
-    for r in RunningProcess.objects.select_related("camera", "profile"):
-        if _pid_alive(r.pid):
-            running[(r.camera_id, r.profile_id)] = r
-        else:
-            if r.status != "dead":
-                r.status = "dead"
-                r.save(update_fields=["status"])
+        # Build desired state
+        for p in qs:
+            exc = {x.date: x for x in p.exceptions.all()}.get(now_local.date())
+            if exc and exc.mode == "off":
+                continue
+            for w in p.windows.filter(day_of_week=now_local.weekday()):
+                if _in_window(now_local.timetz().replace(tzinfo=None), w.start_time, w.end_time):
+                    for cam in p.cameras.all():
+                        desired.add((cam.id, w.profile_id))
 
-    # --- ADD THIS BLOCK: treat 'stale' (no heartbeat) as not-running ---
-    def _stale_secs(r):
-        if not r.last_heartbeat:
-            return 10 ** 9
-        return (timezone.now() - r.last_heartbeat).total_seconds()
-
-    for pair, r in list(running.items()):
-        if _stale_secs(r) > 60:  # tweak threshold as you like
+        # running = {(r.camera_id, r.profile_id): r for r in RunningProcess.objects.select_related("camera", "profile")}
+        running = {}
+        for r in RunningProcess.objects.select_related("camera", "profile"):
             try:
-                _stop(r.pid)  # SIGTERM process group
-            except Exception:
-                pass
-            r.status = "stopping"
-            r.save(update_fields=["status"])
-            running.pop(pair, None)  # remove so it will be restarted if desired
+                p = psutil.Process(r.pid)
+                if p.is_running() and p.status() != psutil.STATUS_ZOMBIE:
+                    running[(r.camera_id, r.profile_id)] = r
+                else:
+                    if r.status != "dead":
+                        r.status = "dead";
+                        r.save(update_fields=["status"])
+            except psutil.Error:
+                if r.status != "dead":
+                    r.status = "dead";
+                    r.save(update_fields=["status"])
 
-    started, stopped = [], []
+        # running = {}
+        # for r in RunningProcess.objects.select_related("camera", "profile"):
+        #     if _pid_alive(r.pid):
+        #         running[(r.camera_id, r.profile_id)] = r
+        #     else:
+        #         if r.status != "dead":
+        #             r.status = "dead"
+        #             r.save(update_fields=["status"])
 
-    # Start missing
-    for cam_id, prof_id in desired - set(running.keys()):
-        pol = (qs if policies is not None else SchedulePolicy.objects).filter(
-            cameras__id=cam_id, windows__profile_id=prof_id
-        ).first()
-        camera = pol.cameras.get(id=cam_id)
-        profile = next(ww.profile for ww in pol.windows.all() if ww.profile_id == prof_id)
-        pid = _start(camera, profile)
+        # --- ADD THIS BLOCK: treat 'stale' (no heartbeat) as not-running ---
+        def _stale_secs(r):
+            if not r.last_heartbeat:
+                return 10 ** 9
+            return (timezone.now() - r.last_heartbeat).total_seconds()
 
-        # create one row for this spawn; avoid duplicates if the same pid was recorded
-        row, created = RunningProcess.objects.get_or_create(
-            camera=camera, profile=profile, pid=pid,
-            defaults={"status": "running"}  # optional; status will be updated by heartbeat
-        )
-        # ensure only the newest row for this (camera, profile) remains active
-        RunningProcess.objects.filter(camera=camera, profile=profile) \
-            .exclude(id=row.id).update(status="dead")
+        for pair, r in list(running.items()):
+            if _stale_secs(r) > 60:  # tweak threshold as you like
+                try:
+                    _stop(r.pid)  # SIGTERM process group
+                except Exception:
+                    pass
+                r.status = "stopping"
+                r.save(update_fields=["status"])
+                running.pop(pair, None)  # remove so it will be restarted if desired
 
-        # if you keep a 'started' list for reporting, record it
-        # started.append((camera.id, profile.id))
+        started, stopped = [], []
 
-        row = RunningProcess.objects.create(camera=camera, profile=profile, pid=pid)
-        # mark any older rows for same pair as dead so they don’t get “revived” by heartbeats
-        RunningProcess.objects.filter(camera=camera, profile=profile).exclude(id=row.id).update(status="dead")
-        started.append((camera.name, profile.name, pid))
+        # start missing
+        for cam_id, prof_id in desired - set(running.keys()):
+            # Get the objects directly by id (don’t touch the 'policies' parameter here)
+            camera = Camera.objects.filter(id=cam_id).first()
+            profile = StreamProfile.objects.filter(id=prof_id).first()
+            if not camera or not profile:
+                # One side was deleted since 'desired' was built — skip safely
+                continue
 
-    # Stop extras
-    for pair, r in running.items():
-        if pair not in desired:
-            _stop(r.pid)
-            r.status = "stopping"
-            r.save(update_fields=["status"])
-            stopped.append((r.camera.name, r.profile.name, r.pid))
+            pid = _start(camera, profile)
 
-    return EnforceResult(started=started, stopped=stopped, desired_count=len(desired), running_count=len(running))
+            # idempotent row creation; safe under concurrent enforcers
+            with transaction.atomic():
+                try:
+                    row, created = RunningProcess.objects.get_or_create(
+                        camera=camera,
+                        profile=profile,
+                        pid=pid,
+                        defaults={"status": "running"},
+                    )
+                except IntegrityError:
+                    # another enforcer created the row milliseconds before us
+                    row = RunningProcess.objects.get(camera=camera, profile=profile, pid=pid)
+                    created = False
+
+                # ensure only this row is considered active for this pair
+                RunningProcess.objects.filter(camera=camera, profile=profile).exclude(id=row.id).update(status="dead")
+
+            started.append((camera.name, profile.name, pid))
+
+        # Stop extras
+        for pair, r in running.items():
+            if pair not in desired:
+                _stop(r.pid)
+                r.status = "stopping"
+                r.save(update_fields=["status"])
+                stopped.append((r.camera.name, r.profile.name, r.pid))
+
+        return EnforceResult(started=started, stopped=stopped, desired_count=len(desired), running_count=len(running))
+
+    finally:
+        # release only if we're still the owner
+        if cache.get(lock_key) == token:
+            cache.delete(lock_key)

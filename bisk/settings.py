@@ -132,8 +132,8 @@ if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
             raise RuntimeError(f"Required binary not found: {_p}")
 
 RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
-# RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set a long random in prod
-RUNNER_HEARTBEAT_KEY = "dev-key-change-me"
+RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set a long random in prod
+# RUNNER_HEARTBEAT_KEY = "dev-key-change-me"
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
