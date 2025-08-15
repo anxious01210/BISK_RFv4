@@ -1,0 +1,76 @@
+{% extends "admin/change_list.html" %}
+
+{% block content %}
+    <style>
+        /* Container */
+        .admin-rp-banner {
+            border-radius: 10px;
+            padding: 12px 14px;
+            border: 1px solid;
+            margin: 8px 0 14px;
+        }
+
+        /* Light theme (Django admin sets this) */
+        html[data-theme="light"] .admin-rp-banner,
+        body.theme-light .admin-rp-banner {
+            background: #f7fbff;
+            color: #0b2239;
+            border-color: #c8d4e8;
+        }
+
+        html[data-theme="light"] .admin-rp-banner code,
+        body.theme-light .admin-rp-banner code {
+            background: rgba(11, 34, 57, .08);
+        }
+
+        /* Dark theme */
+        html[data-theme="dark"] .admin-rp-banner,
+        body.theme-dark .admin-rp-banner {
+            background: #0b2239;
+            color: #cfe3ff;
+            border-color: #244a73;
+        }
+
+        html[data-theme="dark"] .admin-rp-banner code,
+        body.theme-dark .admin-rp-banner code {
+            background: rgba(255, 255, 255, .12);
+        }
+
+        /* Typography */
+        .admin-rp-banner .rp-title {
+            font-weight: 700;
+            margin: 0 0 6px;
+        }
+
+        .admin-rp-banner .rp-subtitle {
+            font-weight: 600;
+            margin: 6px 0 4px;
+        }
+
+        .admin-rp-banner .rp-bullets {
+            margin: 0 0 8px 1.25rem;
+        }
+
+        .admin-rp-banner .rp-text {
+            margin: 0 0 4px;
+        }
+
+        .admin-rp-banner .rp-tip {
+            opacity: .9;
+            margin-top: 6px;
+        }
+
+        /* Mono chips */
+        .admin-rp-banner code {
+            padding: 0 4px;
+            border-radius: 4px;
+        }
+    </style>
+
+
+    {% if rp_help %}
+        <div class="admin-rp-banner">{{ rp_help|safe }}</div>
+    {% endif %}
+
+    {{ block.super }}
+{% endblock %}

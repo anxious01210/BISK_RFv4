@@ -1,0 +1,45 @@
+5) Restart the bad runner once
+After saving the file:
+	# find the Dept_01 runner PID
+	pgrep -af "recognize_ffmpeg\.py.*--camera 1"
+
+	# get its PGID (3rd col)
+	ps -o pid,pgid,cmd -p <PID>
+
+	# kill the whole process group so the scheduler can restart clean
+	kill -TERM -<PGID>
+	sleep 2
+	kill -KILL -<PGID>  # only if still present
+
+Then run the enforcer one time:
+	python manage.py shell -c "from apps.scheduler.services import enforce_schedules; print(enforce_schedules())"
+
+Verify:
+	ps -eo pid,ppid,pgid,stat,cmd | egrep 'recognize_ffmpeg\.py|ffmpeg' | grep -v egrep
+	# expect to see an ffmpeg writing .../media/snapshots/1.jpg (not Z)
+
+	ls -l media/snapshots/1.jpg media/snapshots/2.jpg
+	# mtime for 1.jpg should now update every few seconds
+
+
+-------------------------------------------------------------------------------------------
+# 1) Find the runner PID for camera 1 (you already know it's 266067, but for reference)
+pgrep -af 'recognize_ffmpeg\.py.*--camera 1'
+
+# 2) Kill the whole process group (runner + old ffmpeg)
+#    Use the PGID (3rd column from `ps`); in your output it's 266067
+kill -TERM -266067
+sleep 2
+# if still present:
+kill -KILL -266067
+
+# 3) Let the scheduler start a fresh runner with your new code
+python manage.py shell -c "from apps.scheduler.services import enforce_schedules; print(enforce_schedules())"
+
+# 4) Verify processes (you should see a *live* ffmpeg for cam 1, not <defunct>)
+ps -eo pid,ppid,pgid,stat,cmd | egrep 'recognize_ffmpeg\.py|ffmpeg' | grep -v egrep
+
+# 5) Check snapshots
+ls -l media/snapshots/{1,2}.jpg
+-------------------------------------------------------------------------------------------
+

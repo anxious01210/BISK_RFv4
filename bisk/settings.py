@@ -173,5 +173,8 @@ HEARTBEAT_STALE_SEC    = 45
 HEARTBEAT_OFFLINE_SEC  = 120
 
 # (optional) how often to take a snapshot
-HEARTBEAT_SNAPSHOT_EVERY = 3
+HEARTBEAT_SNAPSHOT_EVERY = 10
 
+# Auto-delete RunningProcess rows that have been Offline for longer than this many minutes (preferred) and fallback hours
+RUNPROC_PRUNE_OFFLINE_MINUTES = 60
+RUNPROC_PRUNE_OFFLINE_HOURS = 6

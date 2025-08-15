@@ -18,6 +18,56 @@ import time
 import urllib.request
 from pathlib import Path
 import re
+import os
+
+
+def ffmpeg_cmd(ffmpeg_bin, rtsp_url, out_jpg, args):
+    """
+    Build a single-process FFmpeg command that overwrites one JPG
+    every N seconds using -update 1. Uses transport + hwaccel knobs.
+    """
+    cmd = [
+        ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning",
+    ]
+
+    # RTSP transport (auto|tcp|udp)
+    if getattr(args, "rtsp_transport", None) and args.rtsp_transport != "auto":
+        cmd += ["-rtsp_transport", args.rtsp_transport]
+
+    # hardware decode (nvdec => -hwaccel cuda). No index switch required for decode.
+    if getattr(args, "hwaccel", None) == "nvdec":
+        cmd += ["-hwaccel", "cuda"]
+
+    # input
+    cmd += ["-i", rtsp_url]
+
+    # output: overwrite same file every snapshot_every seconds
+    snap_every = max(1, int(getattr(args, "snapshot_every", 3)))
+    cmd += [
+        "-vf", f"fps=1/{snap_every}",
+        "-q:v", "2",
+        "-f", "image2",
+        "-update", "1",
+        "-y", out_jpg,
+    ]
+    return cmd
+
+
+def spawn_ffmpeg(args, rtsp_url, out_jpg):
+    """
+    Start FFmpeg in the SAME process group as the runner (important!).
+    Do NOT use preexec_fn=os.setsid here, so killpg from the scheduler
+    will terminate both runner and ffmpeg together.
+    """
+    cmd = ffmpeg_cmd(args.ffmpeg, rtsp_url, out_jpg, args)
+    return subprocess.Popen(
+        cmd,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,   # <-- no pipes; we are not reading logs
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        # NOTE: no preexec_fn=os.setsid here on purpose
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -145,10 +195,12 @@ def main():
     p.add_argument("--snapshots", required=True, help="Directory to write <camera_id>.jpg")
 
     # timing knobs
-    p.add_argument("--hb_interval", type=float, default=10.0,
-                   help="Seconds between heartbeats (default 10)")
-    p.add_argument("--snapshot_every", type=int, default=3,
-                   help="Take a snapshot every N heartbeats (default 3)")
+    p.add_argument("--hb_interval", type=int, default=10, help="Seconds between heartbeats (default 10)")
+    p.add_argument("--snapshot_every", type=int, default=3, help="Take a snapshot every N heartbeats (default 3)")
+    p.add_argument("--rtsp_transport", choices=["auto", "tcp", "udp"], default="auto")
+    p.add_argument("--hwaccel", choices=["none", "nvdec"], default="none")
+    p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    p.add_argument("--gpu_index", type=int, default=0)
 
     args, _ = p.parse_known_args()
 
@@ -157,6 +209,13 @@ def main():
     snap_dir = Path(args.snapshots)
     snap_dir.mkdir(parents=True, exist_ok=True)
     snap_path = snap_dir / f"{cam_id}.jpg"
+
+    # Start a single ffmpeg process that overwrites <camera_id>.jpg
+    ff_proc = spawn_ffmpeg(args, args.rtsp, str(snap_path))
+
+    # respawn state
+    backoff = 1
+    last_error_msg = ""
 
     # graceful stop
     running = True
@@ -175,17 +234,24 @@ def main():
     next_tick = time.monotonic()
 
     while running:
+        # Reap / respawn FFmpeg if it died
+        rc = ff_proc.poll()
+        if rc is not None:
+            try:
+                ff_proc.wait(timeout=0)  # reap zombie if any
+            except Exception:
+                pass
+            last_error_msg = f"ffmpeg exited rc={rc}"
+            time.sleep(backoff)  # simple backoff
+            backoff = min(10, backoff * 2)  # cap at 10s
+            ff_proc = spawn_ffmpeg(args, args.rtsp, str(snap_path))
+        else:
+            backoff = 1
+
         tick += 1
-        last_error = ""
 
         # Lightweight: probe fps quickly
         fps_val = probe_fps(args.ffprobe, args.rtsp) or 0.0
-
-        # Heavier: snapshot every N ticks
-        if tick % every_snap == 0:
-            ok, err = save_snapshot(args.ffmpeg, args.rtsp, snap_path)
-            if not ok and err:
-                last_error = err
 
         # Heartbeat payload
         payload = {
@@ -195,7 +261,8 @@ def main():
             "detected": 0,
             "matched": 0,
             "latency_ms": 0.0,
-            "last_error": (last_error or "")[:200],
+            "pid": os.getpid(),
+            "last_error": (last_error_msg or "")[:200],
         }
 
         try:
@@ -213,211 +280,22 @@ def main():
             # overran the interval; re-anchor
             next_tick = time.monotonic()
 
+    try:
+        if ff_proc and ff_proc.poll() is None:
+            ff_proc.terminate()
+            try:
+                ff_proc.wait(timeout=3)
+            except Exception:
+                try:
+                    ff_proc.kill()
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
     # clean exit
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-# #!/usr/bin/env python3
-# # Make them executable (optional):
-# # chmod +x extras/recognize_ffmpeg.py extras/recognize_opencv.py
-# # Not needed for our enforcer, because we invoke them like:
-# # python /abs/path/extras/recognize_ffmpeg.py …
-# # You only need chmod +x if you plan to run them directly as ./recognize_ffmpeg.py using the shebang.
-# import argparse, os, signal, sys, time, json, urllib.request, subprocess, shlex, re
-# from pathlib import Path
-#
-#
-# def post(url, payload, key, timeout=3):
-#     data = json.dumps(payload).encode()
-#     req = urllib.request.Request(url, data=data,
-#                                  headers={"Content-Type": "application/json", "X-BISK-KEY": key})
-#     urllib.request.urlopen(req, timeout=timeout).read()
-#
-#
-# # --- helper: probe fps with ffprobe ---
-# def probe_fps(ffprobe, rtsp):
-#     cmd = [
-#         ffprobe, "-v", "error",
-#         "-select_streams", "v:0",
-#         "-show_entries", "stream=r_frame_rate",
-#         "-of", "default=nw=1:nk=1",
-#         rtsp
-#     ]
-#     try:
-#         out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=8).decode().strip()
-#         # out like "4/1" or "25/1" or "30000/1001"
-#         m = re.match(r"(\d+)\s*/\s*(\d+)", out)
-#         if m:
-#             num, den = int(m.group(1)), int(m.group(2))
-#             if den != 0:
-#                 return num / den
-#         # sometimes ffprobe prints a plain number
-#         try:
-#             return float(out)
-#         except:
-#             return None
-#     except Exception:
-#         return None
-#
-#
-# # --- replace your measure_fps with this version ---
-# def measure_fps(ffmpeg, ffprobe, rtsp, seconds=5):
-#     def run(transport):
-#         cmd = [
-#             ffmpeg, "-hide_banner", "-loglevel", "info", "-stats",
-#             "-rtsp_transport", transport,
-#             "-i", rtsp, "-an",
-#             "-t", str(seconds),
-#             "-f", "null", "-"  # some builds lack null; we'll fall back if this fails
-#         ]
-#         frames, fps, lines = 0, 0.0, []
-#         try:
-#             proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, bufsize=1)
-#             for line in proc.stderr:
-#                 line = line.strip()
-#                 if line:
-#                     lines.append(line);
-#                     lines = lines[-8:]
-#                 if "frame=" in line:
-#                     parts = line.replace("=", " = ").split()
-#                     for i, tok in enumerate(parts):
-#                         if tok == "frame" and i + 2 < len(parts) and parts[i + 1] == "=":
-#                             try:
-#                                 frames = int(parts[i + 2]);
-#                             except:
-#                                 pass
-#                         if tok == "fps" and i + 2 < len(parts) and parts[i + 1] == "=":
-#                             try:
-#                                 fps = float(parts[i + 2]);
-#                             except:
-#                                 pass
-#             rc = proc.wait(timeout=seconds + 5)
-#             return rc, (fps if fps > 0 else (frames / seconds if frames > 0 else 0.0)), frames, lines[-4:]
-#         except Exception as e:
-#             return 8, 0.0, 0, [str(e)]
-#
-#     rc, fps, frames, tail = run("tcp")
-#     if frames == 0:
-#         rc2, fps2, frames2, tail2 = run("udp")
-#         if frames2 > 0:
-#             return fps2, frames2, None
-#         # both decode paths failed → try ffprobe
-#         pfps = probe_fps(ffprobe, rtsp)
-#         if pfps:
-#             return pfps, 0, None  # we accept probed rate; not a decode error
-#         return 0.0, 0, f"ffmpeg rc={rc2}; {' | '.join(tail2)}"
-#     return fps, frames, None
-#
-#
-# # --- keep your snapshot writer but ensure -update 1 is present ---
-# def save_snapshot(ffmpeg, rtsp, out_path):
-#     def run(transport):
-#         cmd = [
-#             ffmpeg, "-hide_banner", "-loglevel", "error",
-#             "-rtsp_transport", transport,
-#             "-i", rtsp,
-#             "-frames:v", "1", "-q:v", "3",
-#             "-update", "1",  # <-- important
-#             "-y", str(out_path)
-#         ]
-#         return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=12)
-#
-#     try:
-#         r = run("tcp")
-#         if r.returncode != 0:
-#             r2 = run("udp")
-#             if r2.returncode != 0:
-#                 return False, (r2.stderr.decode(errors="ignore")[-200:] or "snapshot failed")
-#         return True, None
-#     except subprocess.TimeoutExpired:
-#         return False, "snapshot timeout"
-#     except Exception as e:
-#         return False, str(e)
-#
-#
-# def main():
-#     p = argparse.ArgumentParser(description="FFmpeg runner (decode-only heartbeat + snapshot)")
-#     p.add_argument("--camera", required=True)
-#     p.add_argument("--profile", required=True)
-#     p.add_argument("--fps", type=float, default=1.0)
-#     p.add_argument("--det_set", default="auto")
-#     p.add_argument("--hb", required=True)
-#     p.add_argument("--hb_key", required=True)
-#     p.add_argument("--rtsp", required=True)
-#     p.add_argument("--ffmpeg", default="/usr/bin/ffmpeg")
-#     p.add_argument("--ffprobe", default="/usr/bin/ffprobe")
-#     p.add_argument("--snapshots", required=True, help="Directory for snapshots")
-#     p.add_argument("--hb_interval", type=float, default=10.0, help="Seconds between heartbeats (default 10)")
-#     p.add_argument("--snapshot_every", type=int, default=3, help="Take a snapshot every N heartbeats (default 3)")
-#     args, _ = p.parse_known_args()
-#
-#     running = True
-#
-#     def _stop(*_):
-#         nonlocal running
-#         running = False
-#
-#     signal.signal(signal.SIGTERM, _stop)
-#     signal.signal(signal.SIGINT, _stop)
-#
-#     stop = False
-#
-#     def handler(sig, frame):
-#         nonlocal stop;
-#         stop = True
-#
-#     signal.signal(signal.SIGTERM, handler)
-#
-#     cam_id = int(args.camera)
-#     prof_id = int(args.profile)
-#     snap_dir = Path(args.snapshots)
-#     snap_dir.mkdir(parents=True, exist_ok=True)
-#     snap_path = snap_dir / f"{cam_id}.jpg"
-#
-#     beat_i = 0
-#     last_error = ""
-#
-#     while not stop:
-#         # measure actual fps over ~5s
-#         fps_measured, frames, err = measure_fps(args.ffmpeg, args.ffprobe, args.rtsp, seconds=5)
-#         if err:
-#             last_error = err
-#         else:
-#             last_error = ""
-#
-#         # every ~15s, try snapshot
-#         if beat_i % 3 == 0:
-#             ok, serr = save_snapshot(args.ffmpeg, args.rtsp, snap_path)
-#             if serr and not last_error:
-#                 last_error = serr
-#
-#         # send heartbeat
-#         payload = {
-#             "camera_id": cam_id,
-#             "profile_id": prof_id,
-#             "fps": float(fps_measured),
-#             "detected": 0,
-#             "matched": 0,
-#             "latency_ms": 0.0,
-#             "last_error": last_error[:200] if last_error else "",
-#         }
-#         try:
-#             post(args.hb, payload, args.hb_key, timeout=3)
-#         except Exception:
-#             # swallow; next loop will try again
-#             pass
-#
-#         beat_i += 1
-#         # small idle between cycles
-#         for _ in range(10):
-#             if stop: break
-#             time.sleep(0.5)
-#
-#     sys.exit(0)
-#
-#
-# if __name__ == "__main__":
-#     main()

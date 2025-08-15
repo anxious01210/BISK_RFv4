@@ -12,5 +12,24 @@ class Camera(models.Model):
     scan_station = models.BooleanField(default=False)
     script_type_default = models.PositiveSmallIntegerField(choices=SCRIPT_CHOICES, default=FFMPEG)
     is_active = models.BooleanField(default=True)
+    pause_until = models.DateTimeField(null=True, blank=True, help_text="Temporarily paused until this time")
+    RTSP_TRANSPORT_CHOICES = [("auto", "auto"), ("tcp", "tcp"), ("udp", "udp")]
+    rtsp_transport = models.CharField(max_length=8, choices=RTSP_TRANSPORT_CHOICES, default="auto",
+                                      help_text="FFmpeg -rtsp_transport (tcp/udp/auto)")
+
+    HWACCEL_CHOICES = [("none", "none"), ("nvdec", "nvdec")]
+    hwaccel = models.CharField(max_length=8, choices=HWACCEL_CHOICES, default="none",
+                               help_text="FFmpeg hardware decode (nvdec => -hwaccel cuda)")
+
+    DEVICE_CHOICES = [("cpu", "CPU"), ("cuda", "CUDA")]
+    device = models.CharField(max_length=8, choices=DEVICE_CHOICES, default="cpu",
+                              help_text="Intended ML device (for future OpenCV/CUDA path)")
+    gpu_index = models.PositiveSmallIntegerField(default=0)
+
+    cpu_affinity = models.CharField(max_length=64, blank=True, help_text='Comma-separated cores, e.g. "0,1"')
+    nice = models.SmallIntegerField(default=0, help_text="Process nice (-20..19)")
+
+    hb_interval = models.PositiveSmallIntegerField(default=10)
+    snapshot_every = models.PositiveSmallIntegerField(default=3)
 
     def __str__(self): return self.name

@@ -1,4 +1,5 @@
 # apps/scheduler/admin.py
+import os, signal, psutil, json
 from django.urls import path
 from django.shortcuts import redirect
 from django.contrib import admin, messages
@@ -22,6 +23,10 @@ from django.urls import reverse
 from django.utils.html import format_html
 from .services import _stop, enforce_schedules  # Linux-only SIGTERM to process group
 from django.conf import settings
+from datetime import timedelta
+from apps.scheduler import services  # for _pid_alive
+from pathlib import Path
+from django.utils.timesince import timesince
 
 # Status thresholds (seconds)
 ONLINE = getattr(settings, "HEARTBEAT_ONLINE_SEC", max(15, int(getattr(settings, "HEARTBEAT_INTERVAL_SEC", 10) * 1.5)))
@@ -220,10 +225,15 @@ class SchedulePolicyAdmin(admin.ModelAdmin):
 
     def enforce_now_view(self, request):
         result = enforce_schedules()
-        messages.success(request, f"Enforced. Started {len(result.started)}, Stopped {len(result.stopped)}.")
+        messages.success(
+            request,
+            f"Enforced. Started {len(result.started)}, Stopped {len(result.stopped)}, "
+            f"Pruned {getattr(result, 'pruned_count', 0)} dead row(s)."
+        )
         return redirect("admin:scheduler_schedulepolicy_changelist")
 
 
+# ---------- FORM (help texts) ----------
 class RunningProcessForm(forms.ModelForm):
     class Meta:
         model = RunningProcess
@@ -234,138 +244,317 @@ class RunningProcessForm(forms.ModelForm):
             "pid": "Operating System process ID (Linux). Spawned in its own session group so it can be SIGTERM’d.",
             "status": "Current state (running | stopping | dead). Managed by the enforcer and admin actions.",
             "started_at": "When the process was started (server local time).",
-            "last_heartbeat": "Updated by incoming runner heartbeats (if implemented).",
+            "last_heartbeat": "Updated by incoming runner heartbeats.",
             "meta": "Optional JSON sent by the runner (e.g., build info).",
         }
 
+    # render JSONField nicely if present
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if "meta" in self.fields:
+            self.fields["meta"].widget = forms.Textarea(
+                attrs={"rows": 8, "class": "vLargeTextField monospace"}
+            )
 
+
+
+# =====================
+# RunningProcess admin
+# =====================
 @admin.register(RunningProcess)
 class RunningProcessAdmin(admin.ModelAdmin):
     form = RunningProcessForm
+    change_list_template = "admin/scheduler/runningprocess/change_list.html"
 
-    # Show useful, navigable columns
     list_display = (
-        "camera_link", "profile_link", "pid",
-        "status_col", "started_at", "last_heartbeat",
-        "age_col",
+        "camera", "profile",
+        "pid", "pgid",
+        "status_badge",
+        "uptime_short",
+        "age_secs",
+        "fps_latest",
+        "mem_mb",
+        "threads",
+        "children",
+        "snapshot_thumb",
     )
-    list_filter = ("status", "profile__script_type", "profile")
+    list_select_related = ("camera", "profile")
+    list_filter = ("status", "camera", "profile")
     search_fields = ("camera__name", "profile__name", "pid")
     ordering = ("-started_at",)
 
-    # System-managed: read-only in the form
-    readonly_fields = ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "meta")
+    # Detail is read-only; act via actions
+    readonly_fields = (
+        "camera", "profile", "pid", "status",
+        "started_at", "last_heartbeat",
+        "pgid", "uptime_full",
+        "age_secs", "fps_latest",
+        "mem_mb", "threads", "children",
+        "cpu_affinity_display",
+        "meta_pretty",
+        "snapshot_preview",
+    )
 
-    # Don’t allow manual creation
-    def has_add_permission(self, request):
-        return False
-
-    # Helpful description on the change form
     fieldsets = (
         (None, {
-            "fields": ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "meta"),
+            "fields": ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "meta_pretty"),
             "description": format_html(
-                "<div style='margin:4px 0 8px'>"
+                "<div style='margin:6px 0 10px'>"
                 "<b>What is this?</b> A live record of a runner process the scheduler started.<br>"
                 "<b>How is it created?</b> Automatically by the enforcer when a schedule window is active.<br>"
-                "<b>How to use?</b> Use actions to Stop/Restart. Do not add rows manually.<br>"
+                "<b>How to use?</b> Use actions to Stop / Kill / Restart. Do not add rows manually.<br>"
                 "<b>Tip:</b> If status is <i>stale</i> or <i>offline</i>, check heartbeats and camera connectivity."
                 "</div>"
             )
         }),
+        ("Process", {
+            "fields": ("pgid", "uptime_full", "cpu_affinity_display"),
+            "description": format_html(
+                "<div class='help'>"
+                "<b>PGID</b>: POSIX process group ID (we kill the whole group). "
+                "<b>Uptime</b>: time since <i>started_at</i>. "
+                "<b>CPU affinity</b>: cores pinned for the runner (inherited by FFmpeg).</div>"
+            )
+        }),
+        ("Metrics (live)", {
+            "fields": ("age_secs", "fps_latest", "mem_mb", "threads", "children"),
+            "description": format_html(
+                "<div class='help'>"
+                "<b>Age</b>: seconds since this row’s <i>last_heartbeat</i>. "
+                "<b>FPS</b>: latest reported by the runner (0 means ‘No video’). "
+                "<b>RSS</b>: resident memory of the runner process. "
+                "<b>Threads</b>: thread count for the PID. "
+                "<b>Children</b>: number of child processes (e.g., FFmpeg).</div>"
+            )
+        }),
+        ("Snapshot", {
+            "fields": ("snapshot_preview",),
+            "description": format_html(
+                "<div class='help'>Single JPG updated by FFmpeg every <i>snapshot_every</i> seconds.</div>"
+            )
+        }),
     )
 
-    # Changelist subtitle
+    # ---------- helpers ----------
+    def _proc(self, pid):
+        try:
+            return psutil.Process(pid)
+        except Exception:
+            return None
+
+    # ---------- list/detail columns ----------
+    def pgid(self, obj):
+        try:
+            return os.getpgid(obj.pid)
+        except Exception:
+            return "—"
+
+    def uptime_short(self, obj):
+        if not obj.started_at:
+            return "—"
+        return timesince(obj.started_at, timezone.now()).split(",")[0]
+    uptime_short.short_description = "Uptime"
+
+    def uptime_full(self, obj):
+        if not obj.started_at:
+            return "—"
+        return timesince(obj.started_at, timezone.now())
+    uptime_full.short_description = "Uptime"
+
+    def age_secs(self, obj):
+        ts = obj.last_heartbeat
+        return int((timezone.now() - ts).total_seconds()) if ts else None
+    age_secs.short_description = "Age (s)"
+
+    def fps_latest(self, obj):
+        hb = (RunnerHeartbeat.objects
+              .filter(camera=obj.camera, profile=obj.profile)
+              .only("fps", "ts")
+              .order_by("-ts")
+              .first())
+        return getattr(hb, "fps", None)
+    fps_latest.short_description = "FPS"
+
+    def mem_mb(self, obj):
+        p = self._proc(obj.pid)
+        if not p:
+            return None
+        try:
+            return round(p.memory_info().rss / (1024 * 1024), 1)
+        except Exception:
+            return None
+    mem_mb.short_description = "RSS (MB)"
+
+    def threads(self, obj):
+        p = self._proc(obj.pid)
+        if not p:
+            return None
+        try:
+            return p.num_threads()
+        except Exception:
+            return None
+
+    def children(self, obj):
+        p = self._proc(obj.pid)
+        if not p:
+            return None
+        try:
+            return len(p.children(recursive=True))
+        except Exception:
+            return None
+
+    def cpu_affinity_display(self, obj):
+        p = self._proc(obj.pid)
+        if not p:
+            return "—"
+        try:
+            return ",".join(map(str, p.cpu_affinity()))
+        except Exception:
+            return "—"
+    cpu_affinity_display.short_description = "CPU affinity"
+
+    def meta_pretty(self, obj):
+        data = getattr(obj, "meta", None)
+        if not data:
+            return "—"
+        try:
+            pretty = json.dumps(data, indent=2, ensure_ascii=False)
+        except Exception:
+            pretty = str(data)
+        return format_html("<pre style='white-space:pre-wrap;margin:0'>{}</pre>", pretty)
+    meta_pretty.short_description = "Meta"
+
+    def snapshot_thumb(self, obj):
+        snap = Path(settings.SNAPSHOT_DIR) / f"{obj.camera_id}.jpg"
+        if not snap.exists():
+            return "—"
+        try:
+            mtime = int(snap.stat().st_mtime)
+        except Exception:
+            mtime = 0
+        url = f"{settings.MEDIA_URL}snapshots/{obj.camera_id}.jpg?v={mtime}"
+        return format_html(
+            '<a href="{}" target="_blank"><img src="{}" style="height:54px;border-radius:6px;box-shadow:0 0 2px rgba(0,0,0,.25);" /></a>',
+            url, url
+        )
+    snapshot_thumb.short_description = "Snapshot"
+
+    def snapshot_preview(self, obj):
+        snap = Path(settings.SNAPSHOT_DIR) / f"{obj.camera_id}.jpg"
+        if not snap.exists():
+            return "—"
+        try:
+            mtime = int(snap.stat().st_mtime)
+        except Exception:
+            mtime = 0
+        url = f"{settings.MEDIA_URL}snapshots/{obj.camera_id}.jpg?v={mtime}"
+        return format_html('<a href="{}" target="_blank"><img src="{}" style="max-width:100%;border-radius:8px;" /></a>', url, url)
+    snapshot_preview.short_description = "Snapshot"
+
+    def status_badge(self, obj):
+        ts = obj.last_heartbeat
+        live = services._pid_alive(obj.pid)
+        if not ts:
+            return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
+        age = (timezone.now() - ts).total_seconds()
+        if live and age <= ONLINE:  # <-- uses your settings-backed thresholds
+            return format_html("<span style='color:#16a34a;font-weight:600'>Online</span>")
+        if age > OFFLINE:
+            return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
+        return format_html("<span style='color:#d97706;font-weight:600'>Stale</span>")
+    status_badge.short_description = "Status"
+
+    # ---------- actions ----------
+    actions = [
+        "action_stop_selected", "action_kill_selected",
+        "action_restart_selected", "action_mark_dead",
+        "action_purge_dead", "action_enforce_now",
+    ]
+
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
-        extra_context["title"] = "Running processes"
-        extra_context["subtitle"] = mark_safe(
-            f"Live runner processes. Status derives from last heartbeat age: "
-            f"Offline &gt; {OFFLINE}s, Stale &gt; {STALE}s, Online ≤ {ONLINE}s."
+        # Only content; styling handled in the template (dark/light aware)
+        extra_context["rp_help"] = format_html(
+            """
+            <div class="rp-title">What is this page?</div>
+            <ul class="rp-bullets">
+              <li><b>Live runner processes</b> that the scheduler started for each (camera, profile).</li>
+              <li>Rows are created/updated automatically by the <i>enforcer</i>; don’t add rows manually.</li>
+              <li>Use the actions to <b>Stop</b>, <b>Kill group</b>, <b>Restart</b>, <b>Mark dead</b>, or <b>Enforce now</b>.</li>
+            </ul>
+            <div class="rp-subtitle">Status timing</div>
+            <div class="rp-text">‘Online’ ≤ <code>{online}s</code>, ‘Stale’ ≤ <code>{stale}s</code>, ‘Offline’ &gt; <code>{offline}s</code>. Online also requires the OS PID to be alive.</div>
+            <div class="rp-tip">Tip: if a row is stale/offline, check heartbeats and camera connectivity.</div> <br>
+            """,
+            online=ONLINE, stale=STALE, offline=OFFLINE,
         )
         return super().changelist_view(request, extra_context=extra_context)
 
-    # Computed columns
-    def camera_link(self, obj):
-        url = reverse("admin:cameras_camera_change", args=[obj.camera_id])
-        return format_html('<a href="{}">{}</a>', url, obj.camera.name)
-
-    camera_link.short_description = "Camera"
-
-    def profile_link(self, obj):
-        url = reverse("admin:scheduler_streamprofile_change", args=[obj.profile_id])
-        return format_html('<a href="{}">{}</a>', url, obj.profile.name)
-
-    profile_link.short_description = "Profile"
-
-    def age_col(self, obj):
-        if not obj.started_at:
-            return "—"
-        secs = int((timezone.now() - obj.started_at).total_seconds())
-        return f"{secs}s"
-
-    age_col.short_description = "Age"
-
-    def status_col(self, obj):
-        # Decorate status using heartbeats age if available
-        label = obj.status or "—"
-        if obj.last_heartbeat:
-            secs = (timezone.now() - obj.last_heartbeat).total_seconds()
-            if secs > OFFLINE:
-                return format_html("<span style='color:#b33;font-weight:600;'>Offline</span>")
-            if secs > STALE:
-                return format_html("<span style='color:#d88;font-weight:600;'>Stale</span>")
-            if secs <= ONLINE:
-                return format_html("<span style='color:#2a7;font-weight:600;'>Online</span>")
-        return label
-
-    status_col.short_description = "Status"
-
-    # Actions: Stop, Restart, Mark dead, Enforce now
-    actions = ["action_stop_selected", "action_restart_selected", "action_mark_dead", "action_enforce_now"]
-
     @admin.action(description="Stop selected (SIGTERM group)")
     def action_stop_selected(self, request, queryset):
-        stopped = 0
+        n = 0
         for rp in queryset:
             try:
-                _stop(rp.pid)  # best-effort SIGTERM to the process group (Linux)
+                _stop(rp.pid)
                 rp.status = "stopping"
                 rp.save(update_fields=["status"])
-                stopped += 1
+                n += 1
             except Exception as e:
-                messages.warning(request, f"Could not stop PID {rp.pid}: {e}")
-        messages.success(request, f"Sent SIGTERM to {stopped} process(es).")
+                self.message_user(request, f"Stop failed PID {rp.pid}: {e}", level="warning")
+        self.message_user(request, f"Sent SIGTERM to {n} process(es).")
 
-    @admin.action(description="Restart selected (stop, then enforce now)")
+    @admin.action(description="Kill selected (SIGKILL group)")
+    def action_kill_selected(self, request, queryset):
+        n = 0
+        for rp in queryset:
+            try:
+                pg = os.getpgid(rp.pid)
+                os.killpg(pg, signal.SIGKILL)
+                n += 1
+            except Exception as e:
+                self.message_user(request, f"Kill failed PID {rp.pid}: {e}", level="warning")
+        self.message_user(request, f"Sent SIGKILL to {n} process(es).")
+
+    @admin.action(description="Restart selected (stop → enforce)")
     def action_restart_selected(self, request, queryset):
-        # Stop first
         for rp in queryset:
             try:
                 _stop(rp.pid)
                 rp.status = "stopping"
                 rp.save(update_fields=["status"])
             except Exception as e:
-                messages.warning(request, f"Could not stop PID {rp.pid}: {e}")
-        # Reconcile immediately (will start again if still desired)
+                self.message_user(request, f"Stop failed PID {rp.pid}: {e}", level="warning")
         result = enforce_schedules()
-        messages.info(
+        messages.success(
             request,
-            f"Restart triggered. Enforced: started {len(result.started)}, stopped {len(result.stopped)}."
+            f"Enforced. Started {len(result.started)}, Stopped {len(result.stopped)}, "
+            f"Pruned {getattr(result, 'pruned_count', 0)} dead row(s)."
         )
 
     @admin.action(description="Mark selected as dead")
     def action_mark_dead(self, request, queryset):
         updated = queryset.update(status="dead")
-        messages.info(request, f"Marked {updated} process(es) as dead.")
+        self.message_user(request, f"Marked {updated} row(s) as dead.")
 
-    @admin.action(description="Enforce schedules now (all policies)")
+    @admin.action(description="Purge dead (>10 min)")
+    def action_purge_dead(self, request, queryset):
+        cut = timezone.now() - timezone.timedelta(minutes=10)
+        deleted, _ = RunningProcess.objects.filter(
+            status="dead"
+        ).filter(Q(last_heartbeat__lt=cut) | Q(last_heartbeat__isnull=True)).delete()
+        self.message_user(request, f"Purged {deleted} dead row(s).")
+
+    @admin.action(description="Enforce schedules now")
     def action_enforce_now(self, request, queryset):
         result = enforce_schedules()
-        messages.success(
-            request,
-            f"Enforced. Started {len(result.started)}, Stopped {len(result.stopped)}."
-        )
+        self.message_user(request, f"Enforced. Started {len(result.started)}, Stopped {len(result.stopped)}.")
+
+    # No manual creation of rows
+    def has_add_permission(self, request):
+        return False
+
+
+
 
 
 # ============================
@@ -423,11 +612,24 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
 
     def status_col(self, obj):
         secs = (timezone.now() - obj.ts).total_seconds()
+
+        # require LIVE process for "Online"
+        rp = (RunningProcess.objects
+              .filter(camera=obj.camera, profile=obj.profile)
+              .order_by("-id")
+              .first())
+        live = bool(rp and services._pid_alive(rp.pid))
+
+        # Optional: treat repeated fps==0 as "No video"
+        # (a runner can be alive but camera powered off; it will send fps=0)
+        if secs <= STALE and obj.fps == 0 and live:
+            return mark_safe("<span style='color:#d97706;font-weight:600;'>No video</span>")
+
+        if live and secs <= ONLINE:
+            return mark_safe("<span style='color:#16a34a;font-weight:600;'>Online</span>")
         if secs > OFFLINE:
-            return mark_safe("<span style='color:#b33;font-weight:600;'>Offline</span>")
-        if secs > STALE:
-            return mark_safe("<span style='color:#d88;font-weight:600;'>Stale</span>")
-        return mark_safe("<span style='color:#2a7;font-weight:600;'>Online</span>")
+            return mark_safe("<span style='color:#b91c1c;font-weight:600;'>Offline</span>")
+        return mark_safe("<span style='color:#d97706;font-weight:600;'>Stale</span>")
 
     status_col.short_description = "Status"
 
