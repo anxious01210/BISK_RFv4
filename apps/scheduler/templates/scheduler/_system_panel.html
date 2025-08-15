@@ -1,0 +1,133 @@
+{% load humanize %}
+<style>
+  /* Admin theme aware via CSS variables */
+  .bisk-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+    gap:12px;
+    margin-top:12px
+  }
+  .bisk-card{
+    border:1px solid var(--border-color);
+    border-radius:10px;
+    padding:12px;
+    background:var(--body-bg);
+    color:var(--body-fg);
+  }
+  table{width:100%;border-collapse:collapse}
+  td,th{
+    padding:6px 8px;
+    border-bottom:1px solid var(--hairline-color, var(--border-color));
+    text-align:left
+  }
+  .muted{color:var(--body-quiet-color, #6b7280)}
+  .ok{color:var(--success-fg, #2e7d32)}
+  .warn{color:var(--warning-fg, #b08900)}
+  .bad{color:var(--error-fg, #b00020)}
+  small{color:var(--body-quiet-color, #6b7280)}
+</style>
+
+<div class="bisk-grid">
+    <div class="bisk-card">
+        <h3>Host</h3>
+        <table>
+            <tr>
+                <th>Time</th>
+                <td>{{ now }}</td>
+            </tr>
+            <tr>
+                <th>CPU</th>
+                <td>{{ cpu_percent|floatformat:1 }}%</td>
+            </tr>
+            <tr>
+                <th>Load</th>
+                <td>
+                    {% if load.0 %}{{ load.0|floatformat:2 }}/{{ load.1|floatformat:2 }}/
+                        {{ load.2|floatformat:2 }}{% else %}<span class="muted">n/a</span>{% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>RAM</th>
+                <td>{{ ram.used|intcomma }}/{{ ram.total|intcomma }} ({{ ram.percent }}%)</td>
+            </tr>
+            <tr>
+                <th>Disk /</th>
+                <td>{{ disk.used|intcomma }}/{{ disk.total|intcomma }} ({{ disk.percent }}%)</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="bisk-card">
+        <h3>Runners</h3>
+        <table>
+            <tr>
+                <th>Online</th>
+                <td class="ok">{{ runners.online }}</td>
+            </tr>
+            <tr>
+                <th>Stale</th>
+                <td class="warn">{{ runners.stale }}</td>
+            </tr>
+            <tr>
+                <th>Offline</th>
+                <td class="bad">{{ runners.offline }}</td>
+            </tr>
+            <tr>
+                <th>Paused</th>
+                <td>{{ paused }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="bisk-card">
+        <h3>Enforcer</h3>
+        <table>
+            <tr>
+                <th>Interval</th>
+                <td>{{ enforcer.interval }}s</td>
+            </tr>
+            <tr>
+                <th>PID</th>
+                <td>{{ enforcer.pid|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last run</th>
+                <td>{{ enforcer.last_run|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last OK</th>
+                <td>{{ enforcer.last_ok|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last error</th>
+                <td>{% if enforcer.last_error %}<span class="bad">{{ enforcer.last_error }}</span>{% else %}
+                    <span class="ok">—</span>{% endif %}</td>
+            </tr>
+        </table>
+        <small class="muted">Keys: enforcer:last_run / :last_ok / :last_error / :running_pid</small>
+    </div>
+
+    <div class="bisk-card">
+        <h3>GPU</h3>
+        {% if gpus %}
+            <table>
+                <tr>
+                    <th>Name</th>
+                    <th>Util</th>
+                    <th>Mem</th>
+                </tr>
+                {% for g in gpus %}
+                    <tr>
+                        <td>{{ g.name }}</td>
+                        <td>{% if g.util is not None %}{{ g.util }}%{% else %}<span class="muted">n/a</span>{% endif %}
+                        </td>
+                        <td>{% if g.mem_used is not None %}{{ g.mem_used }} / {{ g.mem_total }} MiB{% else %}
+                            <span class="muted">n/a</span>{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <span class="muted">No GPU detected (nvidia-smi not found or no NVIDIA GPU).</span>
+        {% endif %}
+    </div>
+</div>

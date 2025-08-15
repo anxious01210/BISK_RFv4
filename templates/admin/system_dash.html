@@ -1,0 +1,37 @@
+{% extends "admin/base_site.html" %}
+{% load static i18n %}
+
+{% block extrastyle %}
+  {{ block.super }}
+  <style>
+    /* Put the page title beside the site header in the blue admin bar */
+    #branding {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;            /* space between "Welcome..." and "System status" */
+      flex-wrap: wrap;      /* wraps nicely on narrow screens */
+    }
+    .bisk-page-title a {
+      font-size: 18px;
+      font-weight: 600;
+      color: inherit;       /* use admin header link color (works in dark/light) */
+      text-decoration: none;
+    }
+    .bisk-page-title a:hover {
+      text-decoration: underline;
+    }
+    .bisk-tools { margin-bottom: 8px; }
+  </style>
+{% endblock %}
+
+
+{# Suppress the default H1 in the page body so we don’t duplicate the title #}
+{% block content_title %}{% endblock %}
+
+{% block content %}
+  <div class="bisk-tools object-tools">
+    <a href="{% url 'system_dash' %}" class="button">{% trans "Open standalone" %}</a>
+    <a href="{% url 'system_json' %}" class="button">JSON</a>
+  </div>
+  {% include "scheduler/_system_panel.html" %}
+{% endblock %}

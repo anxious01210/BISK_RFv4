@@ -1,0 +1,153 @@
+.
+├── =5.0
+├── apps
+│   ├── attendance
+│   │   ├── admin.py
+│   │   ├── api.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── management
+│   │   │   └── commands
+│   │   │       └── roll_periods.py
+│   │   ├── migrations
+│   │   │   ├── 0001_initial.py
+│   │   │   ├── __init__.py
+│   │   │   └── __pycache__
+│   │   │       ├── 0001_initial.cpython-312.pyc
+│   │   │       └── __init__.cpython-312.pyc
+│   │   ├── models.py
+│   │   ├── __pycache__
+│   │   │   ├── admin.cpython-312.pyc
+│   │   │   ├── api.cpython-312.pyc
+│   │   │   ├── apps.cpython-312.pyc
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   ├── models.cpython-312.pyc
+│   │   │   ├── serializers.cpython-312.pyc
+│   │   │   └── services.cpython-312.pyc
+│   │   ├── serializers.py
+│   │   ├── services.py
+│   │   ├── tests.py
+│   │   └── views.py
+│   ├── cameras
+│   │   ├── admin.py
+│   │   ├── apps.py
+│   │   ├── __init__.py
+│   │   ├── migrations
+│   │   │   ├── 0001_initial.py
+│   │   │   ├── 0002_camera_cpu_affinity_camera_device_camera_gpu_index_and_more.py
+│   │   │   ├── 0003_camera_pause_until.py
+│   │   │   ├── __init__.py
+│   │   │   └── __pycache__
+│   │   │       ├── 0001_initial.cpython-312.pyc
+│   │   │       ├── 0002_camera_cpu_affinity_camera_device_camera_gpu_index_and_more.cpython-312.pyc
+│   │   │       ├── 0003_camera_pause_until.cpython-312.pyc
+│   │   │       └── __init__.cpython-312.pyc
+│   │   ├── models.py
+│   │   ├── __pycache__
+│   │   │   ├── admin.cpython-312.pyc
+│   │   │   ├── apps.cpython-312.pyc
+│   │   │   ├── __init__.cpython-312.pyc
+│   │   │   └── models.cpython-312.pyc
+│   │   ├── tests.py
+│   │   └── views.py
+│   └── scheduler
+│       ├── admin.py
+│       ├── api.py
+│       ├── apps.py
+│       ├── __init__.py
+│       ├── management
+│       │   └── commands
+│       │       ├── enforce_schedules.py
+│       │       ├── prune_heartbeats.py
+│       │       ├── __pycache__
+│       │       │   ├── enforce_schedules.cpython-312.pyc
+│       │       │   ├── prune_heartbeats.cpython-312.pyc
+│       │       │   ├── run_enforcer.cpython-312.pyc
+│       │       │   ├── start_enforce.cpython-312.pyc
+│       │       │   └── stop_runners.cpython-312.pyc
+│       │       ├── run_enforcer.py
+│       │       ├── start_enforce.py
+│       │       └── stop_runners.py
+│       ├── migrations
+│       │   ├── 0001_initial.py
+│       │   ├── 0002_runnerheartbeat.py
+│       │   ├── 0003_runningprocess_uniq_cam_prof_pid.py
+│       │   ├── __init__.py
+│       │   └── __pycache__
+│       │       ├── 0001_initial.cpython-312.pyc
+│       │       ├── 0002_runnerheartbeat.cpython-312.pyc
+│       │       ├── 0003_runningprocess_uniq_cam_prof_pid.cpython-312.pyc
+│       │       └── __init__.cpython-312.pyc
+│       ├── models.py
+│       ├── periodic
+│       │   ├── __init__.py
+│       │   ├── __pycache__
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   └── scheduler.cpython-312.pyc
+│       │   └── scheduler.py
+│       ├── __pycache__
+│       │   ├── admin.cpython-312.pyc
+│       │   ├── api.cpython-312.pyc
+│       │   ├── apps.cpython-312.pyc
+│       │   ├── __init__.cpython-312.pyc
+│       │   ├── models.cpython-312.pyc
+│       │   ├── services.cpython-312.pyc
+│       │   └── views.cpython-312.pyc
+│       ├── services.py
+│       ├── templates
+│       │   └── scheduler
+│       │       ├── system.html
+│       │       └── _system_panel.html
+│       ├── tests.py
+│       └── views.py
+├── bisk
+│   ├── asgi.py
+│   ├── __init__.py
+│   ├── __pycache__
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── settings.cpython-312.pyc
+│   │   ├── urls.cpython-312.pyc
+│   │   ├── views.cpython-312.pyc
+│   │   └── wsgi.cpython-312.pyc
+│   ├── settings.py
+│   ├── urls.py
+│   ├── views.py
+│   └── wsgi.py
+├── db.sqlite3
+├── deploy
+│   └── systemd
+│       ├── bisk-enforcer.env.example
+│       ├── bisk-enforcer.service.template
+│       ├── ENFORCER_SYSTEMD_GUIDE.md
+│       └── install_enforcer.sh
+├── Details.txt
+├── docs
+│   └── ops
+│       └── REDIS_CACHE.md
+├── extras
+│   ├── recognize_ffmpeg.py
+│   └── recognize_opencv.py
+├── manage.py
+├── media
+│   └── snapshots
+│       ├── 1.jpg
+│       └── 2.jpg
+├── requirements.txt
+├── templates
+│   ├── admin
+│   │   ├── attendance
+│   │   │   └── periodtemplate
+│   │   │       └── change_list.html
+│   │   ├── base_site.html
+│   │   ├── scheduler
+│   │   │   ├── runningprocess
+│   │   │   │   └── change_list.html
+│   │   │   └── schedulepolicy
+│   │   │       └── change_list.html
+│   │   └── system_dash.html
+│   ├── dashboard_cameras.html
+│   └── dashboard.html
+├── tree.txt
+└── TShoot_01.txt
+
+39 directories, 112 files

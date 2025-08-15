@@ -3,11 +3,16 @@ from dataclasses import dataclass
 from typing import Optional, List
 from django.http import JsonResponse
 from django.conf import settings
+# from django.contrib.admin.views.decorators import staff_member_required
+# from django.core.cache import caches
+# from django.shortcuts import render
+from django.utils import timezone
+from apps.scheduler.models import RunningProcess  # adjust import if your model path differs
+from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.core.cache import caches
 from django.shortcuts import render
-from django.utils import timezone
-from apps.scheduler.models import RunningProcess  # adjust import if your model path differs
+from apps.scheduler.models import RunningProcess
 
 
 @dataclass
@@ -71,41 +76,29 @@ def _runner_counts():
     return {"online": online, "stale": stale, "offline": offline}
 
 
-@staff_member_required
-def system_dash(request):
+def _collect_system_info():
+    """Single source of truth for system stats used by all views."""
     cache = caches["default"]
-
     # CPU & load
     cpu_percent = psutil.cpu_percent(interval=0.0)
     try:
         load1, load5, load15 = os.getloadavg()
     except (AttributeError, OSError):
         load1 = load5 = load15 = None
-
-    # RAM
+    # RAM & disk
     vm = psutil.virtual_memory()
-
-    # Disk (root)
     du = shutil.disk_usage("/")
-
-    # GPU
+    # GPUs & runners
     gpus = _gpu_query()
-
-    # Runners
     runner_counts = _runner_counts()
-
-    # Paused cameras (best-effort: infer via RP -> camera.pause_until if available)
-    paused = None
+    # paused cameras
     try:
-        # rp.camera.pause_until exists in your schema; handle missing safely
         from django.utils.timezone import now
-        from django.db.models import Q
         paused = RunningProcess.objects.filter(
             camera__pause_until__isnull=False, camera__pause_until__gt=now()
         ).count()
     except Exception:
         paused = "n/a"
-
     ctx = {
         "host": platform.node(),
         "cpu_percent": cpu_percent,
@@ -124,49 +117,38 @@ def system_dash(request):
         },
         "now": timezone.localtime(),
     }
-    return render(request, "scheduler/system.html", ctx)
+    return ctx
+
+
+@staff_member_required
+def system_dash(request):
+    return render(request, "scheduler/system.html", _collect_system_info())
 
 
 @staff_member_required
 def system_json(request):
-    # Collect fresh stats (same logic as system_dash, repeated for clarity).
-    cache = caches["default"]
-    cpu_percent = psutil.cpu_percent(interval=0.0)
-
-    try:
-        load1, load5, load15 = os.getloadavg()
-    except (AttributeError, OSError):
-        load1 = load5 = load15 = None
-
-    vm = psutil.virtual_memory()
-    du = shutil.disk_usage("/")
-    gpus = _gpu_query()
-    runner_counts = _runner_counts()
-
-    try:
-        paused = RunningProcess.objects.filter(
-            camera__pause_until__isnull=False,
-            camera__pause_until__gt=timezone.now(),
-        ).count()
-    except Exception:
-        paused = "n/a"
-
+    ctx = _collect_system_info()
     data = {
-        "cpu_percent": cpu_percent,
-        "load": {"1m": load1, "5m": load5, "15m": load15},
-        "memory": {"total": vm.total, "used": vm.used, "percent": vm.percent},
-        "disk_root": {"total": du.total, "used": du.used, "percent": round(du.used / du.total * 100, 2)},
+        "cpu_percent": ctx["cpu_percent"],
+        "load": {"1m": ctx["load"][0], "5m": ctx["load"][1], "15m": ctx["load"][2]},
+        "memory": ctx["ram"],
+        "disk_root": ctx["disk"],
         "gpus": [{"name": g.name, "util": g.util, "mem_used": g.mem_used, "mem_total": g.mem_total} for g in
-                 gpus],
-        "runners": runner_counts,
-        "paused": paused,
-        "enforcer": {
-            "interval": getattr(settings, "ENFORCER_INTERVAL_SECONDS", 15),
-            "pid": cache.get("enforcer:running_pid"),
-            "last_run": cache.get("enforcer:last_run"),
-            "last_ok": cache.get("enforcer:last_ok"),
-            "last_error": cache.get("enforcer:last_error"),
-        },
+                 ctx["gpus"]],
+        "runners": ctx["runners"],
+        "paused": ctx["paused"],
+        "enforcer": ctx["enforcer"],
+        "host": ctx["host"],
+        "now": ctx["now"],
     }
-
     return JsonResponse(data)
+
+
+@staff_member_required
+def admin_system(request):
+    """Admin-wrapped version of the system dashboard."""
+    ctx = _collect_system_info()
+    # enrich with admin context so breadcrumbs/top bar work
+    ctx.update(admin.site.each_context(request))
+    ctx["title"] = "System status"
+    return render(request, "admin/system_dash.html", ctx)
