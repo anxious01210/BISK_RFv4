@@ -22,17 +22,26 @@ from rest_framework.routers import DefaultRouter
 from apps.attendance.api import AttendanceRecordViewSet  # will exist after step 5
 from apps.scheduler import api as sched_api
 from bisk import views as core_views
+from apps.scheduler.views import system_dash, system_json
+from django.views.generic import RedirectView
 
 router = DefaultRouter()
 router.register(r"attendance/records", AttendanceRecordViewSet, basename="attendance-records")
 
 urlpatterns = [
     path('admin/', admin.site.urls),
+    path("dash/system/", system_dash, name="system_dash"),
     path("api/", include(router.urls)),
     path("api/runner/heartbeat/", sched_api.heartbeat, name="runner-heartbeat"),
-    path("dashboard/", core_views.dashboard, name="dashboard"),
-    path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),
-    path("dashboard/cameras/", core_views.cameras_dashboard, name="cameras-dashboard"),
+    # path("dashboard/", core_views.dashboard, name="dashboard"),
+    # path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),
+    # path("dashboard/cameras/", core_views.cameras_dashboard, name="cameras-dashboard"),
+    path("dash/system.json", system_json, name="system_json"),
+    # legacy dashboard routes → redirect to new system page/json
+    path("dashboard/", RedirectView.as_view(pattern_name="system_dash", permanent=False)),
+    path("dashboard/cameras/", RedirectView.as_view(pattern_name="system_dash", permanent=False)),
+    path("dashboard/system_stats/", RedirectView.as_view(pattern_name="system_json", permanent=False)),
+
 ]
 # bisk/urls.py
 

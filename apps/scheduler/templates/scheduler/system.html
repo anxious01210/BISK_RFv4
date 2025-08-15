@@ -1,0 +1,171 @@
+{% load humanize %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>BISK System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- auto-refresh every 10s; remove if undesired -->
+    <meta http-equiv="refresh" content="10">
+    <style>
+        body {
+            font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+            margin: 16px;
+        }
+
+        h1 {
+            margin: 0 0 12px
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 12px;
+        }
+
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 12px
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse
+        }
+
+        td, th {
+            padding: 6px 8px;
+            border-bottom: 1px solid #eee;
+            text-align: left
+        }
+
+        .muted {
+            color: #666
+        }
+
+        .ok {
+            color: #087f5b
+        }
+
+        .warn {
+            color: #b08900
+        }
+
+        .bad {
+            color: #b00020
+        }
+
+        small {
+            color: #666
+        }
+    </style>
+</head>
+<body>
+<h1>BISK System — {{ host }}</h1>
+<div class="grid">
+    <div class="card">
+        <h3>Host</h3>
+        <table>
+            <tr>
+                <th>Time</th>
+                <td>{{ now }}</td>
+            </tr>
+            <tr>
+                <th>CPU</th>
+                <td>{{ cpu_percent|floatformat:1 }}%</td>
+            </tr>
+            <tr>
+                <th>Load</th>
+                <td>
+                    {% if load.0 %}{{ load.0|floatformat:2 }}/{{ load.1|floatformat:2 }}/
+                        {{ load.2|floatformat:2 }}{% else %}<span class="muted">n/a</span>{% endif %}
+                </td>
+            </tr>
+            <tr>
+                <th>RAM</th>
+                <td>{{ ram.used|intcomma }}/{{ ram.total|intcomma }} ({{ ram.percent }}%)</td>
+            </tr>
+            <tr>
+                <th>Disk /</th>
+                <td>{{ disk.used|intcomma }}/{{ disk.total|intcomma }} ({{ disk.percent }}%)</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Runners</h3>
+        <table>
+            <tr>
+                <th>Online</th>
+                <td class="ok">{{ runners.online }}</td>
+            </tr>
+            <tr>
+                <th>Stale</th>
+                <td class="warn">{{ runners.stale }}</td>
+            </tr>
+            <tr>
+                <th>Offline</th>
+                <td class="bad">{{ runners.offline }}</td>
+            </tr>
+            <tr>
+                <th>Paused</th>
+                <td>{{ paused }}</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="card">
+        <h3>Enforcer</h3>
+        <table>
+            <tr>
+                <th>Interval</th>
+                <td>{{ enforcer.interval }}s</td>
+            </tr>
+            <tr>
+                <th>PID</th>
+                <td>{{ enforcer.pid|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last run</th>
+                <td>{{ enforcer.last_run|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last OK</th>
+                <td>{{ enforcer.last_ok|default:"—" }}</td>
+            </tr>
+            <tr>
+                <th>Last error</th>
+                <td>{% if enforcer.last_error %}<span class="bad">{{ enforcer.last_error }}</span>{% else %}
+                    <span class="ok">—</span>{% endif %}</td>
+            </tr>
+        </table>
+        <small class="muted">Keys: enforcer:last_run / :last_ok / :last_error / :running_pid</small>
+    </div>
+
+    <div class="card">
+        <h3>GPU</h3>
+        {% if gpus %}
+            <table>
+                <tr>
+                    <th>Name</th>
+                    <th>Util</th>
+                    <th>Mem</th>
+                </tr>
+                {% for g in gpus %}
+                    <tr>
+                        <td>{{ g.name }}</td>
+                        <td>{% if g.util is not None %}{{ g.util }}%{% else %}<span class="muted">n/a</span>{% endif %}
+                        </td>
+                        <td>{% if g.mem_used is not None %}{{ g.mem_used }} / {{ g.mem_total }} MiB{% else %}
+                            <span class="muted">n/a</span>{% endif %}</td>
+                    </tr>
+                {% endfor %}
+            </table>
+        {% else %}
+            <span class="muted">No GPU detected (nvidia-smi not found or no NVIDIA GPU).</span>
+        {% endif %}
+    </div>
+</div>
+</body>
+</html>

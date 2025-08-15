@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',
 ]
 
 INSTALLED_APPS += [
@@ -169,8 +170,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Snapshots will be taken every HEARTBEAT_SNAPSHOT_EVERY heartbeats.
 # The admin status badges will flip between Online/Stale/Offline based on HEARTBEAT_STALE_SEC and HEARTBEAT_OFFLINE_SEC.
 HEARTBEAT_INTERVAL_SEC = 10
-HEARTBEAT_STALE_SEC    = 45
-HEARTBEAT_OFFLINE_SEC  = 120
+HEARTBEAT_STALE_SEC = 45
+HEARTBEAT_OFFLINE_SEC = 120
 
 # (optional) how often to take a snapshot
 HEARTBEAT_SNAPSHOT_EVERY = 10
@@ -178,3 +179,20 @@ HEARTBEAT_SNAPSHOT_EVERY = 10
 # Auto-delete RunningProcess rows that have been Offline for longer than this many minutes (preferred) and fallback hours
 RUNPROC_PRUNE_OFFLINE_MINUTES = 60
 RUNPROC_PRUNE_OFFLINE_HOURS = 6
+
+# --- BISK enforcer/scheduler ---
+ENFORCER_INTERVAL_SECONDS = int(os.getenv("ENFORCER_INTERVAL_SECONDS", "15"))
+ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/tmp/bisk_enforcer.lock")
+HEARTBEAT_THRESHOLDS = {
+    "online": int(os.getenv("HEARTBEAT_ONLINE_SEC", "15")),
+    "stale": int(os.getenv("HEARTBEAT_STALE_SEC", "45")),
+    "offline": int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120")),
+}
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": "redis://127.0.0.1:6379/1",
+        "KEY_PREFIX": "bisk",
+    }
+}

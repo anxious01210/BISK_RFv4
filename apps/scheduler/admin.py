@@ -24,7 +24,8 @@ from django.utils.html import format_html
 from .services import _stop, enforce_schedules  # Linux-only SIGTERM to process group
 from django.conf import settings
 from datetime import timedelta
-from apps.scheduler import services  # for _pid_alive
+# from apps.scheduler import periodic  # for _pid_alive
+from apps.scheduler.services import _pid_alive
 from pathlib import Path
 from django.utils.timesince import timesince
 
@@ -453,7 +454,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
 
     def status_badge(self, obj):
         ts = obj.last_heartbeat
-        live = services._pid_alive(obj.pid)
+        live = _pid_alive(obj.pid)
         if not ts:
             return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
         age = (timezone.now() - ts).total_seconds()
@@ -618,7 +619,7 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
               .filter(camera=obj.camera, profile=obj.profile)
               .order_by("-id")
               .first())
-        live = bool(rp and services._pid_alive(rp.pid))
+        live = bool(rp and _pid_alive(rp.pid))
 
         # Optional: treat repeated fps==0 as "No video"
         # (a runner can be alive but camera powered off; it will send fps=0)

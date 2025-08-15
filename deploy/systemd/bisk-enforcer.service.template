@@ -1,0 +1,31 @@
+# Copy to: /etc/systemd/system/bisk-enforcer.service  (per host)
+[Unit]
+Description=BISK Enforcer (APScheduler) - periodic enforce_schedules()
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# <-- set these for each host -->
+User=__USER__
+Group=__USER__
+WorkingDirectory=__PROJECT_DIR__
+EnvironmentFile=/etc/bisk/bisk-enforcer.env
+
+# ExecStart can reference env and will run from WorkingDirectory
+# Replace __PYTHON__ at install time with absolute venv python
+ExecStart=__PYTHON__ manage.py run_enforcer
+
+Restart=always
+RestartSec=5
+TimeoutStopSec=15
+KillMode=control-group
+
+# Hardening (safe defaults)
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=no
+
+[Install]
+WantedBy=multi-user.target
