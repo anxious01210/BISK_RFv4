@@ -19,7 +19,7 @@ import urllib.request
 from pathlib import Path
 import re
 import os
-
+import threading
 
 def ffmpeg_cmd(ffmpeg_bin, rtsp_url, out_jpg, args):
     """
@@ -63,10 +63,9 @@ def spawn_ffmpeg(args, rtsp_url, out_jpg):
     return subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,   # <-- no pipes; we are not reading logs
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,      # <-- read stderr to map errors
         close_fds=True,
-        # NOTE: no preexec_fn=os.setsid here on purpose
     )
 
 
@@ -220,6 +219,36 @@ def main():
     # respawn state
     backoff = 1
     last_error_msg = ""
+    last_error_seen_at = 0.0  # monotonic timestamp of most recent mapped error
+
+    def _map_err(line: str) -> str | None:
+        L = line.lower()
+        if "401" in L and ("unauthorized" in L or "authorization" in L): return "401 unauthorized"
+        if "describe" in L and "404" in L: return "rtsp describe 404"
+        if "connection refused" in L: return "connection refused"
+        if "timed out" in L or "timeout" in L: return "connection timeout"
+        if "unrecognized option" in L or "option not found" in L: return "ffmpeg option not found"
+        if "unsupported transport" in L or "461" in L: return "transport mismatch"
+        if "invalid data found" in L: return "invalid input data"
+        if "server returned 5" in L: return "server 5xx error"
+        return None
+
+    def _stderr_reader():
+        nonlocal last_error_msg, last_error_seen_at
+        if not ff_proc.stderr:
+            return
+        for raw in iter(ff_proc.stderr.readline, b""):
+            try:
+                line = raw.decode("utf-8", "ignore").strip()
+            except Exception:
+                continue
+            mapped = _map_err(line)
+            if mapped:
+                last_error_msg = mapped
+                last_error_seen_at = time.monotonic()
+
+    t = threading.Thread(target=_stderr_reader, daemon=True)
+    t.start()
 
     # graceful stop
     running = True
@@ -236,6 +265,9 @@ def main():
 
     tick = 0
     next_tick = time.monotonic()
+    # throttle ffprobe to every N ticks
+    probe_every = 3
+    last_probed_fps = 0.0
 
     while running:
         # Reap / respawn FFmpeg if it died
@@ -245,17 +277,26 @@ def main():
                 ff_proc.wait(timeout=0)  # reap zombie if any
             except Exception:
                 pass
-            last_error_msg = f"ffmpeg exited rc={rc}"
+            last_error_msg = last_error_msg or f"ffmpeg exited rc={rc}"
             time.sleep(backoff)  # simple backoff
             backoff = min(10, backoff * 2)  # cap at 10s
             ff_proc = spawn_ffmpeg(args, args.rtsp, str(snap_path))
+            # restart reader
+            t = threading.Thread(target=_stderr_reader, daemon=True)
+            t.start()
         else:
             backoff = 1
 
         tick += 1
 
-        # Lightweight: probe fps quickly
-        fps_val = probe_fps(args.ffprobe, args.rtsp) or 0.0
+        # Lightweight: probe fps (throttled)
+        if tick % probe_every == 0:
+            last_probed_fps = probe_fps(args.ffprobe, args.rtsp) or last_probed_fps
+        fps_val = last_probed_fps
+
+        # Clear stale error if stream seems healthy for a while
+        if last_error_msg and (time.monotonic() - last_error_seen_at) > max(2 * interval, 60):
+            last_error_msg = ""
 
         # Heartbeat payload
         payload = {

@@ -476,6 +476,15 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                     old.save(update_fields=["status"])
 
             pid, cmdline = _start(camera, profile)
+            # Build a snapshot of the knobs we effectively used (camera-first/profile-first aware)
+            env_snapshot = {
+                "hb_interval": str(int(resolve_knob(camera, profile, "hb_interval") or 10)),
+                "snapshot_every": str(int(resolve_knob(camera, profile, "snapshot_every") or 3)),
+                "rtsp_transport": (resolve_knob(camera, profile, "rtsp_transport") or "auto"),
+                "hwaccel": (resolve_knob(camera, profile, "hwaccel") or "none"),
+                "device": (resolve_knob(camera, profile, "device") or "cpu"),
+                "gpu_index": int(resolve_knob(camera, profile, "gpu_index") or 0),
+            }
             with transaction.atomic():
                 try:
                     row, created = RunningProcess.objects.get_or_create(
@@ -485,11 +494,16 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                         defaults={
                             "status": "running",
                             "effective_args": cmdline,  # ← NEW
-                        },
+                            "effective_env": env_snapshot,
+                            },
                     )
                     if not created and row.effective_args != cmdline:
                         row.effective_args = cmdline
                         row.save(update_fields=["effective_args"])
+                    if not created and row.effective_args != cmdline:
+                        row.effective_args = cmdline
+                        row.effective_env = env_snapshot
+                        row.save(update_fields=["effective_args", "effective_env"])
                 except IntegrityError:
                     row = RunningProcess.objects.get(camera=camera, profile=profile, pid=pid)
 

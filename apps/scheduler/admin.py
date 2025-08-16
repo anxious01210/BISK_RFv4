@@ -7,6 +7,8 @@ from django.utils.safestring import mark_safe
 from django import forms
 from django.forms.models import BaseInlineFormSet
 from django.core.exceptions import ValidationError
+from django.db.models import F, Window
+from django.db.models.functions import RowNumber
 
 from .models import (
     StreamProfile,
@@ -588,6 +590,28 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
     # Heartbeats are telemetry; make them read-only.
     readonly_fields = ("camera", "profile", "ts", "fps", "detected", "matched", "latency_ms", "last_error")
     actions = ["action_purge_selected", "action_purge_stale"]
+    date_hierarchy = "ts"
+    list_per_page = 25
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        # Add ?all=1 to the URL to see the full time series
+        if request.GET.get("all") == "1":
+            return qs.select_related("camera", "profile")
+        return (
+            qs.annotate(
+                rn=Window(
+                    expression=RowNumber(),
+                    partition_by=[F("camera_id"), F("profile_id")],
+                    order_by=F("ts").desc(),
+                )
+            )
+            .filter(rn=1)
+            .select_related("camera", "profile")
+            .order_by("camera__name", "profile__name")
+        )
+
+
 
     # No manual creation of heartbeats
     def has_add_permission(self, request):
@@ -600,8 +624,9 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
         extra_context["title"] = "Runner heartbeats"
+        toggle = ("<a href='?all=1'>Show all</a>" if request.GET.get("all") != "1" else "<a href='?'>Show latest only</a>")
         extra_context["subtitle"] = mark_safe(
-            f"Latest telemetry per runner. ‘Stale’ &gt; {STALE}s; ‘Online’ ≤ {ONLINE}s."
+            f"Latest telemetry per runner. ‘Stale’ &gt; {STALE}s; ‘Online’ ≤ {ONLINE}s. &nbsp; {toggle}"
         )
         return super().changelist_view(request, extra_context=extra_context)
 

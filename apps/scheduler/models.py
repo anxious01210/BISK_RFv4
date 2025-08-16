@@ -82,7 +82,6 @@ class RunningProcess(models.Model):
     cpu_affinity = models.CharField(max_length=100, blank=True, default="")
     last_error = models.CharField(max_length=512, blank=True, default="")  # most recent friendly error from runner
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)        # runner pings update this
-    effective_env = models.JSONField(default=dict, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]
@@ -94,7 +93,8 @@ class RunningProcess(models.Model):
 class RunnerHeartbeat(models.Model):
     camera = models.ForeignKey("cameras.Camera", on_delete=models.CASCADE)
     profile = models.ForeignKey("scheduler.StreamProfile", on_delete=models.CASCADE)
-    ts = models.DateTimeField(auto_now=True)
+    pid = models.IntegerField(null=True, blank=True)
+    ts = models.DateTimeField(auto_now_add=True)
     fps = models.FloatField(default=0)
     detected = models.PositiveIntegerField(default=0)
     matched = models.PositiveIntegerField(default=0)
@@ -103,8 +103,9 @@ class RunnerHeartbeat(models.Model):
     last_error = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
+        ordering = ("-ts",)
         indexes = [
-            models.Index(fields=["camera", "profile", "ts"]),
+            models.Index(fields=["camera", "profile", "ts"], name="hb_cam_prof_ts"),
         ]
 
     def __str__(self):

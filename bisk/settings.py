@@ -114,7 +114,7 @@ REST_FRAMEWORK = {
 
 RUN_APSCHEDULER = False  # we’ll enable later; cron fallback will still work
 # Heartbeat endpoint used by runner processes
-RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8000/api/runner/heartbeat/"
+# RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8000/api/runner/heartbeat/"
 
 # Use the standard Ubuntu locations
 FFPROBE_PATH = "/usr/bin/ffprobe"
@@ -133,8 +133,8 @@ if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
             raise RuntimeError(f"Required binary not found: {_p}")
 
 RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
-RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set a long random in prod
-# RUNNER_HEARTBEAT_KEY = "dev-key-change-me"
+RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set long random in prod
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
@@ -169,12 +169,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # The runner heartbeats will tick every HEARTBEAT_INTERVAL_SEC seconds.
 # Snapshots will be taken every HEARTBEAT_SNAPSHOT_EVERY heartbeats.
 # The admin status badges will flip between Online/Stale/Offline based on HEARTBEAT_STALE_SEC and HEARTBEAT_OFFLINE_SEC.
-HEARTBEAT_INTERVAL_SEC = 10
-HEARTBEAT_STALE_SEC = 45
-HEARTBEAT_OFFLINE_SEC = 120
+
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "10"))
+HEARTBEAT_STALE_SEC    = int(os.getenv("HEARTBEAT_STALE_SEC", "45"))
+HEARTBEAT_OFFLINE_SEC  = int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120"))
 
 # (optional) how often to take a snapshot
-HEARTBEAT_SNAPSHOT_EVERY = 10
+HEARTBEAT_SNAPSHOT_EVERY = int(os.getenv("HEARTBEAT_SNAPSHOT_EVERY", "15"))
 
 # Auto-delete RunningProcess rows that have been Offline for longer than this many minutes (preferred) and fallback hours
 RUNPROC_PRUNE_OFFLINE_MINUTES = 60
@@ -182,12 +183,10 @@ RUNPROC_PRUNE_OFFLINE_HOURS = 6
 
 # --- BISK enforcer/scheduler ---
 ENFORCER_INTERVAL_SECONDS = int(os.getenv("ENFORCER_INTERVAL_SECONDS", "15"))
-ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/tmp/bisk_enforcer.lock")
-HEARTBEAT_THRESHOLDS = {
-    "online": int(os.getenv("HEARTBEAT_ONLINE_SEC", "15")),
-    "stale": int(os.getenv("HEARTBEAT_STALE_SEC", "45")),
-    "offline": int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120")),
-}
+# Online threshold used by admin; stale/offline use the constants above.
+HEARTBEAT_ONLINE_SEC = int(os.getenv("HEARTBEAT_ONLINE_SEC", str(max(15, HEARTBEAT_INTERVAL_SEC * 3 // 2))))
+
+HB_LOG_EVERY_SEC = int(os.getenv("HB_LOG_EVERY_SEC", "10"))  # rate-limit RunnerHeartbeat inserts
 
 CACHES = {
     "default": {
@@ -197,4 +196,5 @@ CACHES = {
     }
 }
 
+# Keep just one lock path (env can override)
 ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/run/bisk/enforcer.lock")

@@ -37,6 +37,7 @@ class Camera(models.Model):
         help_text="If enabled, Camera settings override StreamProfile (camera-first). Otherwise profile-first."
     )
 
+
     @property
     def is_paused(self):
         from django.utils import timezone
