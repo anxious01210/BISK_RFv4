@@ -25,44 +25,35 @@ OFFLINE_SECS = int(getattr(settings, "HEARTBEAT_OFFLINE_SEC", 120))
 
 # heartbeat freshness (keep same numbers you show in admin)
 STALE_SECS = getattr(settings, "HEARTBEAT_STALE_SEC", 45)
-# FFMPEG_BIN = getattr(settings, "FFMPEG_BIN", "/usr/bin/ffmpeg")
-#
-#
-# def build_ffmpeg_args(camera, profile, snapshot_path):
-#     """
-#     Map StreamProfile knobs into ffmpeg args.
-#     Optional fields supported: rtsp_transport, hwaccel, device, gpu_index, snapshot_every.
-#     """
-#     url = camera.stream_url  # adjust if your camera model uses a different field name
-#     args = [FFMPEG_BIN, "-hide_banner", "-loglevel", "warning", "-nostats"]
-#
-#     # Transport
-#     if getattr(profile, "rtsp_transport", None):
-#         args += ["-rtsp_transport", profile.rtsp_transport]
-#
-#     # HW accel
-#     hw = (getattr(profile, "hwaccel", None) or "").lower()
-#     if hw == "cuda":
-#         args += ["-hwaccel", "cuda"]
-#         if getattr(profile, "gpu_index", None) is not None:
-#             args += ["-hwaccel_device", str(profile.gpu_index)]
-#     elif hw == "vaapi":
-#         dev = getattr(profile, "device", None) or "/dev/dri/renderD128"
-#         args += ["-hwaccel", "vaapi", "-hwaccel_device", dev, "-hwaccel_output_format", "vaapi"]
-#     elif hw == "qsv":
-#         args += ["-hwaccel", "qsv"]
-#
-#     # Input
-#     args += ["-i", url]
-#
-#     # Optional snapshot throttle (1 frame every N seconds)
-#     snap_every = int(getattr(profile, "snapshot_every", 0) or 0)
-#     if snap_every > 0:
-#         args += ["-vf", f"fps=fps=1/{snap_every}"]
-#
-#     # Single-snapshot (continuously updated)
-#     args += ["-frames:v", "1", "-f", "image2", "-y", "-update", "1", snapshot_path]
-#     return args
+
+# --- defaults (place near other module constants) ---
+DEFAULTS = {
+    "rtsp_transport": getattr(settings, "DEFAULT_RTSP_TRANSPORT", "auto"),
+    "hwaccel": getattr(settings, "DEFAULT_HWACCEL", "none"),
+    "device": getattr(settings, "DEFAULT_DEVICE", "cpu"),
+    "gpu_index": getattr(settings, "DEFAULT_GPU_INDEX", 0),
+    "hb_interval": getattr(settings, "DEFAULT_HB_INTERVAL", 10),  # seconds
+    "snapshot_every": getattr(settings, "DEFAULT_SNAPSHOT_EVERY", 3),  # heartbeats
+    "nice": getattr(settings, "DEFAULT_RUNNER_NICE", None),
+    "cpu_affinity": getattr(settings, "DEFAULT_RUNNER_CPU_AFFINITY", ""),  # e.g. "0,1"
+    "fps": getattr(settings, "DEFAULT_FPS", 6),
+    "detection_set": getattr(settings, "DEFAULT_DET_SET", "auto"),
+}
+
+
+def _val(v):
+    return None if v in (None, "", []) else v
+
+
+def resolve_knob(camera, profile, field):
+    """Profile-first unless camera.prefer_camera_over_profile=True."""
+    prof = _val(getattr(profile, field, None)) if profile else None
+    cam = _val(getattr(camera, field, None))
+    default = DEFAULTS.get(field)
+    camera_first = bool(getattr(camera, "prefer_camera_over_profile", False))
+    if camera_first:
+        return cam if cam is not None else (prof if prof is not None else default)
+    return prof if prof is not None else (cam if cam is not None else default)
 
 
 def _policy_is_off_now(policy, now_local):
@@ -166,24 +157,28 @@ def _start(camera, profile):
     py = sys.executable
     runner = Path(settings.BASE_DIR) / "extras" / "recognize_ffmpeg.py"
 
-    # --- knobs: prefer StreamProfile, fallback to Camera, then defaults ---
-    def pf(name, default=None):
-        v = getattr(profile, name, None)
-        return v if (v is not None and v != "") else getattr(camera, name, default)
+    hb_interval = int(resolve_knob(camera, profile, "hb_interval") or 10)
+    snapshot_every = int(resolve_knob(camera, profile, "snapshot_every") or 3)
 
-    hb_interval = int(pf("hb_interval", 10) or 10)
-    snapshot_every = int(pf("snapshot_every", 3) or 3)
-    rtsp_transport = pf("rtsp_transport", "auto") or "auto"
-    hwaccel = pf("hwaccel", "none") or "none"
-    device = pf("device", "cpu") or "cpu"
-    gpu_index = int(pf("gpu_index", 0) or 0)
-    cpu_affinity_s = str(pf("cpu_affinity", "") or "").strip()
-    nice_value = int(pf("nice", 0) or 0)
+    rtsp_transport = resolve_knob(camera, profile, "rtsp_transport") or "auto"  # auto/tcp/udp
+    hwaccel = resolve_knob(camera, profile, "hwaccel") or "none"  # none/nvdec
+    device = resolve_knob(camera, profile, "device") or "cpu"  # cpu/cuda
+    gpu_index = int(resolve_knob(camera, profile, "gpu_index") or 0)
 
-    # bits that live on profile
+    affinity_csv = resolve_knob(camera, profile, "cpu_affinity") or ""
+    cpu_affinity_s = affinity_csv.strip()
+    nice_raw = resolve_knob(camera, profile, "nice")
+    nice_value = int(nice_raw) if (nice_raw is not None and str(nice_raw) != "") else 0
+
+    # Still profile-driven (not affected by the toggle)
     fps = int(getattr(profile, "fps", 6) or 6)
-    det_set = str(getattr(profile, "det_set", "auto") or "auto")
+    # Prefer detection_set; fall back to det_set for backward-compat
+    det_set = str(getattr(profile, "detection_set", getattr(profile, "det_set", "auto")) or "auto")
+
     # build the runner command (your runner builds/executes ffmpeg)
+    rtsp_cli = []
+    if rtsp_transport and rtsp_transport != "auto":
+        rtsp_cli = ["--rtsp_transport", rtsp_transport]
     cmd = [
         str(py), str(runner),
         "--camera", str(camera.id),
@@ -198,11 +193,10 @@ def _start(camera, profile):
         "--snapshots", str(settings.SNAPSHOT_DIR),
         "--hb_interval", str(hb_interval),
         "--snapshot_every", str(snapshot_every),
-        "--rtsp_transport", rtsp_transport,
         "--hwaccel", hwaccel,
         "--device", device,
         "--gpu_index", str(gpu_index),
-    ]
+    ] + rtsp_cli
 
     # Build env for the runner
     env = os.environ.copy()

@@ -1,5 +1,7 @@
 # apps/scheduler/services/__init__.py
+from .enforcer import enforce_schedules, _start, _stop, _pid_alive
 from .lock import acquire_enforcer_lock, release_enforcer_lock, lock_holder_pid
+
 """
 Package facade for scheduler services.
 

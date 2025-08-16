@@ -195,14 +195,18 @@ def main():
     p.add_argument("--snapshots", required=True, help="Directory to write <camera_id>.jpg")
 
     # timing knobs
-    p.add_argument("--hb_interval", type=int, default=10, help="Seconds between heartbeats (default 10)")
-    p.add_argument("--snapshot_every", type=int, default=3, help="Take a snapshot every N heartbeats (default 3)")
+    p.add_argument("--hb_interval", type=int, default=None, help="Seconds between heartbeats (default 10)")
+    p.add_argument("--snapshot_every", type=int, default=None, help="Take a snapshot every N heartbeats (default 3)")
     p.add_argument("--rtsp_transport", choices=["auto", "tcp", "udp"], default="auto")
     p.add_argument("--hwaccel", choices=["none", "nvdec"], default="none")
     p.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
     p.add_argument("--gpu_index", type=int, default=0)
 
     args, _ = p.parse_known_args()
+
+    # 2) after args parsed:
+    hb_interval = int(os.getenv("BISK_HB_INTERVAL", args.hb_interval or 10))
+    snapshot_every = int(os.getenv("BISK_SNAPSHOT_EVERY", args.snapshot_every or 3))
 
     cam_id = int(args.camera)
     prof_id = int(args.profile)
@@ -227,8 +231,8 @@ def main():
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
-    interval = max(1.0, float(args.hb_interval))
-    every_snap = max(1, int(args.snapshot_every))
+    interval = max(1.0, float(hb_interval))
+    every_snap = max(1, int(snapshot_every))
 
     tick = 0
     next_tick = time.monotonic()

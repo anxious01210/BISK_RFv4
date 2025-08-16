@@ -36,11 +36,13 @@
 │   │   │   ├── 0001_initial.py
 │   │   │   ├── 0002_camera_cpu_affinity_camera_device_camera_gpu_index_and_more.py
 │   │   │   ├── 0003_camera_pause_until.py
+│   │   │   ├── 0004_camera_prefer_camera_over_profile.py
 │   │   │   ├── __init__.py
 │   │   │   └── __pycache__
 │   │   │       ├── 0001_initial.cpython-312.pyc
 │   │   │       ├── 0002_camera_cpu_affinity_camera_device_camera_gpu_index_and_more.cpython-312.pyc
 │   │   │       ├── 0003_camera_pause_until.cpython-312.pyc
+│   │   │       ├── 0004_camera_prefer_camera_over_profile.cpython-312.pyc
 │   │   │       └── __init__.cpython-312.pyc
 │   │   ├── models.py
 │   │   ├── __pycache__
@@ -60,10 +62,8 @@
 │       │       ├── enforce_schedules.py
 │       │       ├── prune_heartbeats.py
 │       │       ├── __pycache__
-│       │       │   ├── enforce_schedules.cpython-312.pyc
 │       │       │   ├── prune_heartbeats.cpython-312.pyc
 │       │       │   ├── run_enforcer.cpython-312.pyc
-│       │       │   ├── start_enforce.cpython-312.pyc
 │       │       │   └── stop_runners.cpython-312.pyc
 │       │       ├── run_enforcer.py
 │       │       ├── start_enforce.py
@@ -72,11 +72,19 @@
 │       │   ├── 0001_initial.py
 │       │   ├── 0002_runnerheartbeat.py
 │       │   ├── 0003_runningprocess_uniq_cam_prof_pid.py
+│       │   ├── 0004_runningprocess_effective_opts_and_more.py
+│       │   ├── 0005_runningprocess_effective_args.py
+│       │   ├── 0006_runningprocess_cpu_affinity_and_more.py
+│       │   ├── 0007_streamprofile_cpu_affinity_streamprofile_device_and_more.py
 │       │   ├── __init__.py
 │       │   └── __pycache__
 │       │       ├── 0001_initial.cpython-312.pyc
 │       │       ├── 0002_runnerheartbeat.cpython-312.pyc
 │       │       ├── 0003_runningprocess_uniq_cam_prof_pid.cpython-312.pyc
+│       │       ├── 0004_runningprocess_effective_opts_and_more.cpython-312.pyc
+│       │       ├── 0005_runningprocess_effective_args.cpython-312.pyc
+│       │       ├── 0006_runningprocess_cpu_affinity_and_more.cpython-312.pyc
+│       │       ├── 0007_streamprofile_cpu_affinity_streamprofile_device_and_more.cpython-312.pyc
 │       │       └── __init__.cpython-312.pyc
 │       ├── models.py
 │       ├── periodic
@@ -91,9 +99,17 @@
 │       │   ├── apps.cpython-312.pyc
 │       │   ├── __init__.cpython-312.pyc
 │       │   ├── models.cpython-312.pyc
-│       │   ├── services.cpython-312.pyc
 │       │   └── views.cpython-312.pyc
-│       ├── services.py
+│       ├── services
+│       │   ├── enforcer.py
+│       │   ├── __init__.py
+│       │   ├── lock.py
+│       │   ├── __pycache__
+│       │   │   ├── enforcer.cpython-312.pyc
+│       │   │   ├── __init__.cpython-312.pyc
+│       │   │   ├── lock.cpython-312.pyc
+│       │   │   └── scheduler.cpython-312.pyc
+│       │   └── scheduler.py
 │       ├── templates
 │       │   └── scheduler
 │       │       ├── system.html
@@ -123,6 +139,7 @@
 ├── Details.txt
 ├── docs
 │   └── ops
+│       ├── BISK_RFv4_StreamProfile_Enforcer_Rationale.md
 │       └── REDIS_CACHE.md
 ├── extras
 │   ├── recognize_ffmpeg.py
@@ -150,4 +167,4 @@
 ├── tree.txt
 └── TShoot_01.txt
 
-39 directories, 112 files
+41 directories, 127 files

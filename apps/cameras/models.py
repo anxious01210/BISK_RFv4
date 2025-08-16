@@ -31,5 +31,9 @@ class Camera(models.Model):
 
     hb_interval = models.PositiveSmallIntegerField(default=10)
     snapshot_every = models.PositiveSmallIntegerField(default=3)
+    prefer_camera_over_profile = models.BooleanField(
+        default=False,
+        help_text="If enabled, Camera settings override StreamProfile (camera-first). Otherwise profile-first."
+    )
 
     def __str__(self): return self.name

@@ -13,6 +13,21 @@ class StreamProfile(models.Model):
     fps = models.PositiveIntegerField(default=1)
     detection_set = models.CharField(max_length=16, choices=DET_CHOICES, default="auto")
     extra_args = models.JSONField(default=dict, blank=True)
+    RTSP_TRANSPORT_CHOICES = [("", "(inherit)"), ("auto", "auto"), ("tcp", "tcp"), ("udp", "udp")]
+    HWACCEL_CHOICES = [("", "(inherit)"), ("none", "none"), ("nvdec", "nvdec")]
+    DEVICE_CHOICES = [("", "(inherit)"), ("cpu", "CPU"), ("cuda", "CUDA")]
+
+    rtsp_transport = models.CharField(max_length=8, choices=RTSP_TRANSPORT_CHOICES, blank=True, default="")
+    hwaccel = models.CharField(max_length=8, choices=HWACCEL_CHOICES, blank=True, default="")
+    device = models.CharField(max_length=8, choices=DEVICE_CHOICES, blank=True, default="")
+    gpu_index = models.PositiveSmallIntegerField(null=True, blank=True)
+
+    hb_interval = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Seconds between heartbeats")
+    snapshot_every = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Snapshot every N heartbeats")
+
+    nice = models.SmallIntegerField(null=True, blank=True, help_text="Process niceness (-20..19)")
+    cpu_affinity = models.CharField(max_length=64, blank=True, default="", help_text='e.g. "0,1"')
+
     is_active = models.BooleanField(default=True)
 
     def __str__(
@@ -61,7 +76,13 @@ class RunningProcess(models.Model):
     meta = models.JSONField(default=dict, blank=True)
     # Human-readable summary of what we actually ran (derived from StreamProfile).
     effective_opts = models.TextField(blank=True, default="")
-    effective_args = models.TextField(null=True, blank=True)
+    effective_args = models.TextField(blank=True, default="")          # full CLI used
+    effective_env = models.JSONField(blank=True, default=dict)         # env snapshot we exported
+    nice = models.IntegerField(null=True, blank=True)                  # e.g. 10
+    cpu_affinity = models.JSONField(null=True, blank=True)             # e.g. [0,1]
+
+    last_error = models.CharField(max_length=512, blank=True, default="")  # most recent friendly error from runner
+    last_heartbeat_at = models.DateTimeField(null=True, blank=True)        # runner pings update this
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]
