@@ -12,7 +12,8 @@ class Camera(models.Model):
     scan_station = models.BooleanField(default=False)
     script_type_default = models.PositiveSmallIntegerField(choices=SCRIPT_CHOICES, default=FFMPEG)
     is_active = models.BooleanField(default=True)
-    pause_until = models.DateTimeField(null=True, blank=True, help_text="Temporarily paused until this time")
+    pause_until = models.DateTimeField(null=True, blank=True,
+                                       help_text="If set, this camera will not launch until this time (Asia/Baghdad).")
     RTSP_TRANSPORT_CHOICES = [("auto", "auto"), ("tcp", "tcp"), ("udp", "udp")]
     rtsp_transport = models.CharField(max_length=8, choices=RTSP_TRANSPORT_CHOICES, default="auto",
                                       help_text="FFmpeg -rtsp_transport (tcp/udp/auto)")
@@ -35,5 +36,11 @@ class Camera(models.Model):
         default=False,
         help_text="If enabled, Camera settings override StreamProfile (camera-first). Otherwise profile-first."
     )
+
+    @property
+    def is_paused(self):
+        from django.utils import timezone
+        pu = self.pause_until
+        return bool(pu and timezone.now() < pu)
 
     def __str__(self): return self.name

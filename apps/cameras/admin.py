@@ -6,7 +6,7 @@ from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 from pathlib import Path
-import subprocess
+import subprocess, pytz
 from apps.scheduler.services import enforce_schedules
 from .models import Camera
 
@@ -50,6 +50,49 @@ def pause_30_min(modeladmin, request, queryset):
         f"Paused {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
     )
 
+@admin.action(description="Pause 2 hours")
+def pause_2_hours(modeladmin, request, queryset):
+    until = timezone.now() + timedelta(hours=2)
+    updated = queryset.update(pause_until=until)
+    try:
+        enforce_schedules()
+    except Exception as e:
+        messages.error(request, f"Paused {updated} camera(s), but enforce failed: {e}")
+        return
+    until_local = timezone.localtime(until)
+    messages.success(
+        request,
+        f"Paused {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
+    )
+
+@admin.action(description="Pause until tomorrow 08:00 (Asia/Baghdad)")
+def pause_until_tomorrow_08(modeladmin, request, queryset):
+    tz = pytz.timezone("Asia/Baghdad")
+    now_baghdad = timezone.now().astimezone(tz)
+    target_baghdad = (now_baghdad + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+    # Store using the project's current timezone
+    target_store = target_baghdad.astimezone(timezone.get_current_timezone())
+    updated = queryset.update(pause_until=target_store)
+    try:
+        enforce_schedules()
+    except Exception as e:
+        messages.error(request, f"Paused {updated} camera(s), but enforce failed: {e}")
+        return
+    until_local = timezone.localtime(target_store)
+    messages.success(
+        request,
+        f"Paused {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
+    )
+
+@admin.action(description="Unpause (clear pause_until)")
+def unpause_cameras(modeladmin, request, queryset):
+    updated = queryset.update(pause_until=None)
+    try:
+        enforce_schedules()
+    except Exception as e:
+        messages.error(request, f"Unpaused {updated} camera(s), but enforce failed: {e}")
+        return
+    messages.success(request, f"Unpaused {updated} camera(s) and enforced schedules.")
 
 @admin.register(Camera)
 class CameraAdmin(admin.ModelAdmin):
@@ -65,7 +108,7 @@ class CameraAdmin(admin.ModelAdmin):
     )
     search_fields = ("name", "location")
     list_filter = ("script_type_default", "scan_station", "is_active")
-    actions = [pause_30_min, "action_test_rtsp", ]
+    actions = [pause_30_min, pause_2_hours, pause_until_tomorrow_08, unpause_cameras, "action_test_rtsp"]
 
     @admin.action(description="Test RTSP (ffprobe, 8s)")
     def action_test_rtsp(self, request, queryset):

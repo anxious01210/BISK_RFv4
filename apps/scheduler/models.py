@@ -79,10 +79,10 @@ class RunningProcess(models.Model):
     effective_args = models.TextField(blank=True, default="")          # full CLI used
     effective_env = models.JSONField(blank=True, default=dict)         # env snapshot we exported
     nice = models.IntegerField(null=True, blank=True)                  # e.g. 10
-    cpu_affinity = models.JSONField(null=True, blank=True)             # e.g. [0,1]
-
+    cpu_affinity = models.CharField(max_length=100, blank=True, default="")
     last_error = models.CharField(max_length=512, blank=True, default="")  # most recent friendly error from runner
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)        # runner pings update this
+    effective_env = models.JSONField(default=dict, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]
