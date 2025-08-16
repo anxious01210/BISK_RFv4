@@ -1,11 +1,10 @@
 # apps/scheduler/services.py
-import os, sys, signal, subprocess, time
+import os, sys, signal, subprocess, time, shlex, psutil
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from django.utils import timezone
-from .models import SchedulePolicy, RunningProcess, StreamProfile
+from apps.scheduler.models import SchedulePolicy, RunningProcess, StreamProfile
 from pathlib import Path
-import psutil
 from django.db import transaction, IntegrityError
 from django.core.cache import cache
 from apps.cameras.models import Camera
@@ -26,6 +25,44 @@ OFFLINE_SECS = int(getattr(settings, "HEARTBEAT_OFFLINE_SEC", 120))
 
 # heartbeat freshness (keep same numbers you show in admin)
 STALE_SECS = getattr(settings, "HEARTBEAT_STALE_SEC", 45)
+# FFMPEG_BIN = getattr(settings, "FFMPEG_BIN", "/usr/bin/ffmpeg")
+#
+#
+# def build_ffmpeg_args(camera, profile, snapshot_path):
+#     """
+#     Map StreamProfile knobs into ffmpeg args.
+#     Optional fields supported: rtsp_transport, hwaccel, device, gpu_index, snapshot_every.
+#     """
+#     url = camera.stream_url  # adjust if your camera model uses a different field name
+#     args = [FFMPEG_BIN, "-hide_banner", "-loglevel", "warning", "-nostats"]
+#
+#     # Transport
+#     if getattr(profile, "rtsp_transport", None):
+#         args += ["-rtsp_transport", profile.rtsp_transport]
+#
+#     # HW accel
+#     hw = (getattr(profile, "hwaccel", None) or "").lower()
+#     if hw == "cuda":
+#         args += ["-hwaccel", "cuda"]
+#         if getattr(profile, "gpu_index", None) is not None:
+#             args += ["-hwaccel_device", str(profile.gpu_index)]
+#     elif hw == "vaapi":
+#         dev = getattr(profile, "device", None) or "/dev/dri/renderD128"
+#         args += ["-hwaccel", "vaapi", "-hwaccel_device", dev, "-hwaccel_output_format", "vaapi"]
+#     elif hw == "qsv":
+#         args += ["-hwaccel", "qsv"]
+#
+#     # Input
+#     args += ["-i", url]
+#
+#     # Optional snapshot throttle (1 frame every N seconds)
+#     snap_every = int(getattr(profile, "snapshot_every", 0) or 0)
+#     if snap_every > 0:
+#         args += ["-vf", f"fps=fps=1/{snap_every}"]
+#
+#     # Single-snapshot (continuously updated)
+#     args += ["-frames:v", "1", "-f", "image2", "-y", "-update", "1", snapshot_path]
+#     return args
 
 
 def _policy_is_off_now(policy, now_local):
@@ -122,41 +159,40 @@ def _in_window(now_t, s, e):
 
 def _start(camera, profile):
     """
-    Start a runner for (camera, profile). Reads runtime knobs from Camera.
-    Returns the spawned PID.
+    Start a runner for (camera, profile).
+    Returns (pid, cmdline_str).
     """
-    import sys, subprocess, os
-    import psutil
-    from pathlib import Path
-    from django.conf import settings
 
     py = sys.executable
     runner = Path(settings.BASE_DIR) / "extras" / "recognize_ffmpeg.py"
 
-    # --- knobs come from Camera (safe fallbacks) ---
-    hb_interval = getattr(camera, "hb_interval", 10) or 10
-    snapshot_every = getattr(camera, "snapshot_every", 3) or 3
-    rtsp_transport = getattr(camera, "rtsp_transport", "auto") or "auto"
-    hwaccel = getattr(camera, "hwaccel", "none") or "none"
-    device = getattr(camera, "device", "cpu") or "cpu"
-    gpu_index = int(getattr(camera, "gpu_index", 0) or 0)
-    cpu_affinity_s = (getattr(camera, "cpu_affinity", "") or "").strip()
-    nice_value = int(getattr(camera, "nice", 0) or 0)
+    # --- knobs: prefer StreamProfile, fallback to Camera, then defaults ---
+    def pf(name, default=None):
+        v = getattr(profile, name, None)
+        return v if (v is not None and v != "") else getattr(camera, name, default)
 
-    # required bits that still live on profile
+    hb_interval = int(pf("hb_interval", 10) or 10)
+    snapshot_every = int(pf("snapshot_every", 3) or 3)
+    rtsp_transport = pf("rtsp_transport", "auto") or "auto"
+    hwaccel = pf("hwaccel", "none") or "none"
+    device = pf("device", "cpu") or "cpu"
+    gpu_index = int(pf("gpu_index", 0) or 0)
+    cpu_affinity_s = str(pf("cpu_affinity", "") or "").strip()
+    nice_value = int(pf("nice", 0) or 0)
+
+    # bits that live on profile
     fps = int(getattr(profile, "fps", 6) or 6)
-    det_set = str(getattr(profile, "detection_set", "auto") or "auto")
-
-    # build command
+    det_set = str(getattr(profile, "det_set", "auto") or "auto")
+    # build the runner command (your runner builds/executes ffmpeg)
     cmd = [
         str(py), str(runner),
         "--camera", str(camera.id),
         "--profile", str(profile.id),
         "--fps", str(fps),
         "--det_set", det_set,
-        "--hb", settings.RUNNER_HEARTBEAT_URL,  # you already use this value
-        "--hb_key", settings.RUNNER_HEARTBEAT_KEY,  # you already use this value
-        "--rtsp", camera.rtsp_url,
+        "--hb", settings.RUNNER_HEARTBEAT_URL,
+        "--hb_key", settings.RUNNER_HEARTBEAT_KEY,
+        "--rtsp", camera.rtsp_url,  # keep your current field
         "--ffmpeg", settings.FFMPEG_PATH,
         "--ffprobe", settings.FFPROBE_PATH,
         "--snapshots", str(settings.SNAPSHOT_DIR),
@@ -168,6 +204,11 @@ def _start(camera, profile):
         "--gpu_index", str(gpu_index),
     ]
 
+    # Build env for the runner
+    env = os.environ.copy()
+    env["BISK_HB_INTERVAL"] = str(hb_interval)  # already computed above
+    env["BISK_SNAPSHOT_EVERY"] = str(snapshot_every)  # already computed above
+
     # spawn in its own session so killpg() works
     p = subprocess.Popen(
         cmd,
@@ -176,6 +217,7 @@ def _start(camera, profile):
         stderr=subprocess.DEVNULL,
         preexec_fn=os.setsid,
         close_fds=True,
+        env=env,
     )
 
     # set affinity / nice for the runner (ffmpeg inherits)
@@ -190,7 +232,8 @@ def _start(camera, profile):
     except Exception:
         pass
 
-    return p.pid
+    # return PID and the exact command we ran (for audit)
+    return p.pid, " ".join(shlex.quote(x) for x in cmd)
 
 
 def _stop(pid: int, deadline: float = 3.0) -> bool:
@@ -438,15 +481,21 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                     old.status = "dead"
                     old.save(update_fields=["status"])
 
-            pid = _start(camera, profile)
+            pid, cmdline = _start(camera, profile)
             with transaction.atomic():
                 try:
-                    row, _ = RunningProcess.objects.get_or_create(
+                    row, created = RunningProcess.objects.get_or_create(
                         camera=camera,
                         profile=profile,
                         pid=pid,
-                        defaults={"status": "running"},
+                        defaults={
+                            "status": "running",
+                            "effective_args": cmdline,  # ← NEW
+                        },
                     )
+                    if not created and row.effective_args != cmdline:
+                        row.effective_args = cmdline
+                        row.save(update_fields=["effective_args"])
                 except IntegrityError:
                     row = RunningProcess.objects.get(camera=camera, profile=profile, pid=pid)
 
@@ -461,7 +510,8 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
         RunningProcess.objects.filter(status="dead").filter(
             Q(last_heartbeat__lt=cut) | Q(last_heartbeat__isnull=True)).delete()
 
-        return EnforceResult(started=started_list, stopped=stopped_list, desired_count=len(desired), running_count=running_count,
+        return EnforceResult(started=started_list, stopped=stopped_list, desired_count=len(desired),
+                             running_count=running_count,
                              pruned_count=pruned, )
 
 

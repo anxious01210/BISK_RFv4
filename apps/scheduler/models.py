@@ -59,6 +59,9 @@ class RunningProcess(models.Model):
     last_heartbeat = models.DateTimeField(auto_now=True)
     status = models.CharField(max_length=16, default="running")  # running|stopping|dead
     meta = models.JSONField(default=dict, blank=True)
+    # Human-readable summary of what we actually ran (derived from StreamProfile).
+    effective_opts = models.TextField(blank=True, default="")
+    effective_args = models.TextField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]
@@ -75,7 +78,8 @@ class RunnerHeartbeat(models.Model):
     detected = models.PositiveIntegerField(default=0)
     matched = models.PositiveIntegerField(default=0)
     latency_ms = models.FloatField(default=0)
-    last_error = models.CharField(max_length=200, blank=True, default="")
+    # Friendly error string extracted from runner/ffmpeg (optional).
+    last_error = models.CharField(max_length=255, null=True, blank=True)
 
     class Meta:
         indexes = [

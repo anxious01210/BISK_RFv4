@@ -196,3 +196,5 @@ CACHES = {
         "KEY_PREFIX": "bisk",
     }
 }
+
+ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/run/bisk/enforcer.lock")
