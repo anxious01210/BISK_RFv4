@@ -1,21 +1,195 @@
-<!doctype html>
-<html lang="en">
+{#<!doctype html>#}
+{#<html lang="en">#}
+{#<head>#}
+{#    <meta charset="utf-8">#}
+{#    <title>BISK System</title>#}
+{#    <meta name="viewport" content="width=device-width, initial-scale=1">#}
+{#    <meta http-equiv="refresh" content="10">#}
+{#    <style>body {#}
+{#        font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;#}
+{#        margin: 16px#}
+{#    }#}
+{##}
+{#    h1 {#}
+{#        margin: 0 0 12px#}
+{#    }</style>#}
+{#</head>#}
+{#<body>#}
+{#<h1>BISK System — {{ host }}</h1>#}
+{#{% include "scheduler/_system_panel.html" %}#}
+{#</body>#}
+{#</html>#}
+
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
 <head>
     <meta charset="utf-8">
     <title>BISK System</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta http-equiv="refresh" content="10">
-    <style>body {
-        font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
-        margin: 16px
-    }
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <style>
+        /* --- Minimal page chrome for the standalone dash --- */
+        :root {
+            color-scheme: light dark;
+        }
 
-    h1 {
-        margin: 0 0 12px
-    }</style>
+        body {
+            margin: 0;
+            padding: 0 10px 24px;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+            background: #fff;
+        }
+
+        html[data-theme="dark"] body,
+        html[data-theme="system"] body {
+            background: #0b0f16;
+        }
+
+        .dash-wrap {
+            max-width: 1200px;
+            margin: 16px auto;
+        }
+
+        /* --- Theme toggle --- */
+        .theme-toggle {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            justify-content: flex-end;
+            padding: 10px 0 6px;
+        }
+
+        .theme-toggle .group {
+            display: inline-flex;
+            background: rgba(0, 0, 0, .04);
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .theme-toggle button {
+            appearance: none;
+            border: 0;
+            background: transparent;
+            padding: 6px 10px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #0f172a;
+        }
+
+        .theme-toggle button.active {
+            background: #eef2ff;
+            color: #1e3a8a;
+        }
+
+        .theme-toggle button:not(.active):hover {
+            background: rgba(0, 0, 0, .05);
+        }
+
+        /* dark/system look */
+        html[data-theme="dark"] .theme-toggle .group,
+        html[data-theme="system"] .theme-toggle .group {
+            background: rgba(255, 255, 255, .06);
+            border-color: rgba(255, 255, 255, .18);
+        }
+
+        html[data-theme="dark"] .theme-toggle button,
+        html[data-theme="system"] .theme-toggle button {
+            color: #e5e7eb;
+        }
+
+        html[data-theme="dark"] .theme-toggle button.active,
+        html[data-theme="system"] .theme-toggle button.active {
+            background: #111827;
+            color: #ffffff;
+        }
+
+        html[data-theme="dark"] .theme-toggle button:not(.active):hover,
+        html[data-theme="system"] .theme-toggle button:not(.active):hover {
+            background: rgba(255, 255, 255, .08);
+        }
+
+        /* Optional: page title */
+        .dash-title {
+            font-size: 22px;
+            font-weight: 800;
+            margin: 8px 0 2px;
+            color: #0f172a;
+        }
+
+        html[data-theme="dark"] .dash-title,
+        html[data-theme="system"] .dash-title {
+            color: #f1f5f9;
+        }
+    </style>
 </head>
 <body>
-<h1>BISK System — {{ host }}</h1>
-{% include "scheduler/_system_panel.html" %}
+<div class="dash-wrap">
+    <!-- Theme toggle (dash only) -->
+    <div class="theme-toggle" aria-label="Theme">
+        <div class="group" role="tablist" aria-label="Theme">
+            <button id="tLight" type="button" role="tab" aria-selected="false">Light</button>
+            <button id="tSystem" type="button" role="tab" aria-selected="true" class="active">System</button>
+            <button id="tDark" type="button" role="tab" aria-selected="false">Dark</button>
+        </div>
+    </div>
+
+    <h1 class="dash-title">BISK System</h1>
+
+    {% include "scheduler/_system_panel.html" %}
+</div>
+
+<script>
+    (function () {
+        const KEY = 'bisk:theme';
+        const htmlEl = document.documentElement;
+        const bodyEl = document.body;
+        const btnL = document.getElementById('tLight');
+        const btnS = document.getElementById('tSystem');
+        const btnD = document.getElementById('tDark');
+
+        function apply(theme) {
+            // theme is 'light' | 'system' | 'dark'
+            htmlEl.dataset.theme = theme;
+            bodyEl.dataset.theme = theme; // our panel CSS also reads body[data-theme]
+            // Clear any legacy classes if you had them
+            htmlEl.classList.remove('dark');
+            bodyEl.classList.remove('dark');
+            // Update active state
+            [btnL, btnS, btnD].forEach(b => {
+                b.classList.toggle('active',
+                    (b === btnL && theme === 'light') ||
+                    (b === btnS && theme === 'system') ||
+                    (b === btnD && theme === 'dark')
+                );
+                b.setAttribute('aria-selected',
+                    (b.classList.contains('active') ? 'true' : 'false'));
+            });
+        }
+
+        function setTheme(theme) {
+            try {
+                localStorage.setItem(KEY, theme);
+            } catch {
+            }
+            apply(theme);
+        }
+
+        // initialize
+        let saved = null;
+        try {
+            saved = localStorage.getItem(KEY);
+        } catch {
+        }
+        if (saved !== 'light' && saved !== 'dark' && saved !== 'system') saved = 'system';
+        apply(saved);
+
+        // wire clicks
+        btnL.addEventListener('click', () => setTheme('light'));
+        btnS.addEventListener('click', () => setTheme('system'));
+        btnD.addEventListener('click', () => setTheme('dark'));
+    })();
+</script>
 </body>
 </html>

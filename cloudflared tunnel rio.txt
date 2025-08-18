@@ -1,0 +1,19 @@
+cloudflared tunnel
+rio@GP73:~$ cloudflared tunnel login
+A browser window should have opened at the following URL:
+
+https://dash.cloudflare.com/argotunnel?aud=&callback=https%3A%2F%2Flogin.cloudflareaccess.org%2FLbdAo97NaMIHFqOMMI4aZ-8sLj2ncb0kJIgUn7bFAQU%3D
+
+If the browser failed to open, please visit the URL above directly in your browser.
+2025-08-17T15:20:09Z INF Waiting for login...
+2025-08-17T15:20:11Z INF You have successfully logged in.
+If you wish to copy your credentials to a server, they have been saved to:
+/home/rio/.cloudflared/cert.pem
+
+rio@GP73:~$ cloudflared tunnel create dev-mirror
+Tunnel credentials written to /home/rio/.cloudflared/c0473f57-ede8-4cf6-8d62-1219f16f378c.json. cloudflared chose this file based on where your origin certificate was found. Keep this file secret. To revoke these credentials, delete the tunnel.
+
+Created tunnel dev-mirror with id c0473f57-ede8-4cf6-8d62-1219f16f378c
+rio@GP73:~$ 
+
+

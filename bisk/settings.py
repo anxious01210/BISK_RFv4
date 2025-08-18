@@ -186,7 +186,7 @@ ENFORCER_INTERVAL_SECONDS = int(os.getenv("ENFORCER_INTERVAL_SECONDS", "15"))
 # Online threshold used by admin; stale/offline use the constants above.
 HEARTBEAT_ONLINE_SEC = int(os.getenv("HEARTBEAT_ONLINE_SEC", str(max(15, HEARTBEAT_INTERVAL_SEC * 3 // 2))))
 
-HB_LOG_EVERY_SEC = int(os.getenv("HB_LOG_EVERY_SEC", "10"))  # rate-limit RunnerHeartbeat inserts
+HB_LOG_EVERY_SEC = int(os.getenv("HB_LOG_EVERY_SEC", "12"))  # rate-limit RunnerHeartbeat inserts
 
 CACHES = {
     "default": {

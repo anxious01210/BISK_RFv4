@@ -1,7 +1,12 @@
 {% load humanize %}
 
 <style>
-    /* ---------------- Theme tokens ---------------- */
+    /* ---------------- Theme tokens ----------------
+       Light = default. Dark activates when:
+         - html/body has .dark OR data-theme="dark", OR
+         - data-theme="system"/"auto" AND OS prefers dark.
+    ------------------------------------------------- */
+
     .bisk {
         --bisk-text: #0f172a; /* slate-900 */
         --bisk-muted: #475569; /* slate-600 */
@@ -13,30 +18,32 @@
         --bisk-btn-bg: #eef2ff; /* indigo-50-ish */
         --bisk-btn-border: #c7d2fe; /* indigo-200 */
         --bisk-btn-text: #1e3a8a; /* indigo-800 */
-        --bisk-btn-bg-hover: #e0e7ff;
+        --bisk-btn-bg-hover: #e0e7ff; /* softer hover */
         --bisk-btn-border-hover: #a5b4fc;
         --bisk-btn-text-hover: #1e3a8a;
     }
 
+    /* Dark: explicit */
     html.dark .bisk,
     body.dark .bisk,
     html[data-theme="dark"] .bisk,
     body[data-theme="dark"] .bisk {
-        --bisk-text: #e5e7eb;
-        --bisk-muted: #cbd5e1;
+        --bisk-text: #e5e7eb; /* gray-200 */
+        --bisk-muted: #cbd5e1; /* slate-300 */
         --bisk-border: rgba(255, 255, 255, .16);
         --bisk-surface: rgba(255, 255, 255, .06);
         --bisk-chip: rgba(255, 255, 255, .12);
         --bisk-surface-soft: rgba(255, 255, 255, .08);
 
-        --bisk-btn-bg: #0b1220;
-        --bisk-btn-border: #334155;
+        --bisk-btn-bg: #0b1220; /* deep slate */
+        --bisk-btn-border: #334155; /* slate-700 */
         --bisk-btn-text: #e5e7eb;
         --bisk-btn-bg-hover: #111827;
         --bisk-btn-border-hover: #3f4a5a;
         --bisk-btn-text-hover: #ffffff;
     }
 
+    /* Dark: system/auto + OS prefers dark */
     @media (prefers-color-scheme: dark) {
         html[data-theme="system"] .bisk,
         body[data-theme="system"] .bisk,
@@ -59,6 +66,7 @@
     }
 
     /* ---------------- Layout & components ---------------- */
+
     .bisk {
         color: var(--bisk-text);
         font-size: 14px;
@@ -123,6 +131,8 @@
         color: #f8fafc;
     }
 
+    /* strong in dark/system */
+
     .bisk-kv {
         display: grid;
         grid-template-columns:180px 1fr;
@@ -164,6 +174,7 @@
         color: #78350f
     }
 
+    /* Dark badge hues */
     html.dark .bisk .bisk-badge.red,
     body.dark .bisk .bisk-badge.red,
     html[data-theme="dark"] .bisk .bisk-badge.red,
@@ -216,12 +227,11 @@
 
     .bisk-actions {
         display: flex;
-        gap: 10px;
-        align-items: center;
-        flex-wrap: wrap
+        gap: 8px;
+        align-items: center
     }
 
-    /* Button */
+    /* Button — soft, professional; gentle hover; consistent across modes/dash/admin */
     .bisk-btn {
         appearance: none;
         border: 1px solid var(--bisk-btn-border);
@@ -249,34 +259,12 @@
         box-shadow: 0 1px 2px rgba(0, 0, 0, .06);
     }
 
-    /* Auto-refresh control */
-    .bisk-refresh {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12px;
-        color: var(--bisk-muted);
-        background: var(--bisk-chip);
-        border: 1px solid var(--bisk-border);
-        border-radius: 8px;
-        padding: 4px 8px;
-    }
-
-    .bisk-input {
-        width: 90px;
-        padding: 4px 6px;
-        font-size: 12px;
-        border-radius: 6px;
-        border: 1px solid var(--bisk-border);
-        background: var(--bisk-surface);
-        color: var(--bisk-text);
-    }
-
     .bisk-sub {
         color: var(--bisk-muted);
         font-size: 12px
     }
 
+    /* make "Updated ..." readable in dark & system */
     html.dark .bisk .bisk-sub,
     body.dark .bisk .bisk-sub,
     html[data-theme="dark"] .bisk .bisk-sub,
@@ -288,6 +276,7 @@
         color: #cbd5e1;
     }
 
+    /* Tables */
     .bisk-table {
         width: 100%;
         border-collapse: separate;
@@ -328,14 +317,6 @@
             <div class="bisk-sub">Updated {{ now }}</div>
         </div>
         <div class="bisk-actions">
-            <!-- Auto-refresh control -->
-            <label class="bisk-refresh" title="Set auto-refresh interval in seconds (0 = off)">
-                <span>Auto-refresh (s)</span>
-                <input id="biskRefreshInput" class="bisk-input" type="number" min="0" max="86400" step="1"/>
-                <span id="biskRefreshCountdown" class="bisk-sub">off</span>
-            </label>
-
-            <!-- Enforce now -->
             <form method="post" action="{% url 'enforce_now' %}">
                 {% csrf_token %}
                 <button type="submit" class="bisk-btn">Enforce now</button>
@@ -454,75 +435,3 @@
         </div>
     </div>
 </div>
-
-<script>
-    (function () {
-        const KEY = 'bisk:system:auto_refresh_seconds';
-        const input = document.getElementById('biskRefreshInput');
-        const cdEl = document.getElementById('biskRefreshCountdown');
-
-        // default 30s if unset; clamp 0..86400
-        const stored = localStorage.getItem(KEY);
-        let seconds = stored !== null ? parseInt(stored, 10) : 30;
-        if (isNaN(seconds) || seconds < 0) seconds = 0;
-        if (seconds > 86400) seconds = 86400;
-
-        input.value = String(seconds);
-
-        let timer = null;
-        let countdown = seconds;
-
-        function updateCountdownLabel() {
-            if (!seconds) {
-                cdEl.textContent = 'off';
-                return;
-            }
-            cdEl.textContent = countdown + 's';
-        }
-
-        function clearTimer() {
-            if (timer) {
-                clearInterval(timer);
-                timer = null;
-            }
-        }
-
-        function startTimer() {
-            clearTimer();
-            if (!seconds) {
-                updateCountdownLabel();
-                return;
-            }
-            countdown = seconds;
-            updateCountdownLabel();
-            timer = setInterval(() => {
-                countdown -= 1;
-                if (countdown <= 0) {
-                    location.reload();
-                    return;
-                }
-                updateCountdownLabel();
-            }, 1000);
-        }
-
-        input.addEventListener('change', () => {
-            let val = parseInt(input.value, 10);
-            if (isNaN(val) || val < 0) val = 0;
-            if (val > 86400) val = 86400;
-            seconds = val;
-            localStorage.setItem(KEY, String(seconds));
-            startTimer();
-        });
-
-        document.addEventListener('visibilitychange', () => {
-            // Pause countdown when tab hidden; resume when visible (keeps UX sane)
-            if (document.hidden) {
-                clearTimer();
-            } else {
-                startTimer();
-            }
-        });
-
-        startTimer();
-    })();
-</script>

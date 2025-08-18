@@ -1,5 +1,5 @@
-# apps/scheduler/services.py
-import os, sys, signal, subprocess, time, shlex, psutil
+# apps/scheduler/services/enforcer.py
+import os, sys, signal, subprocess, time, shlex, psutil, re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from django.utils import timezone
@@ -226,8 +226,17 @@ def _start(camera, profile):
     except Exception:
         pass
 
-    # return PID and the exact command we ran (for audit)
-    return p.pid, " ".join(shlex.quote(x) for x in cmd)
+    # Helpers to mask any credentials in RTSP URLs before persisting
+    def _mask_url(s: str) -> str:
+        # rtsp://user:pass@host -> rtsp://user:***@host
+        return re.sub(r'(rtsp://[^:@\s]+:)[^@/\s]+(@)', r'\1***\2', s)
+
+    def _mask_cmdline(argv):
+        return " ".join(shlex.quote(_mask_url(x)) for x in argv)
+
+    # return PID and the masked command we ran (for audit/UI)
+    return p.pid, _mask_cmdline(cmd)
+
 
 
 def _stop(pid: int, deadline: float = 3.0) -> bool:
@@ -476,6 +485,14 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                     old.save(update_fields=["status"])
 
             pid, cmdline = _start(camera, profile)
+
+            affinity_csv = resolve_knob(camera, profile, "cpu_affinity") or ""
+            cpu_affinity_s = affinity_csv.strip()
+
+            nice_raw = resolve_knob(camera, profile, "nice")
+            nice_value = int(nice_raw) if (nice_raw is not None and str(nice_raw) != "") else None
+
+
             # Build a snapshot of the knobs we effectively used (camera-first/profile-first aware)
             env_snapshot = {
                 "hb_interval": str(int(resolve_knob(camera, profile, "hb_interval") or 10)),
@@ -493,17 +510,35 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                         pid=pid,
                         defaults={
                             "status": "running",
-                            "effective_args": cmdline,  # ← NEW
+                            "effective_args": cmdline,  # masked
                             "effective_env": env_snapshot,
-                            },
+                            "nice": (nice_value if (nice_raw is not None and str(nice_raw) != "") else None),
+                            "cpu_affinity": cpu_affinity_s,
+                        },
                     )
+                    updates = []
+
                     if not created and row.effective_args != cmdline:
                         row.effective_args = cmdline
-                        row.save(update_fields=["effective_args"])
-                    if not created and row.effective_args != cmdline:
-                        row.effective_args = cmdline
+                        updates.append("effective_args")
+
+                    if not created and row.effective_env != env_snapshot:
                         row.effective_env = env_snapshot
-                        row.save(update_fields=["effective_args", "effective_env"])
+                        updates.append("effective_env")
+
+                    # persist knobs we applied OS-side
+                    expected_nice = nice_value if (nice_raw is not None and str(nice_raw) != "") else None
+                    if not created and row.nice != expected_nice:
+                        row.nice = expected_nice
+                        updates.append("nice")
+
+                    if not created and row.cpu_affinity != cpu_affinity_s:
+                        row.cpu_affinity = cpu_affinity_s
+                        updates.append("cpu_affinity")
+
+                    if updates:
+                        row.save(update_fields=updates)
+
                 except IntegrityError:
                     row = RunningProcess.objects.get(camera=camera, profile=profile, pid=pid)
 

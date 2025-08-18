@@ -278,6 +278,8 @@ class RunningProcessAdmin(admin.ModelAdmin):
         "mem_mb",
         "threads",
         "children",
+        "last_heartbeat_at",
+        "last_error_badge",
         "snapshot_thumb",
     )
     list_select_related = ("camera", "profile")
@@ -337,6 +339,17 @@ class RunningProcessAdmin(admin.ModelAdmin):
             )
         }),
     )
+
+    def last_error_badge(self, obj):
+        if getattr(obj, "last_error", ""):
+            text = (obj.last_error[:60] + "…") if len(obj.last_error) > 60 else obj.last_error
+            return format_html(
+                '<span style="background:#dc2626;color:#fff;padding:2px 6px;border-radius:12px;font-size:11px;" '
+                'title="{}">{}</span>',
+                obj.last_error, text
+            )
+        return "—"
+    last_error_badge.short_description = "Last error"
 
     # ---------- helpers ----------
     def _proc(self, pid):

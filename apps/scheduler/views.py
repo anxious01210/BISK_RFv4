@@ -4,16 +4,33 @@ from typing import Optional, List
 from django.http import JsonResponse
 from django.conf import settings
 # from django.contrib.admin.views.decorators import staff_member_required
-# from django.core.cache import caches
-# from django.shortcuts import render
 from django.utils import timezone
 from apps.scheduler.models import RunningProcess  # adjust import if your model path differs
 from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
-from django.core.cache import caches
 from django.shortcuts import render
-from apps.scheduler.models import RunningProcess
+from django.views.decorators.csrf import csrf_protect
+from django.views.decorators.http import require_POST
+from django.contrib import messages
+from django.shortcuts import redirect
+from django.core.cache import cache, caches
+from .services.enforcer import enforce_schedules
 
+
+@staff_member_required
+@require_POST
+@csrf_protect
+def enforce_now(request):
+    if not cache.add("bisk:enforce:now", "1", timeout=10):
+        messages.warning(request, "Please wait ~10s between manual enforces.")
+        return redirect("/admin/system/")
+    res = enforce_schedules()
+    messages.success(
+        request,
+        f"Enforced ✓ — started {len(res.started)}, stopped {len(res.stopped)}, "
+        f"desired {res.desired_count}, running {res.running_count}, pruned {res.pruned_count}."
+    )
+    return redirect("/admin/system/")
 
 @dataclass
 class GpuInfo:

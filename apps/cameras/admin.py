@@ -4,14 +4,17 @@ from django.utils.safestring import mark_safe
 from django.utils.html import format_html
 from django.conf import settings
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, datetime, time
 from pathlib import Path
-import subprocess, pytz
+import subprocess
+from zoneinfo import ZoneInfo
+
 from apps.scheduler.services import enforce_schedules
 from .models import Camera
-
+from .utils import snapshot_url_for
 
 def _ffprobe_test(url: str, timeout_sec: int = 8):
+    """Run ffprobe on the given RTSP URL and return (ok, message)."""
     exe = settings.FFPROBE_PATH
     cmd = [
         exe, "-v", "error",
@@ -32,67 +35,54 @@ def _ffprobe_test(url: str, timeout_sec: int = 8):
         return False, str(e)
 
 
-@admin.action(description="Pause 30 minutes")
-def pause_30_min(modeladmin, request, queryset):
-    until = timezone.now() + timedelta(minutes=30)
+def _apply_pause(request, queryset, until, label: str):
+    """Helper to set pause_until, enforce schedules, and show messages."""
     updated = queryset.update(pause_until=until)
-    # Optional: call your scheduler.enforce_schedules() here if you want instant stop
     try:
         enforce_schedules()
     except Exception as e:
-        messages.error(request, f"Paused {updated} camera(s), but enforce failed: {e}")
+        messages.error(request, f"{label} {updated} camera(s), but enforce failed: {e}")
         return
+    if until:
+        until_local = timezone.localtime(until)
+        messages.success(
+            request,
+            f"{label} {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
+        )
+    else:
+        messages.success(request, f"{label} {updated} camera(s) and enforced schedules.")
 
-    # show the timestamp in your local timezone (UTC+3)
-    until_local = timezone.localtime(until)
-    messages.success(
-        request,
-        f"Paused {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
-    )
+
+@admin.action(description="Pause 30 minutes")
+def pause_30_min(modeladmin, request, queryset):
+    until = timezone.now() + timedelta(minutes=30)
+    _apply_pause(request, queryset, until, "Paused")
+
 
 @admin.action(description="Pause 2 hours")
 def pause_2_hours(modeladmin, request, queryset):
     until = timezone.now() + timedelta(hours=2)
-    updated = queryset.update(pause_until=until)
-    try:
-        enforce_schedules()
-    except Exception as e:
-        messages.error(request, f"Paused {updated} camera(s), but enforce failed: {e}")
-        return
-    until_local = timezone.localtime(until)
-    messages.success(
-        request,
-        f"Paused {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
-    )
+    _apply_pause(request, queryset, until, "Paused")
+
 
 @admin.action(description="Pause until tomorrow 08:00 (Asia/Baghdad)")
 def pause_until_tomorrow_08(modeladmin, request, queryset):
-    tz = pytz.timezone("Asia/Baghdad")
+    tz = ZoneInfo("Asia/Baghdad")
     now_baghdad = timezone.now().astimezone(tz)
-    target_baghdad = (now_baghdad + timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
-    # Store using the project's current timezone
-    target_store = target_baghdad.astimezone(timezone.get_current_timezone())
-    updated = queryset.update(pause_until=target_store)
-    try:
-        enforce_schedules()
-    except Exception as e:
-        messages.error(request, f"Paused {updated} camera(s), but enforce failed: {e}")
-        return
-    until_local = timezone.localtime(target_store)
-    messages.success(
-        request,
-        f"Paused {updated} camera(s) until {until_local:%Y-%m-%d %H:%M:%S %Z} and enforced schedules."
+    target_baghdad = datetime.combine(
+        now_baghdad.date() + timedelta(days=1),
+        time(8, 0),
+        tzinfo=tz,
     )
+    # Convert back to project TZ
+    target_store = target_baghdad.astimezone(timezone.get_current_timezone())
+    _apply_pause(request, queryset, target_store, "Paused")
+
 
 @admin.action(description="Unpause (clear pause_until)")
 def unpause_cameras(modeladmin, request, queryset):
-    updated = queryset.update(pause_until=None)
-    try:
-        enforce_schedules()
-    except Exception as e:
-        messages.error(request, f"Unpaused {updated} camera(s), but enforce failed: {e}")
-        return
-    messages.success(request, f"Unpaused {updated} camera(s) and enforced schedules.")
+    _apply_pause(request, queryset, None, "Unpaused")
+
 
 @admin.register(Camera)
 class CameraAdmin(admin.ModelAdmin):
@@ -108,7 +98,13 @@ class CameraAdmin(admin.ModelAdmin):
     )
     search_fields = ("name", "location")
     list_filter = ("script_type_default", "scan_station", "is_active")
-    actions = [pause_30_min, pause_2_hours, pause_until_tomorrow_08, unpause_cameras, "action_test_rtsp"]
+    actions = [
+        pause_30_min,
+        pause_2_hours,
+        pause_until_tomorrow_08,
+        unpause_cameras,
+        "action_test_rtsp",
+    ]
 
     @admin.action(description="Test RTSP (ffprobe, 8s)")
     def action_test_rtsp(self, request, queryset):
@@ -120,20 +116,16 @@ class CameraAdmin(admin.ModelAdmin):
         messages.info(request, mark_safe("<br>".join(reports) or "No cameras selected."))
 
     def snapshot_thumb(self, obj):
-        snap_path = Path(settings.SNAPSHOT_DIR) / f"{obj.id}.jpg"
-        if not snap_path.exists():
+        """Show the latest snapshot thumbnail for this camera."""
+        url = snapshot_url_for(obj.id)
+        if not url:
             return "—"
-        try:
-            mtime = int(snap_path.stat().st_mtime)
-        except Exception:
-            mtime = 0
-        url = f"{settings.MEDIA_URL}snapshots/{obj.id}.jpg?v={mtime}"
         return format_html(
-            '<a href="{}" target="_blank" title="Open full snapshot">'
-            '<img src="{}" alt="snapshot" '
+            '<a href="{0}" target="_blank" title="Open full snapshot">'
+            '<img src="{0}" alt="snapshot" '
             'style="height:90px;border-radius:6px;box-shadow:0 0 2px rgba(0,0,0,.25);" />'
             '</a>',
-            url, url
+            url
         )
 
     snapshot_thumb.short_description = "Snapshot"
