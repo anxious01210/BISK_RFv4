@@ -23,16 +23,28 @@ from django.utils import timezone
 @require_POST
 @csrf_protect
 def enforce_now(request):
+    next_url = request.POST.get("next") or request.META.get("HTTP_REFERER") or "/admin/system/"
     if not cache.add("bisk:enforce:now", "1", timeout=10):
         messages.warning(request, "Please wait ~10s between manual enforces.")
-        return redirect("/admin/system/")
+        return redirect(next_url)
     res = enforce_schedules()
     messages.success(
         request,
         f"Enforced ✓ — started {len(res.started)}, stopped {len(res.stopped)}, "
         f"desired {res.desired_count}, running {res.running_count}, pruned {res.pruned_count}."
     )
-    return redirect("/admin/system/")
+    return redirect(next_url)
+# def enforce_now(request):
+#     if not cache.add("bisk:enforce:now", "1", timeout=10):
+#         messages.warning(request, "Please wait ~10s between manual enforces.")
+#         return redirect("/admin/system/")
+#     res = enforce_schedules()
+#     messages.success(
+#         request,
+#         f"Enforced ✓ — started {len(res.started)}, stopped {len(res.stopped)}, "
+#         f"desired {res.desired_count}, running {res.running_count}, pruned {res.pruned_count}."
+#     )
+#     return redirect("/admin/system/")
 
 @dataclass
 class GpuInfo:

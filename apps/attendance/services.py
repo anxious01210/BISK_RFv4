@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import timedelta, datetime
 from typing import Optional, Tuple
 from django.db import transaction
+from django.db.models import F
 from django.utils.timezone import now
 from django.utils import timezone
 
@@ -147,3 +148,72 @@ def roll_periods(days: int = 7, start_date: Optional[datetime.date] = None) -> i
             )
             created += 1 if was_created else 0
     return created
+
+
+def _get_settings() -> RecognitionSettings:
+    # If no row, fall back to defaults of the model
+    return RecognitionSettings.objects.first() or RecognitionSettings()
+
+def _find_occurrence(ts) -> Optional[PeriodOccurrence]:
+    return (PeriodOccurrence.objects
+            .filter(start_dt__lte=ts, end_dt__gte=ts, is_school_day=True)
+            .order_by("start_dt")
+            .first())
+
+@transaction.atomic
+def ingest_match(*, h_code: str, score: float, ts=None, camera=None, crop_path: str = "") -> dict:
+    """
+    Upsert a recognition into AttendanceRecord (best score within the active PeriodOccurrence).
+    Also stores a raw AttendanceEvent for auditing.
+    """
+    ts = ts or timezone.now()
+    st = _get_settings()
+
+    # 1) threshold gate
+    if float(score) < float(st.min_score or 0.0):
+        return {"accepted": False, "reason": f"score<{st.min_score}"}
+
+    # 2) student
+    student = Student.objects.filter(h_code=h_code, is_active=True).first()
+    if not student:
+        return {"accepted": False, "reason": "unknown student"}
+
+    # 3) which period?
+    period = _find_occurrence(ts)
+    if not period:
+        AttendanceEvent.objects.create(student=student, period=None, camera=camera, ts=ts, score=score, crop_path=crop_path)
+        return {"accepted": False, "reason": "no active period", "logged_event": True}
+
+    # 4) raw event
+    AttendanceEvent.objects.create(student=student, period=period, camera=camera, ts=ts, score=score, crop_path=crop_path)
+
+    # 5) record upsert (best score per period)
+    rec, created = AttendanceRecord.objects.select_for_update().get_or_create(
+        student=student, period=period,
+        defaults=dict(
+            first_seen=ts, last_seen=ts, best_seen=ts, best_score=score,
+            best_camera=camera, best_crop=crop_path, sightings=1, status="present",
+        )
+    )
+    if created:
+        return {"accepted": True, "created": True, "improved": True, "best_score": float(score)}
+
+    # re-register window logic
+    window = int(st.re_register_window_sec or 0)
+    recently_seen = (window > 0 and rec.last_seen and (ts - rec.last_seen).total_seconds() < window)
+
+    rec.last_seen = ts
+    rec.sightings = F("sightings") + 1
+
+    # require minimum improvement to replace best
+    improved = float(score) > float(rec.best_score or 0.0) + float(st.min_improve_delta or 0.0)
+    if improved and not recently_seen:
+        rec.best_score = score
+        rec.best_seen = ts
+        rec.best_camera = camera
+        if crop_path:
+            rec.best_crop = crop_path
+
+    rec.save(update_fields=["last_seen", "sightings", "best_score", "best_seen", "best_camera", "best_crop"])
+    rec.refresh_from_db()
+    return {"accepted": True, "created": False, "improved": improved, "best_score": float(rec.best_score or 0.0)}

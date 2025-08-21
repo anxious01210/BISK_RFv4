@@ -1,0 +1,453 @@
+{% load static %}
+{% load humanize %}
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+    <meta charset="utf-8">
+    <title>BISK System</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <style>
+        /* --- Minimal page chrome for the standalone dash --- */
+        :root {
+            color-scheme: light dark;
+        }
+
+        body {
+            margin: 0;
+            padding: 0 10px 24px;
+            font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+            background: #fff;
+        }
+
+        html[data-theme="dark"] body,
+        html[data-theme="system"] body {
+            background: #0b0f16;
+        }
+
+        .dash-wrap {
+            max-width: 1200px;
+            margin: 16px auto;
+        }
+
+        /* --- Theme toggle --- */
+        .theme-toggle {
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            display: flex;
+            justify-content: flex-end;
+            padding: 10px 0 6px;
+        }
+
+        .theme-toggle .group {
+            display: inline-flex;
+            background: rgba(0, 0, 0, .04);
+            border: 1px solid #d1d5db;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+
+        .theme-toggle button {
+            appearance: none;
+            border: 0;
+            background: transparent;
+            padding: 6px 10px;
+            font-size: 13px;
+            cursor: pointer;
+            color: #0f172a;
+        }
+
+        .theme-toggle button.active {
+            background: #eef2ff;
+            color: #1e3a8a;
+        }
+
+        .theme-toggle button:not(.active):hover {
+            background: rgba(0, 0, 0, .05);
+        }
+
+        /* dark/system look */
+        html[data-theme="dark"] .theme-toggle .group,
+        html[data-theme="system"] .theme-toggle .group {
+            background: rgba(255, 255, 255, .06);
+            border-color: rgba(255, 255, 255, .18);
+        }
+
+        html[data-theme="dark"] .theme-toggle button,
+        html[data-theme="system"] .theme-toggle button {
+            color: #e5e7eb;
+        }
+
+        html[data-theme="dark"] .theme-toggle button.active,
+        html[data-theme="system"] .theme-toggle button.active {
+            background: #111827;
+            color: #ffffff;
+        }
+
+        html[data-theme="dark"] .theme-toggle button:not(.active):hover,
+        html[data-theme="system"] .theme-toggle button:not(.active):hover {
+            background: rgba(255, 255, 255, .08);
+        }
+
+        /* Optional: page title */
+        .dash-title {
+            font-size: 22px;
+            font-weight: 800;
+            margin: 8px 0 2px;
+            color: #0f172a;
+        }
+
+        html[data-theme="dark"] .dash-title,
+        html[data-theme="system"] .dash-title {
+            color: #f1f5f9;
+        }
+    </style>
+</head>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
+<body>
+<div class="dash-wrap">
+    <!-- Theme toggle (dash only) -->
+    <div class="theme-toggle" aria-label="Theme">
+        <div class="group" role="tablist" aria-label="Theme">
+            <button id="tLight" type="button" role="tab" aria-selected="false">Light</button>
+            <button id="tSystem" type="button" role="tab" aria-selected="true" class="active">System</button>
+            <button id="tDark" type="button" role="tab" aria-selected="false">Dark</button>
+        </div>
+    </div>
+    <div id="system-panel"
+         hx-get="{% url 'system_panel_partial' %}"
+{#         hx-trigger="load, every {{ auto_refresh|default:10 }}s"#}
+         hx-trigger="load"
+         hx-swap="innerHTML">
+        {# initial render: keep the current content so first paint is instant #}
+        {#        {% include "scheduler/_system_panel.html" %}#}
+
+        <div class="bisk">
+            <div class="bisk-toprow">
+                <div>
+                    {% if host_name %}
+                        <div class="bisk-h bisk-h-lg">BISK System — {{ host_name }}</div>
+                    {% else %}
+                        <div class="bisk-h bisk-h-lg">System overview</div>
+                    {% endif %}
+                    <div class="bisk-sub">Updated {{ now }}</div>
+                </div>
+                <div class="bisk-actions">
+                    <!-- Auto-refresh control -->
+                    <label class="bisk-refresh" title="Set auto-refresh interval in seconds (0 = off)">
+                        <span>Auto-refresh (s)</span>
+                        <input id="biskRefreshInput" class="bisk-input" type="number" min="0" max="86400" step="1"/>
+                        <span id="biskRefreshCountdown" class="bisk-sub">off</span>
+                    </label>
+
+                    <!-- Enforce now -->
+                    <form method="post" action="{% url 'enforce_now' %}">
+                        {% csrf_token %}
+                        <button type="submit" class="bisk-btn">Enforce now</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="bisk-grid">
+                <!-- Host -->
+                <div class="bisk-card bisk-col-6">
+                    <div class="bisk-h">Host</div>
+                    <div class="bisk-kv">
+                        <div>CPU</div>
+                        <div>{{ cpu_percent|floatformat:1 }}%</div>
+
+                        <div>Load (1/5/15m)</div>
+                        <div>
+                            {% if load.0 %}
+                                {{ load.0|floatformat:2 }} / {{ load.1|floatformat:2 }} / {{ load.2|floatformat:2 }}
+                            {% else %}
+                                <span class="bisk-muted">n/a</span>
+                            {% endif %}
+                        </div>
+
+                        <div>RAM</div>
+                        <div>{{ ram.used|intcomma }} / {{ ram.total|intcomma }} ({{ ram.percent }}%)</div>
+
+                        <div>Disk /</div>
+                        <div>{{ disk.used|intcomma }} / {{ disk.total|intcomma }} ({{ disk.percent }}%)</div>
+                    </div>
+                </div>
+
+                <!-- Runners summary -->
+                <div class="bisk-card bisk-col-6">
+                    <div class="bisk-h">Runners</div>
+                    <div class="bisk-badges">
+                <span class="bisk-badge green">Online: <span class="bisk-mono"
+                                                             style="margin-left:6px">{{ runners.online }}</span></span>
+                        <span class="bisk-badge yellow">Stale: <span class="bisk-mono"
+                                                                     style="margin-left:6px">{{ runners.stale }}</span></span>
+                        <span class="bisk-badge red">Offline: <span class="bisk-mono"
+                                                                    style="margin-left:6px">{{ runners.offline }}</span></span>
+                        <span class="bisk-badge">Paused: <span class="bisk-mono"
+                                                               style="margin-left:6px">{{ paused }}</span></span>
+                    </div>
+                </div>
+                <!-- Runner Heartbeats -->
+                <div class="bisk-card bisk-col-12">
+                    <div class="bisk-h">Runner Heartbeats</div>
+
+                    {% if runner_rows %}
+                        <div style="max-height: 360px; overflow: auto;">
+                            <table class="bisk-table">
+                                <thead>
+                                <tr>
+                                    <th>Runner</th>
+                                    <th>PID</th>
+                                    <th class="text-end">Target FPS</th>
+                                    <th class="text-end">Camera FPS</th>
+                                    <th class="text-end">Processed FPS</th>
+                                    <th class="text-end">Snapshot (s)</th>
+                                    <th class="text-end">Last HB</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                {% for r in runner_rows %}
+                                    <tr>
+                                        <td>
+                                            <div class="fw-semibold">{{ r.label }}</div>
+                                            {% if r.status %}
+                                                <div class="bisk-sub">Status: {{ r.status }}</div>{% endif %}
+                                        </td>
+                                        <td class="bisk-mono">{% if r.pid %}{{ r.pid }}{% else %}—{% endif %}</td>
+
+                                        <td class="text-end">
+                                            {% if r.target_fps is not None %}
+                                                {{ r.target_fps|floatformat:1 }}
+                                            {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                        </td>
+
+                                        <td class="text-end">
+                                            {% if r.camera_fps is not None %}
+                                                {{ r.camera_fps|floatformat:1 }}
+                                            {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                        </td>
+
+                                        <td class="text-end">
+                                            {% if r.processed_fps is not None %}
+                                                {{ r.processed_fps|floatformat:1 }}
+                                            {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                        </td>
+
+                                        <td class="text-end">
+                                            {% if r.snapshot_every is not None %}
+                                                {{ r.snapshot_every }}
+                                            {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                        </td>
+
+                                        <td class="text-end">
+                                            {% if r.hb_age_s is not None %}
+                                                {% with th=hb_thresholds %}
+                                                    {% if r.hb_age_s <= th.online %}
+                                                        <span class="bisk-badge green"
+                                                              title="{{ r.hb_ts }}">{{ r.hb_age_s }}s ago</span>
+                                                    {% elif r.hb_age_s <= th.stale %}
+                                                        <span class="bisk-badge yellow"
+                                                              title="{{ r.hb_ts }}">{{ r.hb_age_s }}s ago</span>
+                                                    {% else %}
+                                                        <span class="bisk-badge red"
+                                                              title="{{ r.hb_ts }}">{{ r.hb_age_s }}s ago</span>
+                                                    {% endif %}
+                                                {% endwith %}
+                                            {% else %}
+                                                <span class="bisk-muted">—</span>
+                                            {% endif %}
+
+                                        </td>
+                                    </tr>
+                                {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    {% else %}
+                        <div class="bisk-muted">No runner heartbeats yet.</div>
+                    {% endif %}
+                </div>
+
+
+                <!-- Enforcer -->
+                <div class="bisk-card bisk-col-12">
+                    <div class="bisk-h">Enforcer</div>
+                    <table class="bisk-table">
+                        <thead>
+                        <tr>
+                            <th>Interval</th>
+                            <th>PID</th>
+                            <th>Last run</th>
+                            <th>Last OK</th>
+                            <th>Last error</th>
+                            <th class="bisk-muted">Keys</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr>
+                            <td class="bisk-mono">{{ enforcer.interval }}s</td>
+                            <td class="bisk-mono">{% if enforcer.pid %}{{ enforcer.pid }}{% else %}—{% endif %}</td>
+                            <td>{% if enforcer.last_run %}{{ enforcer.last_run }}{% else %}
+                                <span class="bisk-muted">—</span>{% endif %}</td>
+                            <td>{% if enforcer.last_ok %}{{ enforcer.last_ok }}{% else %}
+                                <span class="bisk-muted">—</span>{% endif %}</td>
+                            <td>
+                                {% if enforcer.last_error %}
+                                    <span class="bisk-badge red"
+                                          title="{{ enforcer.last_error }}">{{ enforcer.last_error }}</span>
+                                {% else %}
+                                    <span class="bisk-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td class="bisk-muted">enforcer:last_run · :last_ok · :last_error · :running_pid</td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- GPU -->
+                <div class="bisk-card bisk-col-12">
+                    <div class="bisk-h">GPU</div>
+                    {% if gpus %}
+                        <table class="bisk-table">
+                            <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Util</th>
+                                <th>Memory</th>
+                            </tr>
+                            </thead>
+                            <tbody>
+                            {% for g in gpus %}
+                                <tr>
+                                    <td>{{ g.name }}</td>
+                                    <td>{% if g.util is not None %}{{ g.util }}%{% else %}
+                                        <span class="bisk-muted">n/a</span>{% endif %}</td>
+                                    <td>
+                                        {% if g.mem_used is not None %}
+                                            {{ g.mem_used }} / {{ g.mem_total }} MiB
+                                        {% else %}
+                                            <span class="bisk-muted">n/a</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                            </tbody>
+                        </table>
+                    {% else %}
+                        <div class="bisk-muted">No GPU detected (nvidia-smi not found or no NVIDIA GPU).</div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+
+<script>
+    (function () {
+        // IDs used inside the panel
+        const INPUT_ID = 'biskRefreshInput';
+        const BADGE_ID = 'biskRefreshCountdown';
+        const PANEL_ID = 'system-panel';
+        const LS_KEY = 'bisk:system:auto_refresh_seconds';
+
+        const panel = document.getElementById(PANEL_ID);
+
+        // Read persisted value (default 30s), clamp 0..86400
+        function loadSeconds() {
+            const raw = localStorage.getItem(LS_KEY);
+            const n = raw == null ? 30 : parseInt(raw, 10);
+            return (isNaN(n) || n < 0) ? 0 : Math.min(n, 86400);
+        }
+
+        // Apply polling interval to HTMX
+        function applyHtmxInterval(seconds) {
+            const trig = seconds ? `load, every ${seconds}s` : 'load';
+            panel.setAttribute('hx-trigger', trig);
+            htmx.process(panel);
+        }
+
+        // Countdown state
+        let seconds = loadSeconds();
+        let timer = null;
+        let left = seconds;
+
+        // On-demand element getters (important after HTMX swaps)
+        function $input() {
+            return document.getElementById(INPUT_ID);
+        }
+
+        function $badge() {
+            return document.getElementById(BADGE_ID);
+        }
+
+        function paint() {
+            const b = $badge();
+            if (!b) return;
+            b.textContent = seconds ? (left + 's') : 'off';
+        }
+
+        function stop() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+        }
+
+        function start() {
+            stop();
+            left = seconds || 0;
+            paint();
+            if (!seconds) return; // off
+            timer = setInterval(() => {
+                left = Math.max(0, left - 1);
+                paint();
+            }, 1000);
+        }
+
+        // (Re)bind the input listener — call this after each HTMX swap
+        function bindInput() {
+            const inp = $input();
+            if (!inp) return;
+            // Reflect current value into the input
+            inp.value = String(seconds);
+            // Remove any old listener by replacing the node (cheap way to avoid duplicates)
+            const clone = inp.cloneNode(true);
+            inp.parentNode.replaceChild(clone, inp);
+            clone.addEventListener('change', () => {
+                let n = parseInt(clone.value, 10);
+                if (isNaN(n) || n < 0) n = 0;
+                if (n > 86400) n = 86400;
+                seconds = n;
+                localStorage.setItem(LS_KEY, String(seconds));
+                applyHtmxInterval(seconds);
+                start();
+            });
+        }
+
+        // Initial apply + bind
+        applyHtmxInterval(seconds);
+        bindInput();
+        start();
+
+        // After HTMX swaps the panel, re-bind and restart the countdown
+        document.body.addEventListener('htmx:afterSwap', (evt) => {
+            if (evt.target && evt.target.id === PANEL_ID) {
+                bindInput();
+                start();
+            }
+        });
+
+        // Pause when tab hidden; resume when visible
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) stop(); else start();
+        });
+    })();
+</script>
+
+
+</body>
+</html>

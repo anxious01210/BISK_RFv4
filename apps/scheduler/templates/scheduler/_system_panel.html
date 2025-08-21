@@ -338,6 +338,7 @@
             <!-- Enforce now -->
             <form method="post" action="{% url 'enforce_now' %}">
                 {% csrf_token %}
+{#                <input type="hidden" name="next" value="{{ request.get_full_path }}">#}
                 <button type="submit" class="bisk-btn">Enforce now</button>
             </form>
         </div>
@@ -361,10 +362,10 @@
                 </div>
 
                 <div>RAM</div>
-                <div>{{ ram.used|intcomma }} / {{ ram.total|intcomma }} ({{ ram.percent }}%)</div>
+                <div>{{ ram.used|filesizeformat }} / {{ ram.total|filesizeformat }} ({{ ram.percent }}%)</div>
 
                 <div>Disk /</div>
-                <div>{{ disk.used|intcomma }} / {{ disk.total|intcomma }} ({{ disk.percent }}%)</div>
+                <div>{{ disk.used|filesizeformat }} / {{ disk.total|filesizeformat }} ({{ disk.percent }}%)</div>
             </div>
         </div>
 
@@ -533,5 +534,7 @@
         </div>
     </div>
 </div>
+
+
 
 

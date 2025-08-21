@@ -4,7 +4,16 @@ from django.shortcuts import redirect
 from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.conf import settings
-from .models import Student, PeriodTemplate, PeriodOccurrence, AttendanceRecord
+from django.utils import timezone
+
+from .models import (
+    Student,
+    PeriodTemplate,
+    PeriodOccurrence,
+    AttendanceRecord,
+    AttendanceEvent,
+    RecognitionSettings,
+)
 from .services import roll_periods
 
 
@@ -15,10 +24,6 @@ class StudentAdmin(admin.ModelAdmin):
     list_filter = ("is_active",)
 
 
-# @admin.register(PeriodTemplate)
-# class PeriodTemplateAdmin(admin.ModelAdmin):
-#     list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
-
 @admin.register(PeriodTemplate)
 class PeriodTemplateAdmin(admin.ModelAdmin):
     list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
@@ -26,18 +31,17 @@ class PeriodTemplateAdmin(admin.ModelAdmin):
 
     @admin.action(description="Generate Period Occurrences for next 7 days")
     def action_generate_next_7_days(self, request, queryset):
-        # You can ignore queryset and generate for all enabled templates (simplest),
-        # or filter by selected only. Let's respect selection:
-        # created_total = 0 # It was enabled.
-        # Temporarily disable is_active_on filter by selection; roll_periods() already checks templates.
+        """
+        Uses your existing roll_periods(days=7). It already respects template flags,
+        weekday masks, and grace. We call it once (global) for simplicity.
+        """
         created_total = roll_periods(days=7)
         messages.success(request, f"Generated {created_total} occurrences (next 7 days).")
 
+    # Keep your custom URL/view so you can click an admin link to roll 7 days.
     def get_urls(self):
         urls = super().get_urls()
-        extra = [
-            path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d")
-        ]
+        extra = [path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d")]
         return extra + urls
 
     def roll_7d_view(self, request):
@@ -66,8 +70,10 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
         return format_html("<b>{} – {}</b>", obj.student.h_code, obj.student.full_name)
 
     def face_preview(self, obj):
-        if not obj.best_crop: return "—"
-        return format_html('<img src="{}{}" style="height:72px;border-radius:6px;">', settings.MEDIA_URL, obj.best_crop)
+        if not obj.best_crop:
+            return "—"
+        return format_html('<img src="{}{}" style="height:72px;border-radius:6px;">',
+                           settings.MEDIA_URL, obj.best_crop)
 
     def score_col(self, obj):
         g = getattr(settings, "ATTENDANCE_SCORE_GREEN", 0.80)
@@ -81,3 +87,19 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
         s = obj.period.start_dt.astimezone().time().strftime("%H:%M:%S")
         e = obj.period.end_dt.astimezone().time().strftime("%H:%M:%S")
         return f"{t.name} ({s} - {e})"
+
+
+@admin.register(AttendanceEvent)
+class AttendanceEventAdmin(admin.ModelAdmin):
+    date_hierarchy = "ts"
+    list_display = ("student", "period", "camera", "score", "ts")
+    list_filter = ("camera", "period__template")
+    search_fields = ("student__h_code", "student__full_name")
+    ordering = ("-ts",)
+    list_select_related = ("student", "period__template", "camera")
+
+
+@admin.register(RecognitionSettings)
+class RecognitionSettingsAdmin(admin.ModelAdmin):
+    list_display = ("min_score", "re_register_window_sec", "min_improve_delta",
+                    "delete_old_cropped", "save_all_crops", "use_cosine_similarity")
