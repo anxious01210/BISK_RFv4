@@ -31,14 +31,22 @@ def heartbeat(request):
     except Exception:
         payload = {}
 
+    # Back-compat:
+    camera_fps = payload.get("camera_fps")
+    # if camera_fps is None:
+    #     camera_fps = payload.get("fps")  # older runners send 'fps'
+
+    processed_fps = payload.get("processed_fps")  # may be None
     cam_id = payload.get("camera_id")
     prof_id = payload.get("profile_id")
     pid = payload.get("pid")
-    fps = payload.get("fps") or 0
     detected = payload.get("detected") or 0
     matched = payload.get("matched") or 0
     latency = payload.get("latency_ms") or 0
     last_err = (payload.get("last_error") or "").strip()[:200]
+    # NEW: resource-derived telemetry
+    target_fps = payload.get("target_fps")
+    snapshot_every = payload.get("snapshot_every")
 
     now = timezone.now()
 
@@ -76,12 +84,17 @@ def heartbeat(request):
                 # Errors are always logged immediately
                 RunnerHeartbeat.objects.create(
                     camera_id=cam_id, profile_id=prof_id, pid=pid,
-                    fps=float(fps or 0.0),
+                    # store camera fps in legacy column 'fps'
+                    fps=float(camera_fps or 0.0),
+                    processed_fps=float(processed_fps) if processed_fps is not None else None,
+                    target_fps=float(target_fps) if target_fps is not None else None,
+                    snapshot_every=int(snapshot_every) if snapshot_every is not None else None,
                     detected=int(detected or 0),
                     matched=int(matched or 0),
                     latency_ms=float(latency or 0.0),
-                    last_error=last_err,
+                    last_error=last_err if last_err else None,
                 )
+
             else:
                 # First-ever row for (cam, prof)?
                 exists = RunnerHeartbeat.objects.filter(
@@ -99,12 +112,16 @@ def heartbeat(request):
                 if allowed:
                     RunnerHeartbeat.objects.create(
                         camera_id=cam_id, profile_id=prof_id, pid=pid,
-                        fps=float(fps or 0.0),
+                        fps=float(camera_fps or 0.0),
+                        processed_fps=float(processed_fps) if processed_fps is not None else None,
+                        target_fps=float(target_fps) if target_fps is not None else None,
+                        snapshot_every=int(snapshot_every) if snapshot_every is not None else None,
                         detected=int(detected or 0),
                         matched=int(matched or 0),
                         latency_ms=float(latency or 0.0),
                         last_error=None,
                     )
+
                     # Best-effort: set the gate; ignore cache errors
                     if not exists:
                         try:

@@ -70,3 +70,14 @@ class RecognitionSettings(models.Model):
     delete_old_cropped = models.BooleanField(default=False)
     save_all_crops = models.BooleanField(default=False)
     use_cosine_similarity = models.BooleanField(default=True)
+    max_periods_per_day = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="If set, cap how many periods can count as 'present' per student per day."
+    )
+
+    @classmethod
+    def get_solo(cls):
+        # Simple singleton: id=1
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+

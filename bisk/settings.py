@@ -170,16 +170,19 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Snapshots will be taken every HEARTBEAT_SNAPSHOT_EVERY heartbeats.
 # The admin status badges will flip between Online/Stale/Offline based on HEARTBEAT_STALE_SEC and HEARTBEAT_OFFLINE_SEC.
 
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "10"))
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "15"))
 HEARTBEAT_STALE_SEC    = int(os.getenv("HEARTBEAT_STALE_SEC", "45"))
 HEARTBEAT_OFFLINE_SEC  = int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120"))
+# In Django Admin → Scheduler → Runner Heartbeats, the online/stale/offline labels come from your:
+HEARTBEAT_THRESHOLDS = {"online": HEARTBEAT_INTERVAL_SEC, "stale": HEARTBEAT_STALE_SEC, "offline": HEARTBEAT_OFFLINE_SEC}
+
 
 # (optional) how often to take a snapshot
-HEARTBEAT_SNAPSHOT_EVERY = int(os.getenv("HEARTBEAT_SNAPSHOT_EVERY", "15"))
+HEARTBEAT_SNAPSHOT_EVERY = int(os.getenv("HEARTBEAT_SNAPSHOT_EVERY", "60")) # 15
 
 # Auto-delete RunningProcess rows that have been Offline for longer than this many minutes (preferred) and fallback hours
-RUNPROC_PRUNE_OFFLINE_MINUTES = 60
-RUNPROC_PRUNE_OFFLINE_HOURS = 6
+RUNPROC_PRUNE_OFFLINE_MINUTES = 6
+RUNPROC_PRUNE_OFFLINE_HOURS = 1
 
 # --- BISK enforcer/scheduler ---
 ENFORCER_INTERVAL_SECONDS = int(os.getenv("ENFORCER_INTERVAL_SECONDS", "15"))

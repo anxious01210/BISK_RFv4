@@ -25,7 +25,7 @@ from bisk import views as core_views
 from django.views.generic import RedirectView
 from django.urls import path, include
 from django.contrib import admin
-from apps.scheduler.views import system_dash, system_json, admin_system
+from apps.scheduler.views import system_dash, system_json, admin_system, system_panel_partial
 from apps.scheduler import views as sched_views
 
 router = DefaultRouter()
@@ -37,6 +37,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path("api/", include(router.urls)),
     path("api/runner/heartbeat/", sched_api.heartbeat, name="runner-heartbeat"),
+    path("dash/system/panel/", system_panel_partial, name="system_panel_partial"),
     path("dash/system/", system_dash, name="system_dash"),
     path("dashboard/", core_views.dashboard, name="dashboard"),
     path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),

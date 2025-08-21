@@ -10,16 +10,20 @@ FFmpeg runner (Type 1) — lightweight heartbeat + periodic snapshot.
 Invoke: python /abs/path/extras/recognize_ffmpeg.py --camera 1 --profile 1 ...
 """
 
-import argparse
-import json
-import signal
-import subprocess
-import time
-import urllib.request
+import argparse, json, signal, subprocess, time, urllib.request, threading, os, re
 from pathlib import Path
-import re
-import os
-import threading
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "BISK_RFv4.settings")
+import django
+
+django.setup()
+# --- Resource resolver imports (after django.setup()) ---
+from apps.scheduler.resources import resolve_effective
+from apps.cameras.models import Camera
+
+
+# --- RESOURCES ENFORCEMENT (paste near the top of main, after Django setup) ---
+
 
 def ffmpeg_cmd(ffmpeg_bin, rtsp_url, out_jpg, args):
     """
@@ -64,7 +68,7 @@ def spawn_ffmpeg(args, rtsp_url, out_jpg):
         cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,      # <-- read stderr to map errors
+        stderr=subprocess.PIPE,  # <-- read stderr to map errors
         close_fds=True,
     )
 
@@ -90,42 +94,48 @@ def post(url: str, payload: dict, key: str, timeout: float = 3.0) -> None:
 # ---------------------------------------------------------------------------
 def probe_fps(ffprobe: str, rtsp: str) -> float | None:
     """
-    Returns a float fps or None.
-    Tries r_frame_rate then avg_frame_rate. Accepts forms like '4/1', '30000/1001', or '25'.
+    Return a float fps (prefer avg_frame_rate over r_frame_rate) or None.
+    We ask ffprobe to print keys so we can reliably pick avg_frame_rate.
     """
     cmd = [
         ffprobe,
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=r_frame_rate,avg_frame_rate",
-        "-of",
-        "default=nw=1:nk=1",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=avg_frame_rate,r_frame_rate",
+        "-of", "default=nw=1",   # keep keys; don't use nk=1
         rtsp,
     ]
     try:
         out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=8).decode().strip()
-        # ffprobe often prints two lines (r_frame_rate then avg_frame_rate). Try each.
-        for line in (ln.strip() for ln in out.splitlines() if ln.strip()):
-            if "/" in line:
-                num, den = line.split("/", 1)
-                try:
-                    num_i = int(num.strip())
-                    den_i = int(den.strip() or "1")
-                    if den_i:
-                        return num_i / den_i
-                except Exception:
-                    pass
-            else:
-                try:
-                    return float(line)
-                except Exception:
-                    pass
+        got = {}
+        for ln in (ln.strip() for ln in out.splitlines() if ln.strip()):
+            if "=" not in ln:
+                continue
+            k, v = ln.split("=", 1)
+            v = v.strip()
+            if v.lower() == "n/a":
+                continue
+            # parse like "8/1", "30000/1001", or "25"
+            try:
+                if "/" in v:
+                    num, den = v.split("/", 1)
+                    num_i = float(num.strip())
+                    den_i = float(den.strip() or "1")
+                    if den_i != 0:
+                        got[k] = num_i / den_i
+                else:
+                    got[k] = float(v)
+            except Exception:
+                pass
+        # Prefer avg_frame_rate; fall back to r_frame_rate
+        if "avg_frame_rate" in got and got["avg_frame_rate"] > 0:
+            return got["avg_frame_rate"]
+        if "r_frame_rate" in got and got["r_frame_rate"] > 0:
+            return got["r_frame_rate"]
+        return None
     except Exception:
         return None
-    return None
+
 
 
 # ---------------------------------------------------------------------------
@@ -203,9 +213,80 @@ def main():
 
     args, _ = p.parse_known_args()
 
+    #
+
+    # Resolve effective resources by camera ID
+    eff = resolve_effective(camera_id=args.camera)
+
+    # If you need the Camera instance later, you can fetch it here:
+    try:
+        cam = Camera.objects.get(pk=args.camera)
+    except Camera.DoesNotExist:
+        cam = None
+
+    # GPU visibility must be set before importing GPU frameworks
+    if eff.gpu_visible_devices:
+        os.environ["CUDA_VISIBLE_DEVICES"] = eff.gpu_visible_devices
+
+    # CPU niceness / affinity (best-effort)
+    try:
+        import psutil
+        p = psutil.Process(os.getpid())
+        if eff.cpu_nice is not None:
+            p.nice(eff.cpu_nice)
+        if eff.cpu_affinity:
+            p.cpu_affinity(eff.cpu_affinity)
+    except Exception:
+        # non-fatal: permission or platform might block it
+        pass
+
+    # Decide the frame cap we’ll honor in the loop
+    # Prefer per-camera override → global default → CLI --fps → fallback 6
+    TARGET_FPS = (
+            (eff.max_fps if eff.max_fps is not None else None)
+            or (args.fps if hasattr(args, "fps") and args.fps else None)
+            or 6
+    )
+
+    # Optional: cap detector input size if your pipeline supports it
+    DET_SET_MAX = eff.det_set_max  # e.g., "1600" or None
+
+    # Optional: GPU soft util target (you can use it to tune sleep dynamically)
+    GPU_UTIL_TARGET = eff.gpu_target_util_percent or None
+
+    # Optional: CPU quota target (soft) for extra sleeps under high load
+    CPU_QUOTA = eff.cpu_quota_percent or 100
+    # --- END RESOURCES ENFORCEMENT ---
+
+    # Safe to import GPU frameworks now
+    try:
+        import torch
+        if eff.gpu_memory_fraction:
+            # Maps to device 0 within CUDA_VISIBLE_DEVICES space
+            torch.cuda.set_per_process_memory_fraction(eff.gpu_memory_fraction, device=0)
+    except Exception:
+        pass
+
+    # If you use ONNXRuntime-GPU or InsightFace, import them here too
+    # import onnxruntime as ort
+    # from insightface.app import FaceAnalysis
+
     # 2) after args parsed:
     hb_interval = int(os.getenv("BISK_HB_INTERVAL", args.hb_interval or 10))
-    snapshot_every = int(os.getenv("BISK_SNAPSHOT_EVERY", args.snapshot_every or 3))
+
+    # Derive snapshot_every from TARGET_FPS if available.
+    # TARGET_FPS was resolved from resource settings earlier.
+    # formula: snapshots per HB tick = hb_interval / fps  => every N seconds we write one frame
+    if TARGET_FPS and TARGET_FPS > 0:
+        target_snap_every = max(1, int(round(hb_interval / float(TARGET_FPS))))
+    else:
+        target_snap_every = 3  # sane fallback
+
+    # Precedence: Camera/Global resource cap (TARGET_FPS) takes priority over CLI, but you can flip this.
+    snapshot_every = int(os.getenv(
+        "BISK_SNAPSHOT_EVERY",
+        target_snap_every if args.snapshot_every is None else args.snapshot_every
+    ))
 
     cam_id = int(args.camera)
     prof_id = int(args.profile)
@@ -213,7 +294,10 @@ def main():
     snap_dir.mkdir(parents=True, exist_ok=True)
     snap_path = snap_dir / f"{cam_id}.jpg"
 
-    # Start a single ffmpeg process that overwrites <camera_id>.jpg
+    # IMPORTANT: pass the resolved snapshot_every to ffmpeg_cmd via args
+    setattr(args, "snapshot_every", snapshot_every)
+
+    # Start a single ffmpeg process that overwrites .jpg
     ff_proc = spawn_ffmpeg(args, args.rtsp, str(snap_path))
 
     # respawn state
@@ -298,16 +382,36 @@ def main():
         if last_error_msg and (time.monotonic() - last_error_seen_at) > max(2 * interval, 60):
             last_error_msg = ""
 
+        # Compute camera vs processed rates
+        camera_fps_val = float(fps_val or 0.0)
+        target_fps_val = float(TARGET_FPS or 0.0)
+
+        if target_fps_val > 0.0 and camera_fps_val > 0.0:
+            processed_fps_val = min(camera_fps_val, target_fps_val)
+        elif target_fps_val > 0.0:
+            processed_fps_val = target_fps_val
+        else:
+            processed_fps_val = camera_fps_val
+
         # Heartbeat payload
         payload = {
             "camera_id": cam_id,
             "profile_id": prof_id,
-            "fps": float(fps_val),
+
+            # legacy 'fps' stays = camera fps for back-compat
+            "fps": camera_fps_val,
+
+            # new fields used by the UI:
+            "camera_fps": camera_fps_val,
+            "processed_fps": processed_fps_val,
+
             "detected": 0,
             "matched": 0,
             "latency_ms": 0.0,
             "pid": os.getpid(),
             "last_error": (last_error_msg or "")[:200],
+            "target_fps": target_fps_val,
+            "snapshot_every": int(snapshot_every),
         }
 
         try:

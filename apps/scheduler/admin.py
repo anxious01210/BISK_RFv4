@@ -36,6 +36,24 @@ STALE = getattr(settings, "HEARTBEAT_STALE_SEC", 45)
 OFFLINE = getattr(settings, "HEARTBEAT_OFFLINE_SEC", 120)
 
 admin.site.empty_value_display = "—"
+from django.contrib import admin
+from .models import GlobalResourceSettings, CameraResourceOverride
+
+
+@admin.register(GlobalResourceSettings)
+class GlobalResourceSettingsAdmin(admin.ModelAdmin):
+    list_display = ("id", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
+                    "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
+                    "max_fps_default", "det_set_max")
+    readonly_fields = ("id",)
+
+
+@admin.register(CameraResourceOverride)
+class CameraResourceOverrideAdmin(admin.ModelAdmin):
+    list_display = ("camera", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
+                    "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
+                    "max_fps", "det_set_max")
+    search_fields = ("camera__name",)
 
 
 # ----------------------------
@@ -259,7 +277,6 @@ class RunningProcessForm(forms.ModelForm):
             )
 
 
-
 # =====================
 # RunningProcess admin
 # =====================
@@ -349,6 +366,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
                 obj.last_error, text
             )
         return "—"
+
     last_error_badge.short_description = "Last error"
 
     # ---------- helpers ----------
@@ -369,17 +387,20 @@ class RunningProcessAdmin(admin.ModelAdmin):
         if not obj.started_at:
             return "—"
         return timesince(obj.started_at, timezone.now()).split(",")[0]
+
     uptime_short.short_description = "Uptime"
 
     def uptime_full(self, obj):
         if not obj.started_at:
             return "—"
         return timesince(obj.started_at, timezone.now())
+
     uptime_full.short_description = "Uptime"
 
     def age_secs(self, obj):
         ts = obj.last_heartbeat
         return int((timezone.now() - ts).total_seconds()) if ts else None
+
     age_secs.short_description = "Age (s)"
 
     def fps_latest(self, obj):
@@ -389,6 +410,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
               .order_by("-ts")
               .first())
         return getattr(hb, "fps", None)
+
     fps_latest.short_description = "FPS"
 
     def mem_mb(self, obj):
@@ -399,6 +421,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
             return round(p.memory_info().rss / (1024 * 1024), 1)
         except Exception:
             return None
+
     mem_mb.short_description = "RSS (MB)"
 
     def threads(self, obj):
@@ -427,6 +450,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
             return ",".join(map(str, p.cpu_affinity()))
         except Exception:
             return "—"
+
     cpu_affinity_display.short_description = "CPU affinity"
 
     def meta_pretty(self, obj):
@@ -438,6 +462,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
         except Exception:
             pretty = str(data)
         return format_html("<pre style='white-space:pre-wrap;margin:0'>{}</pre>", pretty)
+
     meta_pretty.short_description = "Meta"
 
     def snapshot_thumb(self, obj):
@@ -453,6 +478,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
             '<a href="{}" target="_blank"><img src="{}" style="height:54px;border-radius:6px;box-shadow:0 0 2px rgba(0,0,0,.25);" /></a>',
             url, url
         )
+
     snapshot_thumb.short_description = "Snapshot"
 
     def snapshot_preview(self, obj):
@@ -464,7 +490,9 @@ class RunningProcessAdmin(admin.ModelAdmin):
         except Exception:
             mtime = 0
         url = f"{settings.MEDIA_URL}snapshots/{obj.camera_id}.jpg?v={mtime}"
-        return format_html('<a href="{}" target="_blank"><img src="{}" style="max-width:100%;border-radius:8px;" /></a>', url, url)
+        return format_html(
+            '<a href="{}" target="_blank"><img src="{}" style="max-width:100%;border-radius:8px;" /></a>', url, url)
+
     snapshot_preview.short_description = "Snapshot"
 
     def status_badge(self, obj):
@@ -478,6 +506,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
         if age > OFFLINE:
             return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
         return format_html("<span style='color:#d97706;font-weight:600'>Stale</span>")
+
     status_badge.short_description = "Status"
 
     # ---------- actions ----------
@@ -570,9 +599,6 @@ class RunningProcessAdmin(admin.ModelAdmin):
         return False
 
 
-
-
-
 # ============================
 # RunnerHeartbeat (admin)
 # ============================
@@ -595,8 +621,8 @@ class RunnerHeartbeatForm(forms.ModelForm):
 @admin.register(RunnerHeartbeat)
 class RunnerHeartbeatAdmin(admin.ModelAdmin):
     form = RunnerHeartbeatForm
-    list_display = ("camera", "profile", "ts", "fps", "detected", "matched", "latency_ms", "last_error", "age_col",
-                    "status_col")
+    list_display = ("camera", "profile", "ts", "fps", "target_fps", "snapshot_every", "detected", "matched",
+                    "latency_ms", "last_error", "age_col", "status_col")
     list_filter = ("profile", "camera")
     search_fields = ("camera__name", "profile__name", "last_error")
     ordering = ("-ts",)
@@ -624,8 +650,6 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
             .order_by("camera__name", "profile__name")
         )
 
-
-
     # No manual creation of heartbeats
     def has_add_permission(self, request):
         return False
@@ -637,7 +661,8 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
     def changelist_view(self, request, extra_context=None):
         extra_context = extra_context or {}
         extra_context["title"] = "Runner heartbeats"
-        toggle = ("<a href='?all=1'>Show all</a>" if request.GET.get("all") != "1" else "<a href='?'>Show latest only</a>")
+        toggle = (
+            "<a href='?all=1'>Show all</a>" if request.GET.get("all") != "1" else "<a href='?'>Show latest only</a>")
         extra_context["subtitle"] = mark_safe(
             f"Latest telemetry per runner. ‘Stale’ &gt; {STALE}s; ‘Online’ ≤ {ONLINE}s. &nbsp; {toggle}"
         )

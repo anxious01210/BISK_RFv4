@@ -4,8 +4,7 @@ from typing import Optional, List
 from django.http import JsonResponse
 from django.conf import settings
 # from django.contrib.admin.views.decorators import staff_member_required
-from django.utils import timezone
-from apps.scheduler.models import RunningProcess  # adjust import if your model path differs
+from apps.scheduler.models import RunningProcess, RunnerHeartbeat
 from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render
@@ -15,6 +14,9 @@ from django.contrib import messages
 from django.shortcuts import redirect
 from django.core.cache import cache, caches
 from .services.enforcer import enforce_schedules
+from django.db.models import OuterRef, Subquery, Value
+from django.utils import timezone
+
 
 
 @staff_member_required
@@ -108,6 +110,62 @@ def _collect_system_info():
     # GPUs & runners
     gpus = _gpu_query()
     runner_counts = _runner_counts()
+
+    # Use the same thresholds everywhere (dashboard + admin)
+    hb_thresholds = getattr(settings, "HEARTBEAT_THRESHOLDS", {"online": 15, "stale": 45, "offline": 120}, )
+
+
+    # ---- Runner Summary rows (latest heartbeat per camera/profile) ----
+    procs = (RunningProcess.objects
+             .select_related('camera', 'profile')
+             .order_by('id'))
+
+    # Subquery: latest heartbeat for this (camera_id, profile_id)
+    _latest_hb = (RunnerHeartbeat.objects
+                  .filter(camera_id=OuterRef('camera_id'), profile_id=OuterRef('profile_id'))
+                  .order_by('-id'))
+
+    # NOTE: RunnerHeartbeat has 'ts' (not 'created_at')
+    procs = procs.annotate(
+        hb_target_fps=Subquery(_latest_hb.values('target_fps')[:1]),
+        hb_snapshot_every=Subquery(_latest_hb.values('snapshot_every')[:1]),
+        hb_fps=Subquery(_latest_hb.values('fps')[:1]),     # runner-reported processed/observed fps (if sent)
+        hb_processed_fps=Subquery(_latest_hb.values('processed_fps')[:1]),
+        hb_ts=Subquery(_latest_hb.values('ts')[:1]),
+    )
+
+    runner_rows = []
+    now_ts = timezone.now()
+    for p in procs:
+        # Build a readable label
+        if getattr(p, 'camera', None):
+            label = f'#{p.id} · {p.camera.name}'
+        elif getattr(p, 'profile', None):
+            label = f'#{p.id} · Profile {p.profile_id}'
+        else:
+            label = f'#{p.id}'
+
+        hb_ts = getattr(p, 'hb_ts', None)
+        hb_age_s = None
+        if hb_ts:
+            try:
+                hb_age_s = max(0, int((now_ts - hb_ts).total_seconds()))
+            except Exception:
+                hb_age_s = None
+
+        runner_rows.append({
+            "id": p.id,
+            "label": label,
+            "pid": getattr(p, "pid", None),
+            "status": getattr(p, "status", None),
+            "target_fps": getattr(p, "hb_target_fps", None),
+            "camera_fps": getattr(p, "hb_fps", None),
+            "processed_fps": getattr(p, "hb_processed_fps", None),
+            "snapshot_every": getattr(p, "hb_snapshot_every", None),
+            "hb_ts": hb_ts,
+            "hb_age_s": hb_age_s,
+        })
+
     # paused cameras
     try:
         from django.utils.timezone import now
@@ -118,12 +176,14 @@ def _collect_system_info():
         paused = "n/a"
     ctx = {
         "host": platform.node(),
+        "host_name": platform.node(),
         "cpu_percent": cpu_percent,
         "load": (load1, load5, load15),
         "ram": {"used": vm.used, "total": vm.total, "percent": vm.percent},
         "disk": {"used": du.used, "total": du.total, "percent": round(du.used / du.total * 100, 1)},
         "gpus": gpus,
         "runners": runner_counts,
+        "runner_rows": runner_rows,
         "paused": paused,
         "enforcer": {
             "last_run": cache.get("enforcer:last_run"),
@@ -133,6 +193,8 @@ def _collect_system_info():
             "interval": getattr(settings, "ENFORCER_INTERVAL_SECONDS", 15),
         },
         "now": timezone.localtime(),
+        "hb_thresholds": hb_thresholds,
+
     }
     return ctx
 
@@ -169,3 +231,13 @@ def admin_system(request):
     ctx.update(admin.site.each_context(request))
     ctx["title"] = "System status"
     return render(request, "admin/system_dash.html", ctx)
+
+
+# --- HTMX partial: system panel only ---
+from django.views.decorators.http import require_GET
+
+@require_GET
+def system_panel_partial(request):
+    ctx = _collect_system_info()      # you already have this
+    # IMPORTANT: render the *panel* template only (not the whole page)
+    return render(request, "scheduler/_system_panel.html", ctx)

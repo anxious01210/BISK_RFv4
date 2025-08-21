@@ -1,25 +1,3 @@
-{#<!doctype html>#}
-{#<html lang="en">#}
-{#<head>#}
-{#    <meta charset="utf-8">#}
-{#    <title>BISK System</title>#}
-{#    <meta name="viewport" content="width=device-width, initial-scale=1">#}
-{#    <meta http-equiv="refresh" content="10">#}
-{#    <style>body {#}
-{#        font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;#}
-{#        margin: 16px#}
-{#    }#}
-{##}
-{#    h1 {#}
-{#        margin: 0 0 12px#}
-{#    }</style>#}
-{#</head>#}
-{#<body>#}
-{#<h1>BISK System — {{ host }}</h1>#}
-{#{% include "scheduler/_system_panel.html" %}#}
-{#</body>#}
-{#</html>#}
-
 {% load static %}
 <!DOCTYPE html>
 <html lang="en" data-theme="system">
@@ -124,6 +102,8 @@
         }
     </style>
 </head>
+<script src="https://unpkg.com/htmx.org@1.9.12"></script>
+
 <body>
 <div class="dash-wrap">
     <!-- Theme toggle (dash only) -->
@@ -135,61 +115,118 @@
         </div>
     </div>
 
-    <h1 class="dash-title">BISK System</h1>
+    {#    {% include "scheduler/_system_panel.html" %}#}
+    <div id="system-panel"
+         hx-get="{% url 'system_panel_partial' %}"
+         hx-trigger="load, every {{ auto_refresh|default:10 }}s"
+         hx-swap="innerHTML">
+        {# initial render: keep the current content so first paint is instant #}
+        {% include "scheduler/_system_panel.html" %}
+    </div>
 
-    {% include "scheduler/_system_panel.html" %}
 </div>
 
 <script>
     (function () {
-        const KEY = 'bisk:theme';
-        const htmlEl = document.documentElement;
-        const bodyEl = document.body;
-        const btnL = document.getElementById('tLight');
-        const btnS = document.getElementById('tSystem');
-        const btnD = document.getElementById('tDark');
+        // IDs used inside the panel
+        const INPUT_ID = 'biskRefreshInput';
+        const BADGE_ID = 'biskRefreshCountdown';
+        const PANEL_ID = 'system-panel';
+        const LS_KEY = 'bisk:system:auto_refresh_seconds';
 
-        function apply(theme) {
-            // theme is 'light' | 'system' | 'dark'
-            htmlEl.dataset.theme = theme;
-            bodyEl.dataset.theme = theme; // our panel CSS also reads body[data-theme]
-            // Clear any legacy classes if you had them
-            htmlEl.classList.remove('dark');
-            bodyEl.classList.remove('dark');
-            // Update active state
-            [btnL, btnS, btnD].forEach(b => {
-                b.classList.toggle('active',
-                    (b === btnL && theme === 'light') ||
-                    (b === btnS && theme === 'system') ||
-                    (b === btnD && theme === 'dark')
-                );
-                b.setAttribute('aria-selected',
-                    (b.classList.contains('active') ? 'true' : 'false'));
+        const panel = document.getElementById(PANEL_ID);
+
+        // Read persisted value (default 30s), clamp 0..86400
+        function loadSeconds() {
+            const raw = localStorage.getItem(LS_KEY);
+            const n = raw == null ? 30 : parseInt(raw, 10);
+            return (isNaN(n) || n < 0) ? 0 : Math.min(n, 86400);
+        }
+
+        // Apply polling interval to HTMX
+        function applyHtmxInterval(seconds) {
+            const trig = seconds ? `load, every ${seconds}s` : 'load';
+            panel.setAttribute('hx-trigger', trig);
+        }
+
+        // Countdown state
+        let seconds = loadSeconds();
+        let timer = null;
+        let left = seconds;
+
+        // On-demand element getters (important after HTMX swaps)
+        function $input() {
+            return document.getElementById(INPUT_ID);
+        }
+
+        function $badge() {
+            return document.getElementById(BADGE_ID);
+        }
+
+        function paint() {
+            const b = $badge();
+            if (!b) return;
+            b.textContent = seconds ? (left + 's') : 'off';
+        }
+
+        function stop() {
+            if (timer) {
+                clearInterval(timer);
+                timer = null;
+            }
+        }
+
+        function start() {
+            stop();
+            left = seconds || 0;
+            paint();
+            if (!seconds) return; // off
+            timer = setInterval(() => {
+                left = Math.max(0, left - 1);
+                paint();
+            }, 1000);
+        }
+
+        // (Re)bind the input listener — call this after each HTMX swap
+        function bindInput() {
+            const inp = $input();
+            if (!inp) return;
+            // Reflect current value into the input
+            inp.value = String(seconds);
+            // Remove any old listener by replacing the node (cheap way to avoid duplicates)
+            const clone = inp.cloneNode(true);
+            inp.parentNode.replaceChild(clone, inp);
+            clone.addEventListener('change', () => {
+                let n = parseInt(clone.value, 10);
+                if (isNaN(n) || n < 0) n = 0;
+                if (n > 86400) n = 86400;
+                seconds = n;
+                localStorage.setItem(LS_KEY, String(seconds));
+                applyHtmxInterval(seconds);
+                start();
             });
         }
 
-        function setTheme(theme) {
-            try {
-                localStorage.setItem(KEY, theme);
-            } catch {
+        // Initial apply + bind
+        applyHtmxInterval(seconds);
+        bindInput();
+        start();
+
+        // After HTMX swaps the panel, re-bind and restart the countdown
+        document.body.addEventListener('htmx:afterSwap', (evt) => {
+            if (evt.target && evt.target.id === PANEL_ID) {
+                bindInput();
+                start();
             }
-            apply(theme);
-        }
+        });
 
-        // initialize
-        let saved = null;
-        try {
-            saved = localStorage.getItem(KEY);
-        } catch {
-        }
-        if (saved !== 'light' && saved !== 'dark' && saved !== 'system') saved = 'system';
-        apply(saved);
-
-        // wire clicks
-        btnL.addEventListener('click', () => setTheme('light'));
-        btnS.addEventListener('click', () => setTheme('system'));
-        btnD.addEventListener('click', () => setTheme('dark'));
+        // Pause when tab hidden; resume when visible
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) stop(); else start();
+        });
     })();
 </script>
+
+
 </body>
 </html>

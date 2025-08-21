@@ -8,12 +8,17 @@
 │   │   ├── __init__.py
 │   │   ├── management
 │   │   │   └── commands
+│   │   │       ├── generate_occurrences.py
+│   │   │       ├── __pycache__
+│   │   │       │   └── generate_occurrences.cpython-312.pyc
 │   │   │       └── roll_periods.py
 │   │   ├── migrations
 │   │   │   ├── 0001_initial.py
+│   │   │   ├── 0002_recognitionsettings_max_periods_per_day.py
 │   │   │   ├── __init__.py
 │   │   │   └── __pycache__
 │   │   │       ├── 0001_initial.cpython-312.pyc
+│   │   │       ├── 0002_recognitionsettings_max_periods_per_day.cpython-312.pyc
 │   │   │       └── __init__.cpython-312.pyc
 │   │   ├── models.py
 │   │   ├── __pycache__
@@ -37,20 +42,24 @@
 │   │   │   ├── 0002_camera_cpu_affinity_camera_device_camera_gpu_index_and_more.py
 │   │   │   ├── 0003_camera_pause_until.py
 │   │   │   ├── 0004_camera_prefer_camera_over_profile.py
+│   │   │   ├── 0005_alter_camera_pause_until.py
 │   │   │   ├── __init__.py
 │   │   │   └── __pycache__
 │   │   │       ├── 0001_initial.cpython-312.pyc
 │   │   │       ├── 0002_camera_cpu_affinity_camera_device_camera_gpu_index_and_more.cpython-312.pyc
 │   │   │       ├── 0003_camera_pause_until.cpython-312.pyc
 │   │   │       ├── 0004_camera_prefer_camera_over_profile.cpython-312.pyc
+│   │   │       ├── 0005_alter_camera_pause_until.cpython-312.pyc
 │   │   │       └── __init__.cpython-312.pyc
 │   │   ├── models.py
 │   │   ├── __pycache__
 │   │   │   ├── admin.cpython-312.pyc
 │   │   │   ├── apps.cpython-312.pyc
 │   │   │   ├── __init__.cpython-312.pyc
-│   │   │   └── models.cpython-312.pyc
+│   │   │   ├── models.cpython-312.pyc
+│   │   │   └── utils.cpython-312.pyc
 │   │   ├── tests.py
+│   │   ├── utils.py
 │   │   └── views.py
 │   └── scheduler
 │       ├── admin.py
@@ -76,6 +85,12 @@
 │       │   ├── 0005_runningprocess_effective_args.py
 │       │   ├── 0006_runningprocess_cpu_affinity_and_more.py
 │       │   ├── 0007_streamprofile_cpu_affinity_streamprofile_device_and_more.py
+│       │   ├── 0008_alter_runningprocess_cpu_affinity.py
+│       │   ├── 0009_alter_runnerheartbeat_options_and_more.py
+│       │   ├── 0010_alter_runnerheartbeat_ts.py
+│       │   ├── 0011_runnerheartbeat_pid.py
+│       │   ├── 0012_globalresourcesettings_and_more.py
+│       │   ├── 0013_runnerheartbeat_processed_fps.py
 │       │   ├── __init__.py
 │       │   └── __pycache__
 │       │       ├── 0001_initial.cpython-312.pyc
@@ -85,6 +100,12 @@
 │       │       ├── 0005_runningprocess_effective_args.cpython-312.pyc
 │       │       ├── 0006_runningprocess_cpu_affinity_and_more.cpython-312.pyc
 │       │       ├── 0007_streamprofile_cpu_affinity_streamprofile_device_and_more.cpython-312.pyc
+│       │       ├── 0008_alter_runningprocess_cpu_affinity.cpython-312.pyc
+│       │       ├── 0009_alter_runnerheartbeat_options_and_more.cpython-312.pyc
+│       │       ├── 0010_alter_runnerheartbeat_ts.cpython-312.pyc
+│       │       ├── 0011_runnerheartbeat_pid.cpython-312.pyc
+│       │       ├── 0012_globalresourcesettings_and_more.cpython-312.pyc
+│       │       ├── 0013_runnerheartbeat_processed_fps.cpython-312.pyc
 │       │       └── __init__.cpython-312.pyc
 │       ├── models.py
 │       ├── periodic
@@ -99,7 +120,9 @@
 │       │   ├── apps.cpython-312.pyc
 │       │   ├── __init__.cpython-312.pyc
 │       │   ├── models.cpython-312.pyc
+│       │   ├── resources.cpython-312.pyc
 │       │   └── views.cpython-312.pyc
+│       ├── resources.py
 │       ├── services
 │       │   ├── enforcer.py
 │       │   ├── __init__.py
@@ -113,9 +136,11 @@
 │       ├── templates
 │       │   └── scheduler
 │       │       ├── system.html
-│       │       └── _system_panel.html
+│       │       ├── _system_panel.html
+│       │       └── _system_panel_NoRefresh.html
 │       ├── tests.py
 │       └── views.py
+├── audit_profiles.sh
 ├── bisk
 │   ├── asgi.py
 │   ├── __init__.py
@@ -129,6 +154,7 @@
 │   ├── urls.py
 │   ├── views.py
 │   └── wsgi.py
+├── cloudflared tunnel rio.txt
 ├── db.sqlite3
 ├── deploy
 │   └── systemd
@@ -139,7 +165,10 @@
 ├── Details.txt
 ├── docs
 │   └── ops
+│       ├── BISK_RFv4_runner_telemetry_and_heartbeats.md
 │       ├── BISK_RFv4_StreamProfile_Enforcer_Rationale.md
+│       ├── Live_Code_Mirror_Setup_Complete.md
+│       ├── Live_Code_Mirror_Setup.md
 │       └── REDIS_CACHE.md
 ├── extras
 │   ├── recognize_ffmpeg.py
@@ -149,6 +178,7 @@
 │   └── snapshots
 │       ├── 1.jpg
 │       └── 2.jpg
+├── _mirror_check.txt
 ├── requirements.txt
 ├── templates
 │   ├── admin
@@ -167,4 +197,4 @@
 ├── tree.txt
 └── TShoot_01.txt
 
-41 directories, 127 files
+42 directories, 156 files

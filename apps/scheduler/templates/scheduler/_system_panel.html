@@ -382,6 +382,85 @@
                                                        style="margin-left:6px">{{ paused }}</span></span>
             </div>
         </div>
+        <!-- Runner Heartbeats -->
+        <div class="bisk-card bisk-col-12">
+            <div class="bisk-h">Runner Heartbeats</div>
+
+            {% if runner_rows %}
+                <div style="max-height: 360px; overflow: auto;">
+                    <table class="bisk-table">
+                        <thead>
+                        <tr>
+                            <th>Runner</th>
+                            <th>PID</th>
+                            <th class="text-end">Target FPS</th>
+                            <th class="text-end">Camera FPS</th>
+                            <th class="text-end">Processed FPS</th>
+                            <th class="text-end">Snapshot (s)</th>
+                            <th class="text-end">Last HB</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for r in runner_rows %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ r.label }}</div>
+                                    {% if r.status %}
+                                        <div class="bisk-sub">Status: {{ r.status }}</div>{% endif %}
+                                </td>
+                                <td class="bisk-mono">{% if r.pid %}{{ r.pid }}{% else %}—{% endif %}</td>
+
+                                <td class="text-end">
+                                    {% if r.target_fps is not None %}
+                                        {{ r.target_fps|floatformat:1 }}
+                                    {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                </td>
+
+                                <td class="text-end">
+                                    {% if r.camera_fps is not None %}
+                                        {{ r.camera_fps|floatformat:1 }}
+                                    {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                </td>
+
+                                <td class="text-end">
+                                    {% if r.processed_fps is not None %}
+                                        {{ r.processed_fps|floatformat:1 }}
+                                    {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                </td>
+
+                                <td class="text-end">
+                                    {% if r.snapshot_every is not None %}
+                                        {{ r.snapshot_every }}
+                                    {% else %}<span class="bisk-muted">—</span>{% endif %}
+                                </td>
+
+                                <td class="text-end">
+                                    {% if r.hb_age_s is not None %}
+                                        {% with th=hb_thresholds %}
+                                            {% if r.hb_age_s <= th.online %}
+                                                <span class="bisk-badge green" title="{{ r.hb_ts }}">{{ r.hb_age_s }}s ago</span>
+                                            {% elif r.hb_age_s <= th.stale %}
+                                                <span class="bisk-badge yellow" title="{{ r.hb_ts }}">{{ r.hb_age_s }}s ago</span>
+                                            {% else %}
+                                                <span class="bisk-badge red"
+                                                      title="{{ r.hb_ts }}">{{ r.hb_age_s }}s ago</span>
+                                            {% endif %}
+                                        {% endwith %}
+                                    {% else %}
+                                        <span class="bisk-muted">—</span>
+                                    {% endif %}
+
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="bisk-muted">No runner heartbeats yet.</div>
+            {% endif %}
+        </div>
+
 
         <!-- Enforcer -->
         <div class="bisk-card bisk-col-12">
@@ -455,74 +534,4 @@
     </div>
 </div>
 
-<script>
-    (function () {
-        const KEY = 'bisk:system:auto_refresh_seconds';
-        const input = document.getElementById('biskRefreshInput');
-        const cdEl = document.getElementById('biskRefreshCountdown');
 
-        // default 30s if unset; clamp 0..86400
-        const stored = localStorage.getItem(KEY);
-        let seconds = stored !== null ? parseInt(stored, 10) : 30;
-        if (isNaN(seconds) || seconds < 0) seconds = 0;
-        if (seconds > 86400) seconds = 86400;
-
-        input.value = String(seconds);
-
-        let timer = null;
-        let countdown = seconds;
-
-        function updateCountdownLabel() {
-            if (!seconds) {
-                cdEl.textContent = 'off';
-                return;
-            }
-            cdEl.textContent = countdown + 's';
-        }
-
-        function clearTimer() {
-            if (timer) {
-                clearInterval(timer);
-                timer = null;
-            }
-        }
-
-        function startTimer() {
-            clearTimer();
-            if (!seconds) {
-                updateCountdownLabel();
-                return;
-            }
-            countdown = seconds;
-            updateCountdownLabel();
-            timer = setInterval(() => {
-                countdown -= 1;
-                if (countdown <= 0) {
-                    location.reload();
-                    return;
-                }
-                updateCountdownLabel();
-            }, 1000);
-        }
-
-        input.addEventListener('change', () => {
-            let val = parseInt(input.value, 10);
-            if (isNaN(val) || val < 0) val = 0;
-            if (val > 86400) val = 86400;
-            seconds = val;
-            localStorage.setItem(KEY, String(seconds));
-            startTimer();
-        });
-
-        document.addEventListener('visibilitychange', () => {
-            // Pause countdown when tab hidden; resume when visible (keeps UX sane)
-            if (document.hidden) {
-                clearTimer();
-            } else {
-                startTimer();
-            }
-        });
-
-        startTimer();
-    })();
-</script>
