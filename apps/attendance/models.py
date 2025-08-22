@@ -1,13 +1,39 @@
 # apps/attendance/models.py
 from django.db import models
+from django.db.models import Q, UniqueConstraint
+from django.utils import timezone
 
 
 class Student(models.Model):
+    # --- existing fields (keep yours, e.g. h_code, is_active, etc.) ---
     h_code = models.CharField(max_length=32, unique=True)
-    full_name = models.CharField(max_length=120)
     is_active = models.BooleanField(default=True)
 
-    def __str__(self): return f"{self.h_code} - {self.full_name}"
+    # NEW: split name fields (use empty strings rather than NULLs)
+    first_name = models.CharField(max_length=100, blank=True, default="")
+    middle_name = models.CharField(max_length=100, blank=True, default="")
+    last_name = models.CharField(max_length=100, blank=True, default="")
+
+    # REMOVE the old full_name = models.CharField(...) field.
+    # (Do NOT delete it here yet; we will remove it in the 2nd migration!)
+    # For the code edit step: comment it out now so makemigrations detects removal.
+    # full_name = models.CharField(max_length=255, blank=True, default="")  # <- to be removed
+
+    # ... whatever else you already had ...
+
+    def full_name(self) -> str:
+        """
+        Return a display-friendly full name assembled from parts.
+        Django templates can call {{ student.full_name }} (method call allowed).
+        """
+        parts = [self.first_name.strip(), self.middle_name.strip(), self.last_name.strip()]
+        return " ".join(p for p in parts if p).strip() or self.h_code
+
+    full_name.short_description = "Full name"
+
+    def __str__(self):
+        # keep your existing logic if different
+        return f"{self.h_code} — {self.full_name()}"
 
 
 class PeriodTemplate(models.Model):
@@ -114,3 +140,56 @@ class RecognitionSettings(models.Model):
         # Simple singleton: id=1
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+class FaceEmbedding(models.Model):
+    """
+    One embedding (float32 vector) for a student.
+    Stored as raw bytes to avoid forcing numpy on the server.
+    """
+    student = models.ForeignKey("attendance.Student", on_delete=models.CASCADE, related_name="embeddings")
+    dim = models.PositiveSmallIntegerField(default=512)
+    vector = models.BinaryField()  # float32 bytes, length = dim * 4
+    source_path = models.CharField(max_length=512, blank=True)  # where the crop/image lives (optional)
+    camera = models.ForeignKey("cameras.Camera", null=True, blank=True, on_delete=models.SET_NULL)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    # --- Enrollment / quality metadata ---
+    last_enrolled_at = models.DateTimeField(null=True, blank=True)
+    last_used_k = models.PositiveIntegerField(default=0)
+    last_used_det_size = models.PositiveIntegerField(default=640)
+    images_considered = models.PositiveIntegerField(default=0)
+    images_used = models.PositiveIntegerField(default=0)
+
+    avg_sharpness = models.FloatField(default=0.0)
+    avg_brightness = models.FloatField(default=0.0)
+
+    used_images = models.JSONField(default=list, blank=True)
+
+    embedding_norm = models.FloatField(default=0.0)
+    embedding_sha256 = models.CharField(max_length=64, blank=True, default="")
+
+    arcface_model = models.CharField(max_length=64, blank=True, default="buffalo_l")
+    provider = models.CharField(max_length=64, blank=True, default="CUDAExecutionProvider")
+
+    # Optional extras (very useful in practice)
+    enroll_runtime_ms = models.PositiveIntegerField(default=0)
+    enroll_notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["student"]),
+            models.Index(fields=["is_active", "dim"]),
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["embedding_sha256"]),
+            models.Index(fields=["last_enrolled_at"]),
+        ]
+        constraints = [
+            UniqueConstraint(
+                fields=("student",),
+                condition=Q(is_active=True),
+                name="uniq_active_embedding_per_student",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.student.h_code} • dim={self.dim} • {'on' if self.is_active else 'off'}"

@@ -1,0 +1,108 @@
+High-impact next steps
+1) “Who’s here now?” view (current period roster)
+
+What: a table for the active period showing every active student, with status = Present/Absent/Seen low score (colored), and quick manual override.
+Why: this’s the screen people actually need in real time.
+Touchpoints: attendance/views.py (new read-only view), small template, link from the panel, optional CSV export.
+DoD: Loads under /dash/attendance/now/, shows N/Total present; manual mark present sticks and appears on panel counts.
+
+2) CSV export endpoints
+
+What: one-click CSVs for:
+
+Today’s period roster (present/absent)
+
+Recent recognitions (last 1–24h)
+
+Attendance records (date range)
+Why: ops & audits love spreadsheets.
+Touchpoints: small views in attendance/api.py (read-only), signed/permissioned links on the panel.
+DoD: Files open in Excel/Sheets; timestamps are local; headers are clear.
+
+3) Admin weekday picker (checkbox widget for weekdays_mask)
+
+What: Replace the “bitmask math” with 7 checkboxes (Mon..Sun) in the admin form.
+Why: no mental arithmetic; fewer mistakes.
+Touchpoints: attendance/admin.py (ModelForm with custom widget), no model change.
+DoD: Toggling days updates the mask; help_text stays as a reference.
+
+4) Panel polish
+
+What:
+
+Period progress bar (e.g., 54% through “Test Block”)
+
+Per-camera event counts last X minutes
+
+Badge when a recognition improved best (tiny ⚡ next to score)
+Why: better situational awareness.
+Touchpoints: same panel view/template, tiny queryset additions.
+DoD: No layout shift; still HTMX-refresh friendly.
+
+5) Retention + indexes (keep DB lean)
+
+What:
+
+Auto-delete AttendanceEvent older than N days (setting)
+
+Add DB indexes on hot columns (period_id, student_id, ts, -id)
+Why: keeps queries fast; storage bounded.
+Touchpoints: management command or nightly task; model Meta indexes.
+DoD: Explain how to change retention; verify panel queries stay snappy.
+
+6) Health & alerts
+
+What: warnings on panel:
+
+Runner stale (> snapshot sec × 2)
+
+Enforcer last error not “—”
+
+No active period during school hours
+Optional email/Slack hook for critical states.
+Why: catch silent failures early.
+Touchpoints: panel context + a tiny notifier module you can toggle.
+DoD: Clear banner; no spam.
+
+7) API hardening for runners
+
+What:
+
+Backoff guidance (429 on overload)
+
+Better error payloads (held_by_window, updated_best you added)
+
+Key rotation procedure (two valid keys during swap)
+Why: safer production behavior.
+Touchpoints: attendance/api.py, settings, docstring.
+DoD: You can rotate keys without downtime; runners handle 429.
+
+8) Daily summary report
+
+What: at day’s end, compute per-student “present periods / cap,” plus anomalies (never seen, seen < min periods). Optional email/CSV attachment.
+Why: useful admin artifact.
+Touchpoints: management command or cron; summary view in admin.
+DoD: One-click rerun for a given date; CSV matches the view.
+
+9) Tests (practical set)
+
+What: pytest for:
+
+ingest_match thresholds & windows
+
+Occurrence matching at time edges
+
+Admin action “Generate next 7 days”
+Why: confidence as you iterate.
+Touchpoints: tests/attendance/test_ingest.py, factories.
+DoD: Green tests; obvious fixtures.
+
+My recommendation to tackle next (fastest wins)
+
+Admin weekday picker (zero risk, huge UX gain).
+
+CSV export (you’ll use this immediately).
+
+“Who’s here now?” view (gives you a true operational screen).
+
+Say which one you want first and I’ll hand you precise, drop-in edits for your codebase (keeping your current structure and naming).

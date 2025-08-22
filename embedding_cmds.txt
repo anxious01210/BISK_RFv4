@@ -1,0 +1,17 @@
+# If you haven't run the model migration that added metadata fields, do it now:
+(.venv) python manage.py makemigrations apps.attendance
+(.venv) python manage.py migrate
+
+# Sanity: ensure media folders exist
+(.venv) python manage.py check_media_folders
+
+# If you have inbox dumps, sort them (recommended policy: rename)
+(.venv) python manage.py sort_gallery_intake --policy rename --clean-empty
+
+# Enroll (one or all). Example with higher det-size and more K:
+(.venv) python manage.py enroll_from_folder --k 5 --force --det-size 1024
+# or per student:
+(.venv) python manage.py enroll_from_folder --student H123456 --k 5 --force --det-size 1024
+
+# Build PKL once embeddings exist
+(.venv) python manage.py build_embeddings_pkl --dim 512 --force

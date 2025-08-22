@@ -1,0 +1,78 @@
+===== GPU/Driver =====
+Fri Aug 22 14:08:25 2025       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 575.64.03              Driver Version: 575.64.03      CUDA Version: 12.9     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA GeForce GTX 1060        Off |   00000000:01:00.0  On |                  N/A |
+| N/A   55C    P8              6W /   88W |      46MiB /   6144MiB |      5%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|    0   N/A  N/A           42911      G   /usr/lib/xorg/Xorg                       37MiB |
++-----------------------------------------------------------------------------------------+
+
+===== CUDA/NVCC =====
+nvcc: NVIDIA (R) Cuda compiler driver
+Copyright (c) 2005-2023 NVIDIA Corporation
+Built on Fri_Jan__6_16:45:21_PST_2023
+Cuda compilation tools, release 12.0, V12.0.140
+Build cuda_12.0.r12.0/compiler.32267302_0
+CUDA_PATH=
+LD_LIBRARY_PATH=
+
+===== GCC =====
+gcc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0
+
+===== cuDNN (dpkg) =====
+ii cudnn9-cuda-12 9.10.1.4-1
+ii cudnn9-cuda-12-9 9.10.1.4-1
+ii libcudnn9-cuda-12 9.10.1.4-1
+ii libcudnn9-dev-cuda-12 9.10.1.4-1
+ii libcudnn9-headers-cuda-12 9.10.1.4-1
+ii libcudnn9-static-cuda-12 9.10.1.4-1
+
+===== CUDA packages (dpkg) =====
+ii cudnn9-cuda-12 9.10.1.4-1
+ii cudnn9-cuda-12-9 9.10.1.4-1
+ii libcudnn9-cuda-12 9.10.1.4-1
+ii libcudnn9-dev-cuda-12 9.10.1.4-1
+ii libcudnn9-headers-cuda-12 9.10.1.4-1
+ii libcudnn9-static-cuda-12 9.10.1.4-1
+
+===== FFmpeg/NVENC =====
+ V....D av1_nvenc            NVIDIA NVENC av1 encoder (codec av1)
+ V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
+ V....D hevc_nvenc           NVIDIA NVENC hevc encoder (codec hevc)
+Hardware acceleration methods:
+vdpau
+cuda
+vaapi
+qsv
+drm
+opencl
+vulkan
+
+ii ffmpeg 7:6.1.1-3ubuntu5+esm3
+ii gstreamer1.0-libav:amd64 1.24.1-1build1
+
+===== Python (venv) =====
+python 3.12.3 (main, Jun 18 2025, 17:59:45) [GCC 13.3.0]
+{
+  "onnxruntime": "1.22.0",
+  "onnxruntime_gpu": null,
+  "insightface": "0.7.3",
+  "numpy": "2.2.6",
+  "opencv-python": null,
+  "opencv-python-headless": null,
+  "torch": null
+}
+ORT providers: ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']

@@ -1,7 +1,7 @@
 # apps/attendance/urls.py
 from django.urls import path
 from rest_framework.routers import DefaultRouter
-from .api import AttendanceRecordViewSet, IngestView
+from .api import AttendanceRecordViewSet, IngestView, EnrollView, GalleryView
 
 app_name = "attendance"  # <-- namespacing key
 
@@ -15,6 +15,8 @@ urlpatterns = [
     # POST /api/attendance/ingest/
     # Reverse name (namespaced): attendance:attendance_ingest
     path("api/attendance/ingest/", IngestView.as_view(), name="attendance_ingest"),
+    path("api/attendance/enroll/", EnrollView.as_view(), name="attendance_enroll"),
+    path("api/attendance/gallery/", GalleryView.as_view(), name="attendance_gallery"),
 ]
 
 urlpatterns += router.urls
