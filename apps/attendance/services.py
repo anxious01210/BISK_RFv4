@@ -207,6 +207,7 @@ def ingest_match(*, h_code: str, score: float, ts=None, camera=None, crop_path: 
 
     # require minimum improvement to replace best
     improved = float(score) > float(rec.best_score or 0.0) + float(st.min_improve_delta or 0.0)
+    held_by_window = bool(recently_seen and improved)
     if improved and not recently_seen:
         rec.best_score = score
         rec.best_seen = ts
@@ -216,4 +217,14 @@ def ingest_match(*, h_code: str, score: float, ts=None, camera=None, crop_path: 
 
     rec.save(update_fields=["last_seen", "sightings", "best_score", "best_seen", "best_camera", "best_crop"])
     rec.refresh_from_db()
-    return {"accepted": True, "created": False, "improved": improved, "best_score": float(rec.best_score or 0.0)}
+    return {
+        "accepted": True,
+        "created": False,
+        # improved means “higher than current best by delta”
+        "improved": bool(improved),
+        # updated_best says whether best_* actually changed this call
+        "updated_best": bool(improved and not recently_seen),
+        # explicitly say if we held the update due to the de-dup window
+        "held_by_window": held_by_window,
+        "best_score": float(rec.best_score or 0.0),
+    }

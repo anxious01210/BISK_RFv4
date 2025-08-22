@@ -338,7 +338,7 @@
             <!-- Enforce now -->
             <form method="post" action="{% url 'enforce_now' %}">
                 {% csrf_token %}
-{#                <input type="hidden" name="next" value="{{ request.get_full_path }}">#}
+                {#                <input type="hidden" name="next" value="{{ request.get_full_path }}">#}
                 <button type="submit" class="bisk-btn">Enforce now</button>
             </form>
         </div>
@@ -383,6 +383,8 @@
                                                        style="margin-left:6px">{{ paused }}</span></span>
             </div>
         </div>
+
+
         <!-- Runner Heartbeats -->
         <div class="bisk-card bisk-col-12">
             <div class="bisk-h">Runner Heartbeats</div>
@@ -532,6 +534,96 @@
                 <div class="bisk-muted">No GPU detected (nvidia-smi not found or no NVIDIA GPU).</div>
             {% endif %}
         </div>
+
+        <!-- Today’s periods (status + present/total) -->
+        {% if occ_rows %}
+            <div class="bisk-card mt-3">
+                <div class="bisk-h">Today’s periods</div>
+                <table class="bisk-table">
+                    <thead>
+                    <tr>
+                        <th class="text-left">Period</th>
+                        <th>Start</th>
+                        <th>End</th>
+                        <th>Status</th>
+                        <th>Present{% if total_students %} / Total{% endif %}</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for p, present in occ_rows %}
+                        <tr>
+                            <td>{{ p.template.name }}</td>
+                            <td>{{ p.start_dt|date:"H:i" }}</td>
+                            <td>{{ p.end_dt|date:"H:i" }}</td>
+                            <td>
+                                {% if p.start_dt <= now and now <= p.end_dt %}
+                                    <span class="badge badge-success">Active</span>
+                                {% else %}
+                                    <span class="badge">Idle</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ present }}{% if total_students %} / {{ total_students }}{% endif %}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+
+        {% if recent_events %}
+            <div class="bisk-card mt-3">
+                <div class="bisk-toprow" style="margin:0 0 8px;">
+                    <div class="bisk-h" style="margin:0">Recent recognitions</div>
+                    <form class="bisk-actions"
+                          hx-get="{% url 'system_panel_partial' %}"
+                          hx-target="#system-panel"
+                          hx-swap="innerHTML">
+                        <label for="recent-input" class="bisk-sub" style="margin-right:6px;">Recent events:</label>
+                        <input id="recent-input"
+                               name="recent"
+                               type="number"
+                               class="bisk-input"
+                               min="5" max="100" step="5"
+                               value="{{ recent_limit|default:10 }}"
+                               style="width:6rem; margin-right:8px;">
+                        <button type="submit" class="bisk-btn" style="padding:4px 10px; font-size:12px;">Apply</button>
+                    </form>
+                </div>
+
+
+                <table class="bisk-table">
+                    <thead>
+                    <tr>
+                        <th class="text-left">Student</th>
+                        <th>Score</th>
+                        <th>Camera</th>
+                        <th>Period</th>
+                        <th>Time</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    {% for e in recent_events %}
+                        <tr>
+                            <td>
+                                {% if e.student %}<b>{{ e.student.h_code }}</b> — {{ e.student.full_name }}{% else %}
+                                    —{% endif %}
+                            </td>
+                            <td>{{ e.score|floatformat:3 }}</td>
+                            <td>{% if e.camera %}{{ e.camera.name }}{% else %}—{% endif %}</td>
+                            <td>
+                                {% if e.period %}
+                                    {{ e.period.template.name }}
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{{ e.ts|date:"H:i:s" }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+
+
     </div>
 </div>
 

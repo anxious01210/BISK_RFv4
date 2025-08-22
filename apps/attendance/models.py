@@ -11,18 +11,52 @@ class Student(models.Model):
 
 
 class PeriodTemplate(models.Model):
-    name = models.CharField(max_length=64)
-    order = models.PositiveSmallIntegerField()
-    start_time = models.TimeField()
-    end_time = models.TimeField()
-    weekdays_mask = models.PositiveSmallIntegerField(default=0)
-    is_enabled = models.BooleanField(default=True)
-    early_grace_minutes = models.PositiveSmallIntegerField(default=0)
-    late_grace_minutes = models.PositiveSmallIntegerField(default=0)
+    name = models.CharField(
+        max_length=64,
+        help_text="Display name for this period (e.g., 'First Block')."
+    )
+    order = models.PositiveSmallIntegerField(
+        help_text="Sort order within the day. Lower numbers appear first."
+    )
+    start_time = models.TimeField(
+        help_text="Local start time of the period (HH:MM)."
+    )
+    end_time = models.TimeField(
+        help_text="Local end time of the period (HH:MM)."
+    )
+    weekdays_mask = models.PositiveSmallIntegerField(
+        default=31,  # Mon–Fri by default
+        help_text=(
+            "Bitmask of active weekdays. Add the values for the days you want:\n"
+            "Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64. ALL=127.\n"
+            "Examples:\n"
+            "• Mon–Fri: 31  (1+2+4+8+16)\n"
+            "• Sat+Sun (western weekend): 96  (32+64)\n"
+            "• Fri+Sat (Gulf weekend): 48  (16+32)\n"
+            "• Sun–Thu (Fri & Sat OFF): 79  (64+1+2+4+8)\n"
+            "• Only Sun: 64  • Only Fri: 16\n"
+            "At runtime we test: mask & (1 << date.weekday())."
+        )
+    )
+    is_enabled = models.BooleanField(
+        default=True,
+        help_text="If off, this template is ignored when generating daily occurrences."
+    )
+    early_grace_minutes = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Extend the start earlier by this many minutes when generating the daily window."
+    )
+    late_grace_minutes = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="Extend the end later by this many minutes when generating the daily window."
+    )
 
-    def __str__(self): return f"{self.name} ({self.start_time}-{self.end_time})"
+    def __str__(self):
+        return f"{self.name} ({self.start_time}-{self.end_time})"
 
-    def is_active_on(self, dow: int) -> bool: return bool(self.weekdays_mask & (1 << dow))
+    def is_active_on(self, dow: int) -> bool:
+        """Return True if this template includes the weekday (Mon=0 … Sun=6)."""
+        return bool(self.weekdays_mask & (1 << dow))
 
 
 class PeriodOccurrence(models.Model):
@@ -80,4 +114,3 @@ class RecognitionSettings(models.Model):
         # Simple singleton: id=1
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
-

@@ -164,16 +164,23 @@
             <button id="tDark" type="button" role="tab" aria-selected="false">Dark</button>
         </div>
     </div>
+    {#    <div id="system-panel"#}
+    {#         hx-get="{% url 'system_panel_partial' %}?recent={{ recent_limit|default:10 }}"#}
+    {#         hx-get="{% url 'system_panel_partial' %}"#}
+    {#         hx-trigger="load, every {{ auto_refresh|default:10 }}s"#}
+    {#         hx-trigger="load"#}
+    {#         hx-swap="innerHTML">#}
+    {# initial render: keep the current content so first paint is instant #}
+    {#        {% include "scheduler/_system_panel.html" %}#}
+    {#    </div>#}
+
     <div id="system-panel"
-         hx-get="{% url 'system_panel_partial' %}"
-            {#         hx-trigger="load, every {{ auto_refresh|default:10 }}s"#}
-         hx-trigger="load"
+         hx-get="{% url 'system_panel_partial' %}?recent={{ recent_limit|default:10 }}"
+         hx-include="#recent-input"
+{#         hx-trigger="load, every {{ seconds }}s"#}
+         hx-trigger="load, every {{ auto_refresh|default:10 }}s"
          hx-swap="innerHTML">
-        {# initial render: keep the current content so first paint is instant #}
-                {% include "scheduler/_system_panel.html" %}
-
-
-
+        {% include "scheduler/_system_panel.html" %}
     </div>
 
 </div>

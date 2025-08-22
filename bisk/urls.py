@@ -19,6 +19,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
+from apps.scheduler import views as sched_views
 
 from apps.scheduler import api as sched_api
 from bisk import views as core_views
@@ -27,10 +28,10 @@ from apps.scheduler.views import system_dash, system_json, admin_system, system_
 urlpatterns = [
     # Admin-wrapped dashboard page
     path("admin/system/", admin.site.admin_view(admin_system), name="admin_system"),
-    path("admin/system/enforce-now/", sched_api.enforce_now, name="enforce_now") if hasattr(sched_api,
-                                                                                            "enforce_now") else path(
-        "admin/system/enforce-now/", admin_system, name="enforce_now"),  # keep your existing import if different
-    # path("admin/system/enforce-now/", sched_views.enforce_now, name="enforce_now"),
+    # path("admin/system/enforce-now/", sched_api.enforce_now, name="enforce_now") if hasattr(sched_api,
+    #                                                                                         "enforce_now") else path(
+    #     "admin/system/enforce-now/", admin_system, name="enforce_now"),  # keep your existing import if different
+    path("admin/system/enforce-now/", sched_views.enforce_now, name="enforce_now"),
 
     path("admin/", admin.site.urls),
 

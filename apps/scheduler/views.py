@@ -16,7 +16,9 @@ from django.core.cache import cache, caches
 from .services.enforcer import enforce_schedules
 from django.db.models import OuterRef, Subquery, Value
 from django.utils import timezone
-
+from django.db import models
+from django.db.models import Count
+from apps.attendance.models import PeriodOccurrence, AttendanceRecord, AttendanceEvent, Student
 
 
 @staff_member_required
@@ -251,5 +253,46 @@ from django.views.decorators.http import require_GET
 @require_GET
 def system_panel_partial(request):
     ctx = _collect_system_info()      # you already have this
+
+    # ---------- Attendance widgets (today) ----------
+    today = timezone.localdate()
+    now = timezone.now()
+
+    # Periods rolled for today
+    periods = (PeriodOccurrence.objects
+               .filter(date=today)
+               .select_related("template")
+               .order_by("start_dt"))
+
+    # Present count per period (distinct students)
+    counts = (AttendanceRecord.objects
+              .filter(period__date=today)
+              .values("period_id")
+              .annotate(n=Count("student_id", distinct=True)))
+    present_by_period = {row["period_id"]: row["n"] for row in counts}
+
+    total_students = Student.objects.filter(is_active=True).count()
+
+    # >>> configurable recent size from GET (?recent=)
+    try:
+        recent_limit = int(request.GET.get("recent", 10))
+    except (TypeError, ValueError):
+        recent_limit = 10
+    recent_limit = max(5, min(100, recent_limit))  # clamp 5..100
+
+    # Recent recognitions (last 10 events)
+    recent_events = (AttendanceEvent.objects
+                     .select_related("student", "camera", "period__template")
+                     .order_by("-id")[:recent_limit])
+
+    ctx.update({
+        "occ_rows": [(p, present_by_period.get(p.id, 0)) for p in periods],
+        "total_students": total_students,
+        "now": now,
+        "recent_events": recent_events,
+        "recent_limit": recent_limit,  # <<< expose to template
+    })
+    # -----------------------------------------------
+
     # IMPORTANT: render the *panel* template only (not the whole page)
     return render(request, "scheduler/_system_panel.html", ctx)
