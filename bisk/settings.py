@@ -202,3 +202,11 @@ CACHES = {
 
 # Keep just one lock path (env can override)
 ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/run/bisk/enforcer.lock")
+
+# ---- Embedding defaults / UI caps ----
+# Embedding pipeline defaults
+EMBEDDING_DEFAULT_K = 3                 # default K if not provided
+EMBEDDING_DEFAULT_DET_SIZE = 1024        # 640, 1024, etc.
+EMBEDDING_LIST_MAX_THUMBS = 4           # cap thumbs in admin list (omit/None to show exactly K)
+EMBEDDING_USE_STRICT_TOP = True         # drop images below the score floor
+EMBEDDING_MIN_SCORE = 0.55              # 0..1 on our normalized combined score

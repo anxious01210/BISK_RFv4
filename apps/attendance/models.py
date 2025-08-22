@@ -141,39 +141,110 @@ class RecognitionSettings(models.Model):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
 
+
 class FaceEmbedding(models.Model):
     """
     One embedding (float32 vector) for a student.
     Stored as raw bytes to avoid forcing numpy on the server.
     """
-    student = models.ForeignKey("attendance.Student", on_delete=models.CASCADE, related_name="embeddings")
-    dim = models.PositiveSmallIntegerField(default=512)
-    vector = models.BinaryField()  # float32 bytes, length = dim * 4
-    source_path = models.CharField(max_length=512, blank=True)  # where the crop/image lives (optional)
-    camera = models.ForeignKey("cameras.Camera", null=True, blank=True, on_delete=models.SET_NULL)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
+    student = models.ForeignKey(
+        "attendance.Student",
+        on_delete=models.CASCADE,
+        related_name="embeddings",
+        help_text="The student this embedding belongs to."
+    )
+    dim = models.PositiveSmallIntegerField(
+        default=512,
+        help_text="Embedding dimensionality. We use 512 for ArcFace."
+    )
+    vector = models.BinaryField(
+        help_text="L2‑normalized embedding stored as raw float32 bytes (length = dim*4)."
+    )
+    source_path = models.CharField(
+        max_length=512, blank=True,
+        help_text="MEDIA‑relative path for reference (e.g., saved .npy for this vector)."
+    )
+    camera = models.ForeignKey(
+        "cameras.Camera", null=True, blank=True, on_delete=models.SET_NULL,
+        help_text="Camera associated with this embedding, if known (optional)."
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Exactly one active embedding per student (enforced by DB constraint)."
+    )
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Row creation timestamp."
+    )
     # --- Enrollment / quality metadata ---
-    last_enrolled_at = models.DateTimeField(null=True, blank=True)
-    last_used_k = models.PositiveIntegerField(default=0)
-    last_used_det_size = models.PositiveIntegerField(default=640)
-    images_considered = models.PositiveIntegerField(default=0)
-    images_used = models.PositiveIntegerField(default=0)
+    last_enrolled_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When this embedding was (re)computed."
+    )
+    last_used_k = models.PositiveIntegerField(
+        default=0,
+        help_text="How many images were averaged to build this vector."
+    )
+    last_used_det_size = models.PositiveIntegerField(
+        default=640,
+        help_text="Face detector input size (square). Higher can help small faces but costs GPU."
+    )
+    images_considered = models.PositiveIntegerField(
+        default=0,
+        help_text="Total gallery images discovered for the student at enrollment time."
+    )
+    images_used = models.PositiveIntegerField(
+        default=0,
+        help_text="Images actually used after filtering/scoring."
+    )
 
-    avg_sharpness = models.FloatField(default=0.0)
-    avg_brightness = models.FloatField(default=0.0)
+    avg_sharpness = models.FloatField(
+        default=0.0,
+        help_text="Mean Laplacian variance across used images (higher ≈ sharper)."
+    )
+    avg_brightness = models.FloatField(
+        default=0.0,
+        help_text="Mean grayscale intensity 0–255 across used images."
+    )
 
-    used_images = models.JSONField(default=list, blank=True)
+    used_images = models.JSONField(
+        default=list, blank=True,
+        help_text="Filenames of images included in the K‑image average."
+    )
+    used_images_detail = models.JSONField(
+        default=list, blank=True,
+        help_text="List of objects for the K images actually used: "
+                  "[{'name': 'H123456_1.jpg', 'score': 0.93, 'sharp': 123.4, 'bright': 108.7}, ...]. "
+                  "Score is the combined ranking value used to pick top‑K."
+    )
 
-    embedding_norm = models.FloatField(default=0.0)
-    embedding_sha256 = models.CharField(max_length=64, blank=True, default="")
+    embedding_norm = models.FloatField(
+        default=0.0,
+        help_text="L2 norm of the stored vector (should be ~1.0)."
+    )
+    embedding_sha256 = models.CharField(
+        max_length=64, blank=True, default="",
+        help_text="SHA‑256 hash of the raw float32 bytes (useful for dedup/versioning)."
+    )
 
-    arcface_model = models.CharField(max_length=64, blank=True, default="buffalo_l")
-    provider = models.CharField(max_length=64, blank=True, default="CUDAExecutionProvider")
+    arcface_model = models.CharField(
+        max_length=64, blank=True, default="buffalo_l",
+        help_text="InsightFace/ArcFace model name used to generate this embedding."
+    )
+    provider = models.CharField(
+        max_length=64, blank=True, default="CUDAExecutionProvider",
+        help_text="ONNX Runtime execution provider actually used (CUDA or CPU)."
+    )
 
     # Optional extras (very useful in practice)
-    enroll_runtime_ms = models.PositiveIntegerField(default=0)
-    enroll_notes = models.TextField(blank=True, default="")
+    enroll_runtime_ms = models.PositiveIntegerField(
+        default=0,
+        help_text="End‑to‑end enrollment runtime in milliseconds."
+    )
+    enroll_notes = models.TextField(
+        blank=True, default="",
+        help_text="Concise human‑readable one‑liner: k, det, counts, provider, norm, sample files."
+    )
 
     class Meta:
         indexes = [

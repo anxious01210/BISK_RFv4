@@ -64,7 +64,8 @@ media/face_gallery/
 media/face_gallery_inbox/
 media/snapshots/
 media/attendance_crops/
-
+media/reports/
+media/logs/
 
 # Flask stuff:
 instance/

@@ -2,7 +2,7 @@
 from __future__ import annotations
 import os, time, hashlib
 from typing import Optional, List, Tuple
-
+from django.db import transaction
 import cv2
 import numpy as np
 from django.conf import settings
@@ -12,6 +12,8 @@ from insightface.app import FaceAnalysis
 
 from .media_paths import DIRS, student_gallery_dir
 from .embedding_meta import float32_to_bytes, l2_norm, sha256_bytes, build_enroll_notes
+
+from apps.attendance.models import Student, FaceEmbedding
 
 # ---- InsightFace singleton (GPU-first) ----
 _APP: Optional[FaceAnalysis] = None
@@ -120,32 +122,46 @@ def image_score(bgr: np.ndarray) -> tuple[float, float, float]:
     return 0.0, sharp, bright
 
 
-def select_topk(paths: List[str], k: int) -> List[str]:
-    if k <= 0:
-        return []
+def score_images(paths: List[str]) -> List[dict]:
+    """
+    Return [{'path', 'name', 'sharp', 'bright', 'score'}] for all loadable images.
+    'score' is the combined normalized value we sort by.
+    """
     rows = []
     for p in paths:
         bgr = load_bgr(p)
         if bgr is None:
             continue
         _, sharp, bright = image_score(bgr)
-        rows.append((p, sharp, bright))
+        rows.append({"path": p, "name": os.path.basename(p), "sharp": float(sharp), "bright": float(bright)})
     if not rows:
         return []
-    sharps = np.array([r[1] for r in rows], dtype=np.float32)
-    brights = np.array([r[2] for r in rows], dtype=np.float32)
+    sharps = np.array([r["sharp"] for r in rows], dtype=np.float32)
+    brights = np.array([r["bright"] for r in rows], dtype=np.float32)
     s_min, s_max = float(sharps.min()), float(sharps.max())
     b_min, b_max = float(brights.min()), float(brights.max())
     s_rng = max(s_max - s_min, 1e-6)
     b_rng = max(b_max - b_min, 1e-6)
-    ranked = []
-    for p, s, b in rows:
-        s_n = (s - s_min) / s_rng
-        b_n = (b - b_min) / b_rng
-        combined = 0.7 * s_n + 0.3 * b_n
-        ranked.append((combined, p))
-    ranked.sort(reverse=True)
-    return [p for _, p in ranked[:k]]
+    for r in rows:
+        s_n = (r["sharp"] - s_min) / s_rng
+        b_n = (r["bright"] - b_min) / b_rng
+        r["score"] = float(0.7 * s_n + 0.3 * b_n)
+    return rows
+
+def select_topk_scored(paths: List[str], k: int, *, min_score: float = 0.0, strict_top: bool = False) -> tuple[List[dict], List[dict]]:
+    """
+    Returns (top_k_scored, all_scored).
+    Each element is {'path','name','sharp','bright','score'}.
+    """
+    if k <= 0:
+        return ([], [])
+    rows = score_images(paths)
+    if not rows:
+        return ([], [])
+    rows_sorted = sorted(rows, key=lambda r: r["score"], reverse=True)
+    if strict_top:
+        rows_sorted = [r for r in rows_sorted if r["score"] >= float(min_score)]
+    return (rows_sorted[:k], rows)
 
 
 def save_npy_for_student(h_code: str, vec: np.ndarray) -> str:
@@ -157,10 +173,7 @@ def save_npy_for_student(h_code: str, vec: np.ndarray) -> str:
 
 
 # ---- Enrollment (writes bytes to FaceEmbedding + npy file + metadata) ----
-def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> dict:
-    from django.db import transaction
-    from apps.attendance.models import Student, FaceEmbedding
-
+def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min_score: float = 0.0, strict_top: bool = False) -> dict:
     t0 = time.time()
 
     folder = student_gallery_dir(h_code)
@@ -177,27 +190,35 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> 
         return {"ok": False, "reason": f"No images under {folder}"}
 
     images_considered = len(cand)
-    picked = select_topk(cand, k=k)
-    if not picked:
+    topk_rows, all_rows = select_topk_scored(cand, k=k, min_score=min_score, strict_top=strict_top)
+    if not topk_rows:
         return {"ok": False, "reason": "No valid images after scoring"}
 
     embs, skipped = [], []
     sharp_list, bright_list, used_names = [], [], []
+    used_detail = []  # list of dicts: name/score/sharp/bright
 
-    for p in picked:
+    for row in topk_rows:
+        p = row["path"]
         bgr = load_bgr(p)
         if bgr is None:
             skipped.append(p)
             continue
-        _, sharp, bright = image_score(bgr)
+
         vec = compute_embedding_from_image(bgr)
         if vec is None:
             skipped.append(p)
             continue
         embs.append(vec)
-        sharp_list.append(sharp)
-        bright_list.append(bright)
-        used_names.append(os.path.basename(p))
+        sharp_list.append(row["sharp"])
+        bright_list.append(row["bright"])
+        used_names.append(row["name"])
+        used_detail.append({
+            "name": row["name"],
+            "score": round(float(row["score"]), 4),
+            "sharp": round(float(row["sharp"]), 2),
+            "bright": round(float(row["bright"]), 2),
+        })
 
     if not embs:
         return {"ok": False, "reason": "No embeddings computed from top-k images"}
@@ -232,6 +253,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> 
         model=model,
         embedding_norm=emb_norm,
         used_filenames=used_names,
+        extras={"min": f"{min_score:.2f}", "strict": int(bool(strict_top))}
     )
 
     payload = {
@@ -240,13 +262,14 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> 
         "source_path": rel_path,  # representative path for reference
         "is_active": True,
         "last_enrolled_at": timezone.now(),
-        "last_used_k": len(embs),
+        "last_used_k": len(topk_rows),  # planned K after threshold
         "last_used_det_size": det,
         "images_considered": images_considered,
-        "images_used": len(embs),
+        "images_used": len(embs),  # actual used (may be < planned K)
         "avg_sharpness": float(np.mean(sharp_list)) if sharp_list else 0.0,
         "avg_brightness": float(np.mean(bright_list)) if bright_list else 0.0,
         "used_images": used_names,
+        "used_images_detail": used_detail,
         "embedding_norm": emb_norm,
         "embedding_sha256": sha,
         "arcface_model": model,
@@ -255,7 +278,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> 
         "enroll_notes": notes,
     }
 
-    from django.db import transaction
+
     with transaction.atomic():
         qs_active = (FaceEmbedding.objects
                      .select_for_update()
@@ -286,13 +309,13 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> 
         "ok": True,
         "created": created,
         "h_code": h_code,
-        "used_images": picked,
+        "used_images": [r["path"] for r in topk_rows],
         "skipped": skipped,
         "embedding_path": rel_path,
         "face_embedding_id": fe.id,
         "updated_field": "vector+metadata",
         "meta": {
-            "k": len(embs),
+            "k": len(topk_rows),
             "det_size": det,
             "images_considered": images_considered,
             "images_used": len(embs),
@@ -302,6 +325,8 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False) -> 
             "embedding_sha256": sha,
             "provider": provider,
             "model": model,
+            "min_score": float(min_score),
+            "strict_top": bool(strict_top),
         },
     }
 

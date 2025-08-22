@@ -24,6 +24,10 @@ from apps.attendance.utils.media_paths import DIRS, student_gallery_dir
 from apps.attendance.utils.embeddings import enroll_student_from_folder
 from django.core.management import call_command
 
+# Build a static label like "4 Used images" (falls back to "K Used images")
+_THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
+_THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) and _THUMBS_N > 0 else "K Used images")
+
 
 def _first_image_rel(h_code: str) -> str | None:
     folder = student_gallery_dir(h_code)
@@ -228,19 +232,45 @@ def export_embeddings_csv(modeladmin, request, queryset):
         w.writerow(row)
     return resp
 
+@admin.action(description="Re-enroll (refresh bytes/metadata)")
+def reenroll_embeddings_action(modeladmin, request, queryset):
+    from apps.attendance.utils.embeddings import set_det_size, enroll_student_from_folder
+    ok = fail = 0
+    # prefetch student to avoid N+1
+    for fe in queryset.select_related("student").all():
+        if not fe.student or not fe.student.is_active:
+            fail += 1
+            continue
+        k = fe.last_used_k or 3
+        det = fe.last_used_det_size or 640
+        try:
+            set_det_size(det)
+            res = enroll_student_from_folder(fe.student.h_code, k=k, force=True)
+            if res.get("ok"):
+                ok += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+    if ok:
+        messages.success(request, f"Re-enrolled {ok} embedding(s).")
+    if fail:
+        messages.warning(request, f"{fail} embedding(s) failed to re-enroll; check logs.")
+
+
 @admin.register(FaceEmbedding)
 class FaceEmbeddingAdmin(admin.ModelAdmin):
     list_display = (
         "id", "student_link", "is_active", "dim",
         "last_enrolled_at", "last_used_k", "last_used_det_size",
-        "images_used", "provider", "arcface_model",
+        "images_used", "thumbs_preview", "provider_short", "arcface_model",
         "enroll_runtime_ms", "created_at",
     )
     list_display_links = ("student_link",)
     ordering = ("-last_enrolled_at", "-created_at")
     list_filter = ("is_active", "dim", "provider", "arcface_model", "last_used_det_size")
     search_fields = ("student__h_code", "embedding_sha256")
-    actions = [activate_embeddings, deactivate_embeddings, export_embeddings_csv]
+    actions = [reenroll_embeddings_action, activate_embeddings, deactivate_embeddings, export_embeddings_csv]
 
     readonly_fields = (
         "student", "dim", "created_at",
@@ -274,3 +304,89 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     def student_link(self, obj):
         return format_html("<b>{}</b>", getattr(obj.student, "h_code", "-"))
     student_link.short_description = "Student"
+
+    def top3_preview(self, obj):
+        """
+        Render up to 3 small thumbnails with their scores from used_images_detail.
+        Falls back to filenames if the images are missing.
+        """
+        det = getattr(obj, "used_images_detail", None) or []
+        if not det:
+            return "-"
+        # Build media-relative URLs
+        h = getattr(obj.student, "h_code", "")
+        folder = student_gallery_dir(h)
+        items = []
+        for rec in det[:6]:
+            name = rec.get("name", "")
+            score = rec.get("score", 0.0)
+            rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
+            url = f"{settings.MEDIA_URL}{rel}"
+            items.append(
+                f'<div style="display:inline-block;margin-right:6px;text-align:center;">'
+                f'  <img src="{url}" onerror="this.style.display=\'none\'" '
+                f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;" />'
+                f'  <div style="font-size:11px;">{score:.2f}</div>'
+                f'</div>'
+            )
+        return format_html("".join(items))
+    top3_preview.short_description = "Top‑K (score)"
+
+    def provider_short(self, obj):
+        p = (obj.provider or "").upper()
+        if "CUDA" in p: return "CUDA"
+        if "CPU" in p:  return "CPU"
+        return (obj.provider or "").replace("ExecutionProvider", "").strip() or obj.provider
+    provider_short.short_description = "Provider"
+
+
+    def thumbs_preview(self, obj):
+        """
+        Render up to K (last_used_k) clickable thumbs with scores; cap via settings.EMBEDDING_LIST_MAX_THUMBS if set.
+        """
+        det = getattr(obj, "used_images_detail", None) or getattr(obj, "used_images", None) or []
+        if not det:
+            return "-"
+
+        # Normalize records to dicts with at least 'name' and optional 'score'
+        if isinstance(det, list) and det and isinstance(det[0], str):
+            det = [{"name": name, "score": None} for name in det]
+
+        k = int(getattr(obj, "last_used_k", 0) or len(det))
+        cap = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
+        n = min(k, len(det), cap if isinstance(cap, int) and cap > 0 else k)
+
+        h = getattr(obj.student, "h_code", "")
+        folder = student_gallery_dir(h)
+
+        items = []
+        for rec in det[:n]:
+            name = rec.get("name") or rec.get("path") or ""
+            score = rec.get("score", None)
+            rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
+            url = f"{settings.MEDIA_URL}{rel}"
+            score_txt = f"{float(score):.2f}" if isinstance(score, (float, int)) else ""
+            items.append(
+                f'<a href="{url}" target="_blank" rel="noopener" '
+                f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;">'
+                f'  <img src="{url}" '
+                f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;'
+                f'              box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
+                f'  <div style="font-size:11px;color:#555;">{score_txt}</div>'
+                f'</a>'
+            )
+
+        more = len(det) - n
+        if more > 0:
+            items.append(
+                f'<span style="display:inline-block;vertical-align:top;'
+                f'background:#eee;border-radius:6px;padding:2px 6px;font-size:12px;color:#444;">+{more}</span>'
+            )
+
+        return format_html("".join(items))
+
+    # after the method
+    cap = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
+    thumbs_preview.short_description = f"{cap} Used images" if isinstance(cap, int) and cap > 0 else "Used images"
+
+
