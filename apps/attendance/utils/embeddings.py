@@ -9,8 +9,10 @@ from django.conf import settings
 from django.utils import timezone
 
 from insightface.app import FaceAnalysis
+from .facescore import detect_with_cascade  # use same cascade policy as scoring
 
 from .media_paths import DIRS, student_gallery_dir
+from .facescore import score_images  # NEW: ROI scorer with cascade
 from .embedding_meta import float32_to_bytes, l2_norm, sha256_bytes, build_enroll_notes
 
 from apps.attendance.models import Student, FaceEmbedding
@@ -148,14 +150,20 @@ def score_images(paths: List[str]) -> List[dict]:
         r["score"] = float(0.7 * s_n + 0.3 * b_n)
     return rows
 
-def select_topk_scored(paths: List[str], k: int, *, min_score: float = 0.0, strict_top: bool = False) -> tuple[List[dict], List[dict]]:
+
+def select_topk_scored(paths: List[str], k: int, *, min_score: float = 0.0, strict_top: bool = False) -> tuple[
+    List[dict], List[dict]]:
     """
     Returns (top_k_scored, all_scored).
     Each element is {'path','name','sharp','bright','score'}.
     """
     if k <= 0:
         return ([], [])
-    rows = score_images(paths)
+
+    # 1) score all images (ROI + cascade per settings) and pick top-K (optionally strict by min_score)
+    rows = score_images(
+        paths)  # [{'name','path','score','sharp','bright','roi','bbox','det_size','det_conf','provider'}, ...]
+
     if not rows:
         return ([], [])
     rows_sorted = sorted(rows, key=lambda r: r["score"], reverse=True)
@@ -173,7 +181,8 @@ def save_npy_for_student(h_code: str, vec: np.ndarray) -> str:
 
 
 # ---- Enrollment (writes bytes to FaceEmbedding + npy file + metadata) ----
-def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min_score: float = 0.0, strict_top: bool = False) -> dict:
+def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min_score: float = 0.0,
+                               strict_top: bool = False) -> dict:
     t0 = time.time()
 
     folder = student_gallery_dir(h_code)
@@ -195,7 +204,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         return {"ok": False, "reason": "No valid images after scoring"}
 
     embs, skipped = [], []
-    sharp_list, bright_list, used_names = [], [], []
+    sharp_list, bright_list, used_names, score_list = [], [], [], []
     used_detail = []  # list of dicts: name/score/sharp/bright
 
     for row in topk_rows:
@@ -212,12 +221,19 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         embs.append(vec)
         sharp_list.append(row["sharp"])
         bright_list.append(row["bright"])
+        score_list.append(float(row.get("score", 0.0)))
+        score_list.append(row.get("score", 0.0))
         used_names.append(row["name"])
         used_detail.append({
             "name": row["name"],
-            "score": round(float(row["score"]), 4),
-            "sharp": round(float(row["sharp"]), 2),
-            "bright": round(float(row["bright"]), 2),
+            "score": row.get("score"),
+            "sharp": row.get("sharp"),
+            "bright": row.get("bright"),
+            "roi": bool(row.get("roi")),
+            "det_size": row.get("det_size"),
+            "det_conf": row.get("det_conf"),
+            "provider": row.get("provider"),
+            "bbox": row.get("bbox"),
         })
 
     if not embs:
@@ -256,6 +272,8 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         extras={"min": f"{min_score:.2f}", "strict": int(bool(strict_top))}
     )
 
+    avg_used_score = float(np.mean(score_list)) if score_list else 0.0
+
     payload = {
         "dim": 512,
         "vector": vec_bytes,
@@ -268,6 +286,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         "images_used": len(embs),  # actual used (may be < planned K)
         "avg_sharpness": float(np.mean(sharp_list)) if sharp_list else 0.0,
         "avg_brightness": float(np.mean(bright_list)) if bright_list else 0.0,
+        "avg_used_score": avg_used_score,
         "used_images": used_names,
         "used_images_detail": used_detail,
         "embedding_norm": emb_norm,
@@ -277,7 +296,6 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         "enroll_runtime_ms": int((time.time() - t0) * 1000),
         "enroll_notes": notes,
     }
-
 
     with transaction.atomic():
         qs_active = (FaceEmbedding.objects
@@ -304,7 +322,6 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
                 fe = FaceEmbedding.objects.create(student=st, **payload)
                 created = True
 
-
     return {
         "ok": True,
         "created": created,
@@ -329,6 +346,31 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
             "strict_top": bool(strict_top),
         },
     }
+
+
+def embed_image(bgr: np.ndarray) -> Optional[np.ndarray]:
+    """Return a 512-dim L2-normalized embedding for the largest detected face, using det-size cascade."""
+    # First, run our cascade to find a reliable det-size for THIS image
+    try:
+        bbox, conf, det_used, _prov = detect_with_cascade(bgr, start_size=current_det_size())
+    except Exception:
+        bbox, conf, det_used = None, 0.0, current_det_size()
+    # Prepare app at the det-size that worked best (or current as fallback)
+    app = _get_app((det_used, det_used))
+    faces = app.get(bgr)
+    if not faces:
+        return None
+    f = max(faces, key=lambda ff: (ff.bbox[2] - ff.bbox[0]) * (ff.bbox[3] - ff.bbox[1]))
+    vec = getattr(f, "normed_embedding", None) or getattr(f, "embedding", None)
+    if vec is None:
+        return None
+    v = np.asarray(vec, dtype=np.float32).reshape(-1)
+    n = np.linalg.norm(v)
+    if not np.isfinite(n) or n == 0:
+        return None
+    if abs(n - 1.0) > 1e-3:
+        v = v / n
+    return v
 
 # Notes:
 # We save .npy to media/embeddings/H_CODE.npy and write bytes into FaceEmbedding.vector.

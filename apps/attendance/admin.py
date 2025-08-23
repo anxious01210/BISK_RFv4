@@ -19,13 +19,18 @@ from .models import (
 )
 from .services import roll_periods
 
-import csv, os
+import csv, os, re
 from django.http import HttpResponse
 from apps.attendance.models import Student
-from apps.attendance.utils.media_paths import DIRS, student_gallery_dir
-from apps.attendance.utils.embeddings import enroll_student_from_folder, score_images, set_det_size
+from apps.attendance.utils.media_paths import DIRS, student_gallery_dir, ensure_media_tree
+from apps.attendance.utils.embeddings import enroll_student_from_folder, set_det_size
+from apps.attendance.utils.facescore import score_images  # ROI + cascade scorer
 
 from django.core.management import call_command
+from import_export import resources, fields
+from import_export.widgets import BooleanWidget
+from import_export.admin import ImportExportMixin
+from import_export.formats import base_formats
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
@@ -47,9 +52,47 @@ def _first_image_rel(h_code: str) -> str | None:
 def sort_gallery_intake_action(modeladmin, request, queryset):
     # Works regardless of selection; leverages the command (rename policy is safe default)
     try:
-        call_command("sort_gallery_intake", policy="rename", clean_empty=True)
+        call_command(
+            "sort_gallery_intake",
+            policy="rename",
+            clean_empty=True,
+            crop_faces=False,  # move only
+            det_size=getattr(settings, "FACE_DET_SIZE_DEFAULT", 640),
+        )
         messages.success(request,
                          "Sorted inbox into per-student gallery folders (policy=rename). See _unsorted/ for leftovers.")
+    except Exception as e:
+        messages.error(request, f"Sort failed: {e}")
+
+
+def sort_gallery_intake_crop_keep_action(modeladmin, request, queryset):
+    try:
+        call_command(
+            "sort_gallery_intake",
+            policy="rename",
+            clean_empty=True,
+            crop_faces=True,
+            keep_raw=True,
+            enhance=True,  # improve crops while keeping originals
+            det_size=getattr(settings, "FACE_DET_SIZE_DEFAULT", 640),
+        )
+        messages.success(request, "Sorted inbox with CROPPING (kept originals under raw/).")
+    except Exception as e:
+        messages.error(request, f"Sort failed: {e}")
+
+
+def sort_gallery_intake_crop_discard_action(modeladmin, request, queryset):
+    try:
+        call_command(
+            "sort_gallery_intake",
+            policy="rename",
+            clean_empty=True,
+            crop_faces=True,
+            keep_raw=False,  # discard originals after crop
+            enhance=True,  # improve crops
+            det_size=getattr(settings, "FACE_DET_SIZE_DEFAULT", 640),
+        )
+        messages.success(request, "Sorted inbox with CROPPING (originals discarded).")
     except Exception as e:
         messages.error(request, f"Sort failed: {e}")
 
@@ -86,12 +129,109 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
         messages.error(request, f"PKL build failed: {e}")
 
 
+# class StudentResource(resources.ModelResource):
+#     class Meta:
+#         model = Student
+#         exclude = ("id",)  # include everything EXCEPT id
+#         import_id_fields = ("h_code",)  # upsert identity
+#         # fields = ("h_code","first_name","middle_name","last_name","is_active")
+#         # export_order = ("h_code","first_name","middle_name","last_name","is_active")
+#         skip_unchanged = True
+#         use_bulk = True
+
+    def before_import_row(self, row, **kwargs):
+        if not (row.get("first_name") or row.get("middle_name") or row.get("last_name")):
+            full = (row.get("full_name") or "").strip()
+            if full:
+                parts = [p for p in full.split() if p]
+                if len(parts) == 1:
+                    row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", ""
+                elif len(parts) == 2:
+                    row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", parts[1]
+                else:
+                    row["first_name"], row["middle_name"], row["last_name"] = parts[0], " ".join(parts[1:-1]), parts[-1]
+
+    # Optional: make 'h_code' the first column in exports (everything else follows automatically)
+    def get_export_fields(self):
+        fields = super().get_export_fields()
+        fields.sort(key=lambda f: (f.attribute != "h_code",))
+        return fields
+
+
 @admin.register(Student)
-class StudentAdmin(admin.ModelAdmin):
+class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
     list_display = ("h_code", "full_name", "gallery_count", "gallery_thumb", "is_active")
     search_fields = ("h_code", "first_name", "middle_name", "last_name")
     list_filter = ("is_active",)
-    actions = [sort_gallery_intake_action, enroll_from_folder_action, build_embeddings_pkl_action]
+    actions = [
+        sort_gallery_intake_action,  # move only
+        sort_gallery_intake_crop_keep_action,  # crop + keep raw
+        sort_gallery_intake_crop_discard_action,  # crop + discard raw (enhanced)
+        enroll_from_folder_action, build_embeddings_pkl_action
+    ]
+    change_list_template = "admin/attendance/student/change_list.html"
+    # resource_class = StudentResource
+
+    # URL: /admin/attendance/student/upload-inbox/
+    def get_urls(self):
+        urls = super().get_urls()
+        extra = [
+            path(
+                "upload-inbox/",
+                self.admin_site.admin_view(self.upload_inbox_view),
+                name="attendance_student_upload_inbox",
+            ),
+        ]
+        return extra + urls
+
+    def upload_inbox_view(self, request):
+        """
+        Bulk upload images directly into MEDIA/face_gallery_inbox/.
+        Safe filename sanitation + no overwrite (adds _1, _2, ...).
+        """
+        inbox_dir = DIRS["FACE_GALLERY_INBOX"]
+        ensure_media_tree()
+        if request.method == "POST":
+            files = request.FILES.getlist("files") or []
+            if not files:
+                messages.warning(request, "No files selected.")
+                return redirect("admin:attendance_student_upload_inbox")
+
+            allowed = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+            saved = 0
+            for f in files:
+                name = os.path.basename(f.name)
+                base, ext = os.path.splitext(name)
+                if ext.lower() not in allowed:
+                    # skip silently but inform once at end
+                    continue
+                # sanitize filename
+                safe_base = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("_") or "img"
+                candidate = f"{safe_base}{ext.lower()}"
+                path = os.path.join(inbox_dir, candidate)
+                i = 1
+                while os.path.exists(path):
+                    candidate = f"{safe_base}_{i}{ext.lower()}"
+                    path = os.path.join(inbox_dir, candidate)
+                    i += 1
+                with open(path, "wb+") as out:
+                    for chunk in f.chunks():
+                        out.write(chunk)
+                saved += 1
+
+            if saved:
+                messages.success(request, f"Uploaded {saved} image(s) to inbox: {inbox_dir}")
+            else:
+                messages.warning(request, "No images were uploaded (unsupported types or empty selection).")
+            # back to Student changelist so you can run the sorting action next
+            return redirect("admin:attendance_student_changelist")
+
+        ctx = {
+            "opts": Student._meta,
+            "inbox_dir": inbox_dir,
+            "upload_url": reverse("admin:attendance_student_upload_inbox"),
+        }
+        return render(request, "admin/attendance/student/upload_inbox.html", ctx)
 
     def gallery_count(self, obj):
         folder = student_gallery_dir(obj.h_code)
@@ -274,9 +414,9 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         "enroll_runtime_ms", "created_at",
     )
     list_display_links = ("student_link",)
-    ordering = ("-last_enrolled_at", "-created_at")
-    list_filter = ("is_active", "dim", "provider", "arcface_model", "last_used_det_size")
-    search_fields = ("student__h_code", "embedding_sha256")
+    ordering = ("-last_enrolled_at", "-created_at",)
+    list_filter = ("is_active", "dim", "provider", "arcface_model", "last_used_det_size",)
+    search_fields = ("student__h_code", "embedding_sha256",)
     actions = [reenroll_embeddings_action, activate_embeddings, deactivate_embeddings, export_embeddings_csv]
 
     readonly_fields = (
@@ -365,6 +505,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         if not scores:
             return "-"
         return f"{(sum(scores) / len(scores)):.2f}"
+
     avg_used_score.short_description = "avg used score"
 
     def provider_short(self, obj):
@@ -406,6 +547,13 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             title = f"{name}"
             if score is not None:
                 title += f" | score={float(score):.2f}"
+
+            det_conf = rec.get("det_conf", None)
+            det_size = rec.get("det_size", None)
+            if det_size:
+                title += f" | det={det_size}"
+            if det_conf is not None:
+                title += f" | conf={float(det_conf):.2f}"
 
             if sharp is not None:
                 title += f" | sharp={float(sharp):.2f}"
@@ -496,9 +644,9 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         folder = student_gallery_dir(h)
         rows = []
         if os.path.isdir(folder):
-            # Use your existing scoring helper to get score/sharp/bright for ALL images
+            # Score ALL images (ROI + cascade). Uses settings defaults.
             paths = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
-            rows = [r for r in score_images(paths) if r]  # [{'path','name','sharp','bright','score'},...]
+            rows = [r for r in score_images(paths) if r]
 
         # Convert filesystem paths to MEDIA urls for the template
         def _fs_to_media_url(fs_path: str) -> str:
@@ -584,7 +732,3 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         css = {"all": ("attendance/admin_chips.css",)}
         # JS to open “+more” in a popup window (new window)
         js = ("attendance/re_enroll_popup.js",)
-
-
-
-

@@ -16,6 +16,7 @@ DIRS: Dict[str, str] = {
     "LOGS_DEBUG_FACES": os.path.join(MEDIA, "logs", "debug_faces"),
     "REPORTS_QUALITY": os.path.join(MEDIA, "reports", "gallery_quality"),
     "REPORTS_ENROLL": os.path.join(MEDIA, "reports", "enroll"),
+    "UPLOAD_TMP": os.path.join(MEDIA, "upload_tmp"),
 }
 
 

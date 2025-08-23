@@ -1,0 +1,29 @@
+{% extends "admin/base_site.html" %}
+{% load i18n static %}
+
+{% block content %}
+    <h1>Bulk upload to gallery inbox</h1>
+    <p>
+        Destination: <code>{{ inbox_dir }}</code><br/>
+        Allowed types: <code>.jpg .jpeg .png .webp .bmp</code>
+    </p>
+    <form method="post" action="{{ upload_url }}" enctype="multipart/form-data" style="margin-top:1rem;">
+        {% csrf_token %}
+        <div>
+            <input type="file" name="files" accept=".jpg,.jpeg,.png,.webp,.bmp" multiple required>
+        </div>
+        <div style="margin-top:12px;">
+            <button type="submit" class="button button-primary">Upload</button>
+            <a class="button" href="{% url 'admin:attendance_student_changelist' %}">Back</a>
+        </div>
+    </form>
+
+    <details style="margin-top:16px;">
+        <summary><strong>Next step</strong></summary>
+        <p style="margin-top:8px;">
+            After uploading, go to <em>Students</em> list → select nothing (or any rows) → choose the action
+            <strong>“Sort gallery intake (inbox → per-student)”</strong>. That will move/rename images from
+            <code>face_gallery_inbox/</code> into per-student folders under <code>face_gallery/</code>.
+        </p>
+    </details>
+{% endblock %}

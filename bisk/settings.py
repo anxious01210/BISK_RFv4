@@ -41,11 +41,12 @@ INSTALLED_APPS = [
 ]
 
 INSTALLED_APPS += [
+    "import_export",
     "rest_framework",
     "django_filters",
     "apps.cameras",
     "apps.scheduler",
-     # If INSTALLED_APPS has "apps.attendance", Django uses a default AppConfig and will not execute our ready() logic that auto‑creates media folders.
+    # If INSTALLED_APPS has "apps.attendance", Django uses a default AppConfig and will not execute our ready() logic that auto‑creates media folders.
     "apps.attendance.apps.AttendanceConfig",
 ]
 
@@ -146,7 +147,6 @@ if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
 RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
 RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set long random in prod
 
-
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
@@ -169,10 +169,10 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # ]
 
 MEDIA_URL = "/media/"
-MEDIA_ROOT = Path(BASE_DIR) / "media"
+MEDIA_ROOT = BASE_DIR / "media"
 
 # --- Snapshots (for thumbnails written by FFmpeg runners) ---
-SNAPSHOT_DIR = Path(MEDIA_ROOT) / "snapshots"
+SNAPSHOT_DIR = MEDIA_ROOT / "snapshots"
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)  # ensure exists at startup
 
 # Default primary key field type
@@ -186,14 +186,14 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # The admin status badges will flip between Online/Stale/Offline based on HEARTBEAT_STALE_SEC and HEARTBEAT_OFFLINE_SEC.
 
 HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "15"))
-HEARTBEAT_STALE_SEC    = int(os.getenv("HEARTBEAT_STALE_SEC", "45"))
-HEARTBEAT_OFFLINE_SEC  = int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120"))
+HEARTBEAT_STALE_SEC = int(os.getenv("HEARTBEAT_STALE_SEC", "45"))
+HEARTBEAT_OFFLINE_SEC = int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120"))
 # In Django Admin → Scheduler → Runner Heartbeats, the online/stale/offline labels come from your:
-HEARTBEAT_THRESHOLDS = {"online": HEARTBEAT_INTERVAL_SEC, "stale": HEARTBEAT_STALE_SEC, "offline": HEARTBEAT_OFFLINE_SEC}
-
+HEARTBEAT_THRESHOLDS = {"online": HEARTBEAT_INTERVAL_SEC, "stale": HEARTBEAT_STALE_SEC,
+                        "offline": HEARTBEAT_OFFLINE_SEC}
 
 # (optional) how often to take a snapshot
-HEARTBEAT_SNAPSHOT_EVERY = int(os.getenv("HEARTBEAT_SNAPSHOT_EVERY", "60")) # 15
+HEARTBEAT_SNAPSHOT_EVERY = int(os.getenv("HEARTBEAT_SNAPSHOT_EVERY", "60"))  # 15
 
 # Auto-delete RunningProcess rows that have been Offline for longer than this many minutes (preferred) and fallback hours
 RUNPROC_PRUNE_OFFLINE_MINUTES = 6
@@ -217,10 +217,78 @@ CACHES = {
 # Keep just one lock path (env can override)
 ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/run/bisk/enforcer.lock")
 
-# ---- Embedding defaults / UI caps ----
-# Embedding pipeline defaults
-EMBEDDING_DEFAULT_K = 3                   # default K if not provided
-EMBEDDING_DEFAULT_DET_SIZE = 1024        # 640, 1024, etc.
-EMBEDDING_LIST_MAX_THUMBS = 3           # cap thumbs in admin list (omit/None to show exactly K)
-EMBEDDING_USE_STRICT_TOP = True         # drop images below the score floor
-EMBEDDING_MIN_SCORE = 0.55              # 0..1 on our normalized combined score
+
+
+# ---------------------------
+# Face detection & scoring
+# ---------------------------
+# Start detection here for both scoring and embedding (square size).
+FACE_DET_SIZE_DEFAULT = 640
+
+# Only escalate if the current detection looks weak for that image.
+# Prefer multiples of 32 for speed/tiling. Tweak to your GPU/CPU.
+FACE_DET_CASCADE_SIZES = [736, 800, 960, 1024, 1280, 1536]
+
+# Escalation policy thresholds
+FACE_DET_MIN_CONF  = 0.30  # escalate if conf < this
+FACE_DET_MIN_FRAC  = 0.04  # escalate if min(face_w,face_h)/min(img_w,img_h) < this
+FACE_DET_GOOD_CONF = 0.45  # stop early if conf >= this and frac >= FACE_DET_MIN_FRAC
+FACE_DET_MAX_ESCL_STEPS = 5
+FACE_DET_ALLOW_CPU_FALLBACK = True  # retry once on CPU if very large sizes hit GPU OOM/provider errors
+
+# Score on the detected face ROI (fallback to whole image if no face found)
+FACE_SCORE_USE_FACE_ROI = True
+FACE_SCORE_ROI_MARGIN   = 0.20  # 20% padding around face box when scoring
+FACE_SCORE_WEIGHTS      = {"sharp": 0.7, "bright": 0.3}
+FACE_SCORE_NORMALIZE    = "pctl"   # "minmax" or "pctl" (10th–90th percentile robust scaling)
+FACE_SCORE_EPSILON      = 0.05     # soften extremes when galleries are tiny
+
+# Intake cropping (optional; used by sort_gallery_intake)
+FACE_INTAKE_CROP_FACES     = False  # set True to emit cropped faces during intake
+FACE_INTAKE_CROP_MARGIN    = 0.20
+FACE_INTAKE_SAVE_ORIGINAL  = True
+FACE_INTAKE_CROP_DIR_NAME  = "faces"
+FACE_INTAKE_JPEG_QUALITY   = 92
+
+FACE_INTAKE_ENHANCE        = False   # default off; enable per-run with --enhance or admin action
+FACE_ENHANCE_BRIGHT_TARGET = 0.60    # target mean in [0..1] on face ROI
+FACE_ENHANCE_ALPHA_LIMITS  = (0.6, 1.8)  # gain clamp for brightness normalize
+FACE_ENHANCE_CLAHE_CLIP    = 2.0     # CLAHE strength on L channel
+FACE_ENHANCE_CLAHE_TILE    = 8       # tile grid (tile x tile)
+FACE_ENHANCE_SHARP_AMOUNT  = 0.5     # unsharp mask strength (0..1.5)
+FACE_ENHANCE_SHARP_SIGMA   = 1.0
+
+# Selection policy defaults for admin modal/CLI fallbacks
+EMBEDDING_DEFAULT_K          = 3
+EMBEDDING_MIN_SCORE_DEFAULT  = 0.50
+EMBEDDING_STRICT_TOP_DEFAULT = True
+
+
+
+# # ---- Embedding defaults / UI caps ----
+# # Embedding pipeline defaults
+# EMBEDDING_DEFAULT_K = 3  # default K if not provided
+# EMBEDDING_MIN_SCORE = 0.55  # 0..1 on our normalized combined score
+#
+EMBEDDING_DEFAULT_DET_SIZE = 1024  # 640, 1024, etc.
+EMBEDDING_LIST_MAX_THUMBS = 3  # cap thumbs in admin list (omit/None to show exactly K)
+EMBEDDING_USE_STRICT_TOP = True  # drop images below the score floor
+
+# Default: 100
+# The maximum number of files that may be received via POST in a multipart/form-data encoded request before a SuspiciousOperation (TooManyFiles) is raised. You can set this to None to disable the check. Applications that are expected to receive an unusually large number of file fields should tune this setting.
+# The number of accepted files is correlated to the amount of time and memory needed to process the request. Large requests could be used as a denial-of-service attack vector if left unchecked. Since web servers don’t typically perform deep request inspection, it’s not possible to perform a similar check at that level.
+DATA_UPLOAD_MAX_NUMBER_FILES = 2000
+DATA_UPLOAD_MAX_NUMBER_SIZE_IN_BYTES = 1024 * 5000
+# 1) Always stream file uploads to disk (never keep in RAM)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 0
+
+# 2) Where to write temp upload chunks (pick a large, fast disk/partition)
+# Point Django’s temp upload dir at your existing media tree path
+FILE_UPLOAD_TEMP_DIR = MEDIA_ROOT / "upload_tmp"  # matches DIRS["UPLOAD_TMP"]
+
+# 3) Allow many files in one request (multi-file input repeats the same key)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = 2000  # default is 1000
+
+# 4) (Optional) Non-file POST data kept in memory before streaming
+# Not a cap—just a memory threshold. Leave default or tune if you like.
+# DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB

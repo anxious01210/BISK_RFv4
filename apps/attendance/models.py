@@ -211,6 +211,11 @@ class FaceEmbedding(models.Model):
         default=0.0,
         help_text="Mean grayscale intensity 0–255 across used images."
     )
+    avg_used_score = models.FloatField(
+        default=0.0,
+        help_text="Mean of the per-image ROI quality scores (0..1) for the images used to build the .npy."
+    )
+
 
     used_images = models.JSONField(
         default=list, blank=True,
