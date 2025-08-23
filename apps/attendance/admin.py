@@ -1,10 +1,12 @@
 # apps/attendance/admin.py
 from django.urls import path, reverse
-from django.shortcuts import redirect
+from django.shortcuts import redirect, render, get_object_or_404
 from django.contrib import admin, messages
 from django.utils.html import format_html
 from django.conf import settings
 from django.utils import timezone
+from django import forms
+from django.db import transaction
 
 from .models import (
     Student,
@@ -21,7 +23,8 @@ import csv, os
 from django.http import HttpResponse
 from apps.attendance.models import Student
 from apps.attendance.utils.media_paths import DIRS, student_gallery_dir
-from apps.attendance.utils.embeddings import enroll_student_from_folder
+from apps.attendance.utils.embeddings import enroll_student_from_folder, score_images, set_det_size
+
 from django.core.management import call_command
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
@@ -200,10 +203,12 @@ def activate_embeddings(modeladmin, request, queryset):
     updated = queryset.update(is_active=True)
     messages.success(request, f"Activated {updated} embeddings.")
 
+
 @admin.action(description="Deactivate selected")
 def deactivate_embeddings(modeladmin, request, queryset):
     updated = queryset.update(is_active=False)
     messages.success(request, f"Deactivated {updated} embeddings.")
+
 
 @admin.action(description="Export CSV (metadata)")
 def export_embeddings_csv(modeladmin, request, queryset):
@@ -231,6 +236,7 @@ def export_embeddings_csv(modeladmin, request, queryset):
         ]
         w.writerow(row)
     return resp
+
 
 @admin.action(description="Re-enroll (refresh bytes/metadata)")
 def reenroll_embeddings_action(modeladmin, request, queryset):
@@ -263,7 +269,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     list_display = (
         "id", "student_link", "is_active", "dim",
         "last_enrolled_at", "last_used_k", "last_used_det_size",
-        "images_used", "thumbs_preview", "provider_short", "arcface_model",
+        "images_used", "avg_used_score", "thumbs_with_chips",
+        "provider_short", "arcface_model",
         "enroll_runtime_ms", "created_at",
     )
     list_display_links = ("student_link",)
@@ -303,6 +310,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
     def student_link(self, obj):
         return format_html("<b>{}</b>", getattr(obj.student, "h_code", "-"))
+
     student_link.short_description = "Student"
 
     def top3_preview(self, obj):
@@ -326,19 +334,46 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                 f'<div style="display:inline-block;margin-right:6px;text-align:center;">'
                 f'  <img src="{url}" onerror="this.style.display=\'none\'" '
                 f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;" />'
-                f'  <div style="font-size:11px;">{score:.2f}</div>'
+                f'  <div style="font-size:11px; color:blue;">{score:.2f}</div>'
                 f'</div>'
             )
         return format_html("".join(items))
+
     top3_preview.short_description = "Top‑K (score)"
+
+    def avg_used_score(self, obj):
+        """
+        Average of the per-image `score` values that were used to build this .npy
+        (comes from obj.used_images_detail). Robust to JSON/text storage.
+        """
+        det = getattr(obj, "used_images_detail", None) or []
+        # if serialized as JSON text, parse it
+        if isinstance(det, str):
+            try:
+                import json
+                det = json.loads(det)
+            except Exception:
+                det = []
+        try:
+            scores = [
+                float(r.get("score"))
+                for r in det
+                if isinstance(r, dict) and r.get("score") is not None
+            ]
+        except Exception:
+            scores = []
+        if not scores:
+            return "-"
+        return f"{(sum(scores) / len(scores)):.2f}"
+    avg_used_score.short_description = "avg used score"
 
     def provider_short(self, obj):
         p = (obj.provider or "").upper()
         if "CUDA" in p: return "CUDA"
         if "CPU" in p:  return "CPU"
         return (obj.provider or "").replace("ExecutionProvider", "").strip() or obj.provider
-    provider_short.short_description = "Provider"
 
+    provider_short.short_description = "Provider"
 
     def thumbs_preview(self, obj):
         """
@@ -363,12 +398,24 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         for rec in det[:n]:
             name = rec.get("name") or rec.get("path") or ""
             score = rec.get("score", None)
+            sharp = rec.get("sharp", None)
+            bright = rec.get("bright", None)
             rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
             url = f"{settings.MEDIA_URL}{rel}"
             score_txt = f"{float(score):.2f}" if isinstance(score, (float, int)) else ""
+            title = f"{name}"
+            if score is not None:
+                title += f" | score={float(score):.2f}"
+
+            if sharp is not None:
+                title += f" | sharp={float(sharp):.2f}"
+
+            if bright is not None:
+                title += f" | bright={float(bright):.2f}"
             items.append(
                 f'<a href="{url}" target="_blank" rel="noopener" '
-                f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;">'
+                f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;" '
+                f'title="{title}">'
                 f'  <img src="{url}" '
                 f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;'
                 f'              box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
@@ -388,5 +435,156 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     # after the method
     cap = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
     thumbs_preview.short_description = f"{cap} Used images" if isinstance(cap, int) and cap > 0 else "Used images"
+
+    # ---- New: thumbs + chips + +more ----
+    def thumbs_with_chips(self, obj):
+        # Build the thumbs HTML by reusing the existing method
+        thumbs = self.thumbs_preview(obj)
+        # Chips values
+        k = obj.last_used_k or 0
+        det = obj.last_used_det_size or 0
+        ms = getattr(obj, "last_used_min_score", None)
+        ms_txt = f"{ms:.2f}" if isinstance(ms, (float, int)) else "—"
+        chips = format_html(
+            '<span class="bisk-chips">'
+            '<span class="bisk-chip bisk-chip--k">K: {}</span>'
+            '<span class="bisk-chip bisk-chip--min">min: {}</span>'
+            '<span class="bisk-chip bisk-chip--det">det: {}</span>'
+            '</span>',
+            k, ms_txt, det,
+        )
+        # more = format_html(
+        #     '<a class="button bisk-more" href="{}">+more</a>',
+        #     self._re_enroll_modal_url(obj.id)
+        # )
+        more = format_html(
+            '<a class="button bisk-more js-reenroll-pop" data-id="{}" target="_blank" rel="noopener noreferrer" href="{}" '
+            'style="">+more</a>',
+            obj.id, self._re_enroll_modal_url(obj.id)
+        )
+        return format_html('<div class="bisk-cell">{more}{thumbs}</div></div style="font-size: 20px;">{chips}</div>',
+                           thumbs=format_html("{}", thumbs), chips=chips, more=more)
+
+    thumbs_with_chips.short_description = "Used images • chips"
+
+    # ---- Admin modal URLs ----
+    def get_urls(self):
+        urls = super().get_urls()
+        extra = [
+            path("<int:pk>/re-enroll/", self.admin_site.admin_view(self.re_enroll_modal),
+                 name="attendance_faceembedding_re_enroll"),
+            path("<int:pk>/re-enroll/run/", self.admin_site.admin_view(self.re_enroll_run),
+                 name="attendance_faceembedding_re_enroll_run"),
+        ]
+        return extra + urls
+
+    def _re_enroll_modal_url(self, pk: int) -> str:
+        return f"./{pk}/re-enroll/"
+
+    # ---- Modal form ----
+    class _ReEnrollForm(forms.Form):
+        k = forms.IntegerField(min_value=1, required=False, help_text="Top-K images to average")
+        det_size = forms.IntegerField(required=False, help_text="Detector input size (e.g., 640 / 1024)")
+        min_score = forms.FloatField(required=False, help_text="Min quality score 0..1")
+        strict_top = forms.BooleanField(required=False, initial=False, help_text="Filter by min-score before K")
+
+    # ---- GET: render gallery + overrides ----
+    def re_enroll_modal(self, request, pk: int):
+        fe = get_object_or_404(FaceEmbedding, pk=pk)
+        student = fe.student
+        h = getattr(student, "h_code", "")
+        folder = student_gallery_dir(h)
+        rows = []
+        if os.path.isdir(folder):
+            # Use your existing scoring helper to get score/sharp/bright for ALL images
+            paths = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
+            rows = [r for r in score_images(paths) if r]  # [{'path','name','sharp','bright','score'},...]
+
+        # Convert filesystem paths to MEDIA urls for the template
+        def _fs_to_media_url(fs_path: str) -> str:
+            if not fs_path:
+                return ""
+            try:
+                rel = os.path.relpath(fs_path, settings.MEDIA_ROOT)
+            except Exception:
+                return ""  # outside MEDIA_ROOT; skip
+            return settings.MEDIA_URL + rel.replace(os.sep, "/")
+
+        for r in rows:
+            r["url"] = _fs_to_media_url(r.get("path"))
+
+        init = {
+            "k": fe.last_used_k or None,
+            "det_size": fe.last_used_det_size or None,
+            "min_score": fe.last_used_min_score if fe.last_used_min_score is not None else None,
+            "strict_top": False,
+        }
+        form = self._ReEnrollForm(initial=init)
+        ctx = {"opts": self.model._meta, "fe": fe, "student": student, "rows": rows, "form": form}
+        return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
+
+    # ---- POST: run enrollment with overrides (force) ----
+    @transaction.atomic
+    def re_enroll_run(self, request, pk: int):
+        fe = get_object_or_404(FaceEmbedding, pk=pk)
+        form = self._ReEnrollForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Invalid inputs.")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        k = form.cleaned_data.get("k")
+        det = form.cleaned_data.get("det_size")
+        min_score = form.cleaned_data.get("min_score")
+        strict_top = bool(form.cleaned_data.get("strict_top"))
+
+        # Apply detector size override to your embedding singleton
+        if det:
+            try:
+                set_det_size(int(det))
+            except Exception:
+                pass
+
+        try:
+            res = enroll_student_from_folder(fe.student.h_code,
+                                             k=int(k) if k else (fe.last_used_k or 3),
+                                             force=True,
+                                             min_score=float(min_score) if min_score is not None else 0.0,
+                                             strict_top=bool(strict_top))
+        except Exception as e:
+            messages.error(request, f"Enroll failed: {e}")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        if not res or not res.get("ok"):
+            messages.warning(request, f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}")
+            return redirect("../../")
+
+        # Persist min-score to the *active* FaceEmbedding row (id provided by your enroll function)
+        new_id = res.get("face_embedding_id")
+        meta = (res or {}).get("meta", {}) or {}
+        used_min = meta.get("min_score", min_score)
+        try:
+            if new_id:
+                fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
+            else:
+                fe2 = fe  # fallback to the same row
+            if used_min is not None:
+                fe2.last_used_min_score = float(used_min)
+                fe2.save(update_fields=["last_used_min_score"])
+        except Exception:
+            pass
+
+        messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
+        return redirect("../../")  # back to changelist (refreshes row)
+
+    # class Media:
+    #     css = {"all": ("attendance/admin_chips.css",)}
+
+    class Media:
+        # Only defines a single CSS variable (--bisk-chip-fg) that flips in dark mode.
+        css = {"all": ("attendance/admin_chips.css",)}
+        # JS to open “+more” in a popup window (new window)
+        js = ("attendance/re_enroll_popup.js",)
+
+
 
 

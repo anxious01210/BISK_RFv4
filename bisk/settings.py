@@ -83,10 +83,20 @@ WSGI_APPLICATION = 'bisk.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": "bisk",
+        "USER": "bisk",
+        "PASSWORD": "DiagonalDB1!",
+        "HOST": "127.0.0.1",
+        "PORT": "5432",
+        "CONN_MAX_AGE": 60,
+        "OPTIONS": {"sslmode": "prefer"},
+    },
+    # 'sqlite3': {
+    #     'ENGINE': 'django.db.backends.sqlite3',
+    #     'NAME': BASE_DIR / 'db.sqlite3',
+    # }
 }
 
 # Password validation
@@ -153,6 +163,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+# STATICFILES_DIRS = [
+#     BASE_DIR / 'static',
+# ]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = Path(BASE_DIR) / "media"
@@ -205,8 +219,8 @@ ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/run/bisk/enforcer.lock")
 
 # ---- Embedding defaults / UI caps ----
 # Embedding pipeline defaults
-EMBEDDING_DEFAULT_K = 3                 # default K if not provided
+EMBEDDING_DEFAULT_K = 3                   # default K if not provided
 EMBEDDING_DEFAULT_DET_SIZE = 1024        # 640, 1024, etc.
-EMBEDDING_LIST_MAX_THUMBS = 4           # cap thumbs in admin list (omit/None to show exactly K)
+EMBEDDING_LIST_MAX_THUMBS = 3           # cap thumbs in admin list (omit/None to show exactly K)
 EMBEDDING_USE_STRICT_TOP = True         # drop images below the score floor
 EMBEDDING_MIN_SCORE = 0.55              # 0..1 on our normalized combined score

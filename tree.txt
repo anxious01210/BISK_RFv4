@@ -8,17 +8,41 @@
 │   │   ├── __init__.py
 │   │   ├── management
 │   │   │   └── commands
+│   │   │       ├── assess_gallery_quality.py
+│   │   │       ├── build_embeddings_pkl.py
+│   │   │       ├── check_media_folders.py
+│   │   │       ├── enroll_from_folder.py
 │   │   │       ├── generate_occurrences.py
 │   │   │       ├── __pycache__
-│   │   │       │   └── generate_occurrences.cpython-312.pyc
-│   │   │       └── roll_periods.py
+│   │   │       │   ├── assess_gallery_quality.cpython-312.pyc
+│   │   │       │   ├── build_embeddings_pkl.cpython-312.pyc
+│   │   │       │   ├── check_media_folders.cpython-312.pyc
+│   │   │       │   ├── enroll_from_folder.cpython-312.pyc
+│   │   │       │   ├── generate_occurrences.cpython-312.pyc
+│   │   │       │   └── sort_gallery_intake.cpython-312.pyc
+│   │   │       ├── roll_periods.py
+│   │   │       └── sort_gallery_intake.py
 │   │   ├── migrations
 │   │   │   ├── 0001_initial.py
 │   │   │   ├── 0002_recognitionsettings_max_periods_per_day.py
+│   │   │   ├── 0003_alter_periodtemplate_early_grace_minutes_and_more.py
+│   │   │   ├── 0004_remove_student_full_name_student_first_name_and_more.py
+│   │   │   ├── 0005_faceembedding_arcface_model_and_more.py
+│   │   │   ├── 0006_faceembedding_uniq_active_embedding_per_student.py
+│   │   │   ├── 0007_faceembedding_attendance__embeddi_68477a_idx_and_more.py
+│   │   │   ├── 0008_alter_faceembedding_arcface_model_and_more.py
+│   │   │   ├── 0009_faceembedding_used_images_detail.py
 │   │   │   ├── __init__.py
 │   │   │   └── __pycache__
 │   │   │       ├── 0001_initial.cpython-312.pyc
 │   │   │       ├── 0002_recognitionsettings_max_periods_per_day.cpython-312.pyc
+│   │   │       ├── 0003_alter_periodtemplate_early_grace_minutes_and_more.cpython-312.pyc
+│   │   │       ├── 0004_remove_student_full_name_student_first_name_and_more.cpython-312.pyc
+│   │   │       ├── 0005_faceembedding_arcface_model_and_more.cpython-312.pyc
+│   │   │       ├── 0006_faceembedding_uniq_active_embedding_per_student.cpython-312.pyc
+│   │   │       ├── 0007_faceembedding_attendance__embeddi_68477a_idx_and_more.cpython-312.pyc
+│   │   │       ├── 0008_alter_faceembedding_arcface_model_and_more.cpython-312.pyc
+│   │   │       ├── 0009_faceembedding_used_images_detail.cpython-312.pyc
 │   │   │       └── __init__.cpython-312.pyc
 │   │   ├── models.py
 │   │   ├── __pycache__
@@ -28,10 +52,20 @@
 │   │   │   ├── __init__.cpython-312.pyc
 │   │   │   ├── models.cpython-312.pyc
 │   │   │   ├── serializers.cpython-312.pyc
-│   │   │   └── services.cpython-312.pyc
+│   │   │   ├── services.cpython-312.pyc
+│   │   │   └── urls.cpython-312.pyc
 │   │   ├── serializers.py
 │   │   ├── services.py
 │   │   ├── tests.py
+│   │   ├── urls.py
+│   │   ├── utils
+│   │   │   ├── embedding_meta.py
+│   │   │   ├── embeddings.py
+│   │   │   ├── media_paths.py
+│   │   │   └── __pycache__
+│   │   │       ├── embedding_meta.cpython-312.pyc
+│   │   │       ├── embeddings.cpython-312.pyc
+│   │   │       └── media_paths.cpython-312.pyc
 │   │   └── views.py
 │   ├── cameras
 │   │   ├── admin.py
@@ -135,6 +169,7 @@
 │       │   └── scheduler.py
 │       ├── templates
 │       │   └── scheduler
+│       │       ├── system_Gd-panel.html
 │       │       ├── system.html
 │       │       ├── _system_panel.html
 │       │       └── _system_panel_NoRefresh.html
@@ -167,19 +202,61 @@
 │   └── ops
 │       ├── BISK_RFv4_runner_telemetry_and_heartbeats.md
 │       ├── BISK_RFv4_StreamProfile_Enforcer_Rationale.md
+│       ├── gpu-setup-playbook.md
 │       ├── Live_Code_Mirror_Setup_Complete.md
 │       ├── Live_Code_Mirror_Setup.md
 │       └── REDIS_CACHE.md
+├── embedding_cmds.txt
 ├── extras
 │   ├── recognize_ffmpeg.py
-│   └── recognize_opencv.py
+│   ├── recognize_opencv.py
+│   └── runner
+│       ├── attendance_client.py
+│       └── enroll_flow.py
+├── gpu_env_manifest_GP73_20250822.txt
+├── High impact next steps.txt
 ├── manage.py
 ├── media
+│   ├── attendance_crops
+│   ├── embeddings
+│   │   ├── embeddings_dim512.pkl
+│   │   └── H123456.npy
+│   ├── face_gallery
+│   │   ├── H120081
+│   │   │   ├── H120081_01_01__1.JPG
+│   │   │   ├── H120081_01_01__2.JPG
+│   │   │   ├── H120081_01_01.JPG
+│   │   │   ├── H120081__1.JPG
+│   │   │   ├── H120081__2.JPG
+│   │   │   └── H120081.JPG
+│   │   └── H123456
+│   │       ├── 01_H123456_2.jpg
+│   │       ├── 02_H123456_3.jpg
+│   │       ├── abc-H123456_1.jpg
+│   │       ├── abc-H123456.png
+│   │       ├── H123456_4.jpg
+│   │       ├── H123456_5.jpg
+│   │       ├── H123456_6.jpg
+│   │       ├── H123456_7.jpg
+│   │       ├── H123456_8.jpg
+│   │       └── H123456_9.jpg
+│   ├── face_gallery_inbox
+│   │   └── _unsorted
+│   ├── logs
+│   │   └── debug_faces
+│   ├── reports
+│   │   ├── enroll
+│   │   └── gallery_quality
+│   │       └── gallery_quality_20250822-175148.csv
 │   └── snapshots
 │       ├── 1.jpg
 │       └── 2.jpg
 ├── _mirror_check.txt
 ├── requirements.txt
+├── scripts
+│   └── gpu
+│       ├── provision_gpu_stack.sh
+│       └── snapshot_env.sh
 ├── templates
 │   ├── admin
 │   │   ├── attendance
@@ -195,6 +272,7 @@
 │   ├── dashboard_cameras.html
 │   └── dashboard.html
 ├── tree.txt
-└── TShoot_01.txt
+├── TShoot_01.txt
+└── vec512.npy
 
-42 directories, 156 files
+59 directories, 217 files

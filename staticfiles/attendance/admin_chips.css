@@ -1,0 +1,102 @@
+/* Layout helpers */
+.bisk-cell {
+    display: flex;
+    /*align-items: center;*/
+    align-items: self-end;
+}
+
+.bisk-chips {
+    display: inline-flex;
+    gap: 6px;
+    vertical-align: middle;
+    margin-left: 8px
+}
+
+.bisk-more {
+    margin-left: 8px;
+    padding: 2px 6px;
+    border-radius: 8px;
+    font-size: 11px
+}
+
+/* Base tokens (light defaults) */
+:root {
+    --bisk-chip-fg: #1f2937; /* slate-800 */
+    --bisk-chip-bg: #eef2f7; /* neutral pill bg */
+    --bisk-chip-border: #cbd5e1; /* slate-300 */
+    --bisk-chip-k: #6366f1; /* indigo-500 */
+    --bisk-chip-min: #22c55e; /* green-500 */
+    --bisk-chip-det: #eab308; /* amber-500 */
+    --bisk-more-bg: #f3f4f6; /* neutral */
+    --bisk-more-border: #e5e7eb;
+    --bisk-more-fg: #111827;
+}
+
+/* Dark mode via system preference */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bisk-chip-fg: #e5e7eb; /* slate-200 */
+        --bisk-chip-bg: #0f172a; /* slate-900-ish */
+        --bisk-chip-border: #334155; /* slate-600 */
+        --bisk-more-bg: #0b1220;
+        --bisk-more-border: #1f2937;
+        --bisk-more-fg: #e5e7eb;
+    }
+}
+
+/* Optional explicit dark theme hooks (if your layout toggles a data attr/class) */
+:root[data-theme="dark"], .theme-dark {
+    --bisk-chip-fg: #e5e7eb;
+    --bisk-chip-bg: #0f172a;
+    --bisk-chip-border: #334155;
+    --bisk-more-bg: #0b1220;
+    --bisk-more-border: #1f2937;
+    --bisk-more-fg: #e5e7eb;
+}
+
+/* Chip styling */
+.bisk-chip {
+    font-size: 11px;
+    padding: 2px 4px;
+    border-radius: 9999px;
+    border: 1px solid var(--bisk-chip-border);
+    /*color: var(--bisk-chip-fg);*/
+    /*background: var(--bisk-chip-bg);*/
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    position: relative;
+    line-height: 1.6;
+}
+
+/* Tiny colored dot for each kind (works in light/dark equally) */
+.bisk-chip::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    display: inline-block;
+    background: var(--bisk-chip-border);
+}
+
+.bisk-chip--k::before {
+    background: var(--bisk-chip-k)
+}
+
+.bisk-chip--min::before {
+    background: var(--bisk-chip-min)
+}
+
+.bisk-chip--det::before {
+    background: var(--bisk-chip-det)
+}
+
+ /*"+more" button tuned for both themes*/
+a.button.bisk-more {
+    background: var(--bisk-more-bg) !important;
+    border: 1px solid var(--bisk-more-border) !important;
+    color: var(--bisk-more-fg) !important;
+    margin: 0 4px;
+    padding: 1px 3px;
+    --link-hover-color: revert;
+}

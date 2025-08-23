@@ -189,6 +189,11 @@ class FaceEmbedding(models.Model):
         default=640,
         help_text="Face detector input size (square). Higher can help small faces but costs GPU."
     )
+    # NEW: persist the exact score threshold used during the last (re)enrollment
+    last_used_min_score = models.FloatField(
+        null=True, blank=True,
+        help_text="Minimum quality score threshold (0..1) used for the last enrollment."
+    )
     images_considered = models.PositiveIntegerField(
         default=0,
         help_text="Total gallery images discovered for the student at enrollment time."
