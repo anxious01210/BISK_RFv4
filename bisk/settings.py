@@ -48,6 +48,7 @@ INSTALLED_APPS += [
     "apps.scheduler",
     # If INSTALLED_APPS has "apps.attendance", Django uses a default AppConfig and will not execute our ready() logic that auto‑creates media folders.
     "apps.attendance.apps.AttendanceConfig",
+    # "apps.attendance",
 ]
 
 MIDDLEWARE = [
@@ -217,8 +218,6 @@ CACHES = {
 # Keep just one lock path (env can override)
 ENFORCER_LOCK_FILE = os.getenv("ENFORCER_LOCK_FILE", "/run/bisk/enforcer.lock")
 
-
-
 # ---------------------------
 # Face detection & scoring
 # ---------------------------
@@ -230,40 +229,38 @@ FACE_DET_SIZE_DEFAULT = 640
 FACE_DET_CASCADE_SIZES = [736, 800, 960, 1024, 1280, 1536]
 
 # Escalation policy thresholds
-FACE_DET_MIN_CONF  = 0.30  # escalate if conf < this
-FACE_DET_MIN_FRAC  = 0.04  # escalate if min(face_w,face_h)/min(img_w,img_h) < this
+FACE_DET_MIN_CONF = 0.30  # escalate if conf < this
+FACE_DET_MIN_FRAC = 0.04  # escalate if min(face_w,face_h)/min(img_w,img_h) < this
 FACE_DET_GOOD_CONF = 0.45  # stop early if conf >= this and frac >= FACE_DET_MIN_FRAC
 FACE_DET_MAX_ESCL_STEPS = 5
 FACE_DET_ALLOW_CPU_FALLBACK = True  # retry once on CPU if very large sizes hit GPU OOM/provider errors
 
 # Score on the detected face ROI (fallback to whole image if no face found)
 FACE_SCORE_USE_FACE_ROI = True
-FACE_SCORE_ROI_MARGIN   = 0.20  # 20% padding around face box when scoring
-FACE_SCORE_WEIGHTS      = {"sharp": 0.7, "bright": 0.3}
-FACE_SCORE_NORMALIZE    = "pctl"   # "minmax" or "pctl" (10th–90th percentile robust scaling)
-FACE_SCORE_EPSILON      = 0.05     # soften extremes when galleries are tiny
+FACE_SCORE_ROI_MARGIN = 0.20  # 20% padding around face box when scoring
+FACE_SCORE_WEIGHTS = {"sharp": 0.7, "bright": 0.3}
+FACE_SCORE_NORMALIZE = "pctl"  # "minmax" or "pctl" (10th–90th percentile robust scaling)
+FACE_SCORE_EPSILON = 0.05  # soften extremes when galleries are tiny
 
 # Intake cropping (optional; used by sort_gallery_intake)
-FACE_INTAKE_CROP_FACES     = False  # set True to emit cropped faces during intake
-FACE_INTAKE_CROP_MARGIN    = 0.20
-FACE_INTAKE_SAVE_ORIGINAL  = True
-FACE_INTAKE_CROP_DIR_NAME  = "faces"
-FACE_INTAKE_JPEG_QUALITY   = 92
+FACE_INTAKE_CROP_FACES = False  # set True to emit cropped faces during intake
+FACE_INTAKE_CROP_MARGIN = 0.20
+FACE_INTAKE_SAVE_ORIGINAL = True
+FACE_INTAKE_CROP_DIR_NAME = "faces"
+FACE_INTAKE_JPEG_QUALITY = 92
 
-FACE_INTAKE_ENHANCE        = False   # default off; enable per-run with --enhance or admin action
-FACE_ENHANCE_BRIGHT_TARGET = 0.60    # target mean in [0..1] on face ROI
-FACE_ENHANCE_ALPHA_LIMITS  = (0.6, 1.8)  # gain clamp for brightness normalize
-FACE_ENHANCE_CLAHE_CLIP    = 2.0     # CLAHE strength on L channel
-FACE_ENHANCE_CLAHE_TILE    = 8       # tile grid (tile x tile)
-FACE_ENHANCE_SHARP_AMOUNT  = 0.5     # unsharp mask strength (0..1.5)
-FACE_ENHANCE_SHARP_SIGMA   = 1.0
+FACE_INTAKE_ENHANCE = False  # default off; enable per-run with --enhance or admin action
+FACE_ENHANCE_BRIGHT_TARGET = 0.60  # target mean in [0..1] on face ROI
+FACE_ENHANCE_ALPHA_LIMITS = (0.6, 1.8)  # gain clamp for brightness normalize
+FACE_ENHANCE_CLAHE_CLIP = 2.0  # CLAHE strength on L channel
+FACE_ENHANCE_CLAHE_TILE = 8  # tile grid (tile x tile)
+FACE_ENHANCE_SHARP_AMOUNT = 0.5  # unsharp mask strength (0..1.5)
+FACE_ENHANCE_SHARP_SIGMA = 1.0
 
 # Selection policy defaults for admin modal/CLI fallbacks
-EMBEDDING_DEFAULT_K          = 3
-EMBEDDING_MIN_SCORE_DEFAULT  = 0.50
+EMBEDDING_DEFAULT_K = 3
+EMBEDDING_MIN_SCORE_DEFAULT = 0.50
 EMBEDDING_STRICT_TOP_DEFAULT = True
-
-
 
 # # ---- Embedding defaults / UI caps ----
 # # Embedding pipeline defaults

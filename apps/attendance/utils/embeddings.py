@@ -169,6 +169,40 @@ def image_score(bgr: np.ndarray) -> tuple[float, float, float]:
 #     return rows
 
 
+def embed_image_ex(bgr: np.ndarray) -> tuple[Optional[np.ndarray], int, float]:
+    """
+    Like embed_image(), but returns (vec, det_used, det_conf).
+    det_used is the detector size the cascade settled on for THIS image.
+    det_conf is the detection score from that pass.
+    """
+    try:
+        bbox, conf, det_used, _prov = detect_with_cascade(bgr, start_size=current_det_size())
+    except Exception:
+        bbox, conf, det_used = None, 0.0, current_det_size()
+
+    app = _get_app((det_used, det_used))
+    faces = app.get(bgr)
+    if not faces:
+        return (None, det_used, conf)
+
+    f = max(faces, key=lambda ff: (ff.bbox[2]-ff.bbox[0])*(ff.bbox[3]-ff.bbox[1]))
+    vec = getattr(f, "normed_embedding", None)
+    if vec is None:
+        vec = getattr(f, "embedding", None)
+
+    if vec is None:
+        return (None, det_used, conf)
+
+    v = np.asarray(vec, dtype=np.float32).reshape(-1)
+    n = np.linalg.norm(v)
+    if not np.isfinite(n) or n == 0:
+        return (None, det_used, conf)
+    if abs(n - 1.0) > 1e-3:
+        v = v / n
+    return (v, det_used, conf)
+
+
+
 def select_topk_scored(paths: List[str], k: int, *, min_score: float = 0.0, strict_top: bool = False) -> tuple[
     List[dict], List[dict]]:
     """
@@ -191,9 +225,21 @@ def select_topk_scored(paths: List[str], k: int, *, min_score: float = 0.0, stri
     if strict_top:
         rows_sorted = [r for r in rows_sorted if r["score"] >= float(min_score)]
 
-    roi_yes = [r for r in rows_sorted if r.get("roi")]
-    roi_no = [r for r in rows_sorted if not r.get("roi")]
+    def _truthy(v):
+        # Defensive cast for numpy types/arrays; treat non-empty array as True
+        try:
+            if isinstance(v, np.ndarray):
+                return bool(v.size and np.any(v))
+            if isinstance(v, (np.bool_, np.generic)):
+                return bool(v.item())
+            return bool(v)
+        except Exception:
+            return False
+
+    roi_yes = [r for r in rows_sorted if _truthy(r.get("roi"))]
+    roi_no = [r for r in rows_sorted if not _truthy(r.get("roi"))]
     topk = (roi_yes + roi_no)[:k]
+
     return (topk, rows)
 
 
@@ -254,12 +300,14 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
             debug["per_image"].append({"name": row["name"], "path": p, "reason": "unreadable_image"})
             continue
 
-        vec = compute_embedding_from_image(bgr, det_size=int(row.get("det_size") or current_det_size()))
+        # vec = compute_embedding_from_image(bgr, det_size=int(row.get("det_size") or current_det_size()))
         # vec = embed_image(bgr)  # <- use cascade-aware embedder
+        vec, det_used, det_conf = embed_image_ex(bgr)  # cascade-aware; returns (vec, det_size, det_conf)
+
         if vec is None:
             skipped.append(p)
             per_image.append({"name": row["name"], "path": p, "stage": "embed", "reason": "no_face_or_no_512",
-                              "det_size": row.get("det_size"), "det_conf": row.get("det_conf")})
+                              "det_size": int(det_used), "det_conf": float(det_conf),})
             debug["per_image"].append({"name": row["name"], "path": p, "reason": "no_face_or_no_512"})
             continue
 
@@ -276,8 +324,8 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
             "sharp": row.get("sharp"),
             "bright": row.get("bright"),
             "roi": bool(row.get("roi")),
-            "det_size": row.get("det_size"),
-            "det_conf": row.get("det_conf"),
+            "det_size": int(det_used),  # was: row.get("det_size")
+            "det_conf": float(det_conf),  # was: row.get("det_conf")
             "provider": row.get("provider"),
             "bbox": row.get("bbox"),
             "raw01": None,
@@ -293,8 +341,13 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
             bgr = load_bgr(p)
             if bgr is None:
                 continue
-            vec = compute_embedding_from_image(bgr, det_size=int(row.get("det_size") or current_det_size()))
+            vec, det_used, det_conf = embed_image_ex(bgr)
             if vec is None:
+                per_image.append({
+                    "name": row["name"], "path": p, "stage": "embed",
+                    "reason": "no_face_or_no_512",
+                    "det_size": int(det_used), "det_conf": float(det_conf)  # was row.get(...)
+                })
                 continue
             embs.append(vec)
             img_embs.append(vec)
@@ -305,7 +358,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
             used_detail.append({
                 "name": row["name"], "score": row.get("score"), "sharp": row.get("sharp"),
                 "bright": row.get("bright"), "roi": bool(row.get("roi")),
-                "det_size": row.get("det_size"), "det_conf": row.get("det_conf"),
+                "det_size": int(det_used), "det_conf": float(det_conf),
                 "provider": row.get("provider"), "bbox": row.get("bbox"),
                 "raw01": None, "rank": None,
             })
@@ -363,7 +416,32 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
     vec_bytes = float32_to_bytes(vec512)
     emb_norm = l2_norm(vec512)
     sha = sha256_bytes(vec_bytes)
-    det = current_det_size()
+
+    def _as_int(x):
+        if x is None:
+            return None
+        if isinstance(x, np.ndarray):
+            if x.size == 0:
+                return None
+            return int(x.flatten()[0])
+        if isinstance(x, (np.bool_, np.number, np.generic)):
+            return int(np.int64(x).item())
+        if isinstance(x, (list, tuple)):
+            return int(x[0]) if x else None
+        return int(x)
+
+    ds = []
+    for ud in used_detail:
+        x = _as_int(ud.get("det_size"))
+        if x is not None:
+            ds.append(x)
+
+    if ds:
+        ds.sort()
+        det = int(ds[len(ds) // 2])  # median
+    else:
+        det = current_det_size()
+
     provider, model = current_provider_and_model()
 
     # upsert active embedding for student, robust to multiple actives
@@ -510,7 +588,10 @@ def embed_image(bgr: np.ndarray) -> Optional[np.ndarray]:
     if not faces:
         return None
     f = max(faces, key=lambda ff: (ff.bbox[2] - ff.bbox[0]) * (ff.bbox[3] - ff.bbox[1]))
-    vec = getattr(f, "normed_embedding", None) or getattr(f, "embedding", None)
+    vec = getattr(f, "normed_embedding", None)
+    if vec is None:
+        vec = getattr(f, "embedding", None)
+
     if vec is None:
         return None
     v = np.asarray(vec, dtype=np.float32).reshape(-1)
