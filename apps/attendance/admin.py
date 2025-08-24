@@ -37,6 +37,27 @@ _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
 _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) and _THUMBS_N > 0 else "K Used images")
 
 
+def _coerce_raw01(value):
+    """
+    Accept both canonical raw01 in [0..1] and legacy percent/other.
+    If value>1, treat as percent and divide by 100.
+    Returns float in [0..1] or None.
+    """
+    try:
+        x = float(value)
+    except Exception:
+        return None
+    if x > 1.0:
+        x = x / 100.0  # legacy percent
+    if x < 0.0:
+        x = 0.0
+    if x > 1.0:
+        x = 1.0
+    return x
+
+
+
+
 def _first_image_rel(h_code: str) -> str | None:
     folder = student_gallery_dir(h_code)
     if not os.path.isdir(folder):
@@ -138,24 +159,24 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
 #         # export_order = ("h_code","first_name","middle_name","last_name","is_active")
 #         skip_unchanged = True
 #         use_bulk = True
-
-    def before_import_row(self, row, **kwargs):
-        if not (row.get("first_name") or row.get("middle_name") or row.get("last_name")):
-            full = (row.get("full_name") or "").strip()
-            if full:
-                parts = [p for p in full.split() if p]
-                if len(parts) == 1:
-                    row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", ""
-                elif len(parts) == 2:
-                    row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", parts[1]
-                else:
-                    row["first_name"], row["middle_name"], row["last_name"] = parts[0], " ".join(parts[1:-1]), parts[-1]
-
-    # Optional: make 'h_code' the first column in exports (everything else follows automatically)
-    def get_export_fields(self):
-        fields = super().get_export_fields()
-        fields.sort(key=lambda f: (f.attribute != "h_code",))
-        return fields
+#
+#     def before_import_row(self, row, **kwargs):
+#         if not (row.get("first_name") or row.get("middle_name") or row.get("last_name")):
+#             full = (row.get("full_name") or "").strip()
+#             if full:
+#                 parts = [p for p in full.split() if p]
+#                 if len(parts) == 1:
+#                     row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", ""
+#                 elif len(parts) == 2:
+#                     row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", parts[1]
+#                 else:
+#                     row["first_name"], row["middle_name"], row["last_name"] = parts[0], " ".join(parts[1:-1]), parts[-1]
+#
+#     # Optional: make 'h_code' the first column in exports (everything else follows automatically)
+#     def get_export_fields(self):
+#         fields = super().get_export_fields()
+#         fields.sort(key=lambda f: (f.attribute != "h_code",))
+#         return fields
 
 
 @admin.register(Student)
@@ -453,60 +474,55 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
     student_link.short_description = "Student"
 
-    def top3_preview(self, obj):
-        """
-        Render up to 3 small thumbnails with their scores from used_images_detail.
-        Falls back to filenames if the images are missing.
-        """
-        det = getattr(obj, "used_images_detail", None) or []
-        if not det:
-            return "-"
-        # Build media-relative URLs
-        h = getattr(obj.student, "h_code", "")
-        folder = student_gallery_dir(h)
-        items = []
-        for rec in det[:6]:
-            name = rec.get("name", "")
-            score = rec.get("score", 0.0)
-            rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
-            url = f"{settings.MEDIA_URL}{rel}"
-            items.append(
-                f'<div style="display:inline-block;margin-right:6px;text-align:center;">'
-                f'  <img src="{url}" onerror="this.style.display=\'none\'" '
-                f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;" />'
-                f'  <div style="font-size:11px; color:blue;">{score:.2f}</div>'
-                f'</div>'
-            )
-        return format_html("".join(items))
-
-    top3_preview.short_description = "Top‑K (score)"
-
+    # def top3_preview(self, obj):
+    #     """
+    #     Render up to 3 small thumbnails with their scores from used_images_detail.
+    #     Falls back to filenames if the images are missing.
+    #     """
+    #     det = getattr(obj, "used_images_detail", None) or []
+    #     if not det:
+    #         return "-"
+    #     # Build media-relative URLs
+    #     h = getattr(obj.student, "h_code", "")
+    #     folder = student_gallery_dir(h)
+    #     items = []
+    #     for rec in det[:6]:
+    #         name = rec.get("name", "")
+    #         score = rec.get("score", 0.0)
+    #         rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
+    #         url = f"{settings.MEDIA_URL}{rel}"
+    #         items.append(
+    #             f'<div style="display:inline-block;margin-right:6px;text-align:center;">'
+    #             f'  <img src="{url}" onerror="this.style.display=\'none\'" '
+    #             f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;" />'
+    #             f'  <div style="font-size:11px; color:blue;">{score:.2f}</div>'
+    #             f'</div>'
+    #         )
+    #     return format_html("".join(items))
+    #
+    # top3_preview.short_description = "Top‑K (score)"
+    #
     def avg_used_score(self, obj):
-        """
-        Average of the per-image `score` values that were used to build this .npy
-        (comes from obj.used_images_detail). Robust to JSON/text storage.
-        """
         det = getattr(obj, "used_images_detail", None) or []
-        # if serialized as JSON text, parse it
         if isinstance(det, str):
             try:
                 import json
                 det = json.loads(det)
             except Exception:
                 det = []
-        try:
-            scores = [
-                float(r.get("score"))
-                for r in det
-                if isinstance(r, dict) and r.get("score") is not None
-            ]
-        except Exception:
-            scores = []
-        if not scores:
+        vals = []
+        for r in det:
+            if not isinstance(r, dict):
+                continue
+            v = r.get("raw01", r.get("score", None))
+            v = _coerce_raw01(v)
+            if v is not None:
+                vals.append(v)
+        if not vals:
             return "-"
-        return f"{(sum(scores) / len(scores)):.2f}"
+        return f"{(sum(vals) / len(vals)):.3f}"
 
-    avg_used_score.short_description = "avg used score"
+    avg_used_score.short_description = "avg used score (raw01)"
 
     def provider_short(self, obj):
         p = (obj.provider or "").upper()
@@ -524,7 +540,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         if not det:
             return "-"
 
-        # Normalize records to dicts with at least 'name' and optional 'score'
+        # Normalize records to dicts with at least 'name'
         if isinstance(det, list) and det and isinstance(det[0], str):
             det = [{"name": name, "score": None} for name in det]
 
@@ -538,28 +554,36 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         items = []
         for rec in det[:n]:
             name = rec.get("name") or rec.get("path") or ""
-            score = rec.get("score", None)
+            # prefer normalized raw01; fall back to legacy score
+            raw01 = _coerce_raw01(rec.get("raw01", rec.get("score", None)))
+            rank = rec.get("rank", None)
             sharp = rec.get("sharp", None)
             bright = rec.get("bright", None)
-            rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
-            url = f"{settings.MEDIA_URL}{rel}"
-            score_txt = f"{float(score):.2f}" if isinstance(score, (float, int)) else ""
-            title = f"{name}"
-            if score is not None:
-                title += f" | score={float(score):.2f}"
-
             det_conf = rec.get("det_conf", None)
             det_size = rec.get("det_size", None)
+
+            # build MEDIA url safely
+            try:
+                rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
+                url = f"{settings.MEDIA_URL}{rel}"
+            except Exception:
+                url = "#"
+
+            score_txt = f"{raw01:.2f}" if isinstance(raw01, float) else ""
+            title = f"{name}"
+            if raw01 is not None:
+                title += f" | raw01={raw01:.3f}"
+            if isinstance(rank, int):
+                title += f" | rank={rank}"
             if det_size:
                 title += f" | det={det_size}"
             if det_conf is not None:
                 title += f" | conf={float(det_conf):.2f}"
-
             if sharp is not None:
                 title += f" | sharp={float(sharp):.2f}"
-
             if bright is not None:
                 title += f" | bright={float(bright):.2f}"
+
             items.append(
                 f'<a href="{url}" target="_blank" rel="noopener" '
                 f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;" '
@@ -601,17 +625,15 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             '</span>',
             k, ms_txt, det,
         )
-        # more = format_html(
-        #     '<a class="button bisk-more" href="{}">+more</a>',
-        #     self._re_enroll_modal_url(obj.id)
-        # )
+
         more = format_html(
             '<a class="button bisk-more js-reenroll-pop" data-id="{}" target="_blank" rel="noopener noreferrer" href="{}" '
             'style="">+more</a>',
             obj.id, self._re_enroll_modal_url(obj.id)
         )
-        return format_html('<div class="bisk-cell">{more}{thumbs}</div></div style="font-size: 20px;">{chips}</div>',
+        return format_html('<div class="bisk-cell">{more}{thumbs}</div><div style="font-size: 20px;">{chips}</div>',
                            thumbs=format_html("{}", thumbs), chips=chips, more=more)
+
 
     thumbs_with_chips.short_description = "Used images • chips"
 

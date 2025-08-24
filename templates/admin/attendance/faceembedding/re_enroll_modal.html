@@ -66,11 +66,9 @@
             background: var(--bisk-badge-det);
         }
 
-        .grid {
-            display: grid;
+        .grid {display: grid;
             grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
-            gap: 10px;
-        }
+            gap: 10px;}
 
         .card {
             border: 1px solid var(--bisk-card-br);
@@ -118,7 +116,8 @@
             <div class="grid">
                 {% for r in rows %}
                     <div class="card"
-                         title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright={{ r.bright|floatformat:2 }}">
+                         title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+                                 {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}">
                         <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
                         <div class="meta">
                             <div><strong>{{ r.name }}</strong></div>
