@@ -33,6 +33,7 @@ def _clamp01(x: float) -> float:
 _APP: Optional[FaceAnalysis] = None
 _PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
 _DET_SIZE = (640, 640)  # default square
+# _DET_SIZE = (800, 800)  # start higher (still auto-tunes per image)
 
 def set_det_size(w: int, h: int | None = None):
     """Set global detector size; next _get_app(det_size=...) call will prepare with it."""
@@ -222,8 +223,6 @@ def select_topk_scored(paths: List[str], k: int, *, min_score: float = 0.0, stri
     if strict_top:
         rows_sorted = [r for r in rows_sorted if r["score"] >= float(min_score)]
     rows_sorted = sorted(rows, key=lambda r: r["score"], reverse=True)
-    if strict_top:
-        rows_sorted = [r for r in rows_sorted if r["score"] >= float(min_score)]
 
     def _truthy(v):
         # Defensive cast for numpy types/arrays; treat non-empty array as True
@@ -320,6 +319,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         used_names.append(row["name"])
         used_detail.append({
             "name": row["name"],
+            "path": p,
             "score": row.get("score"),
             "sharp": row.get("sharp"),
             "bright": row.get("bright"),
@@ -534,7 +534,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
     # write a CSV log for this student under MEDIA/reports/enroll/
     try:
         os.makedirs(DIRS["REPORTS_ENROLL"], exist_ok=True)
-        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         out_csv = os.path.join(DIRS["REPORTS_ENROLL"], f"{h_code}_{ts}.csv")
         with open(out_csv, "w", newline="") as fh:
             w = csv.writer(fh)
@@ -551,7 +551,7 @@ def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min
         "ok": True,
         "created": created,
         "h_code": h_code,
-        "used_images": [r["path"] for r in topk_rows],
+        "used_images": [ud["path"] for ud in used_detail],
         "skipped": skipped,
         "embedding_path": rel_path,
         "face_embedding_id": fe.id,
