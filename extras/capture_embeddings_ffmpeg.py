@@ -342,6 +342,10 @@ if __name__ == "__main__":
 #pip uninstall -y opencv-python-headless
 # pip install opencv-python
 #
+# for the preview Windoe do the 2 lines as:
+# sudo apt-get update
+# sudo apt-get install -y libgtk-3-0 libglib2.0-0 libsm6 libxext6 libxrender1 libgl1
+#
 # 2. Install the common system libs on Ubuntu/Debian:
 # sudo apt-get update
 # sudo apt-get install -y libgtk-3-0 libglib2.0-0 libsm6 libxext6 libxrender1 libgl1

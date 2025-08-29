@@ -11,13 +11,28 @@ from apps.scheduler.models import RunnerHeartbeat
 from django.core.cache import cache
 
 
-def _auth_ok(request) -> bool:
-    """If RUNNER_HEARTBEAT_KEY is set, require X-BISK-KEY header to match."""
-    key_required = getattr(settings, "RUNNER_HEARTBEAT_KEY", "")
-    if not key_required:
-        return True
-    return request.headers.get("X-BISK-KEY") == key_required
+# def _auth_ok(request) -> bool:
+#     """If RUNNER_HEARTBEAT_KEY is set, require X-BISK-KEY header to match."""
+#     key_required = getattr(settings, "RUNNER_HEARTBEAT_KEY", "")
+#     if not key_required:
+#         return True
+#     return request.headers.get("X-BISK-KEY") == key_required
 
+def _auth_ok(request) -> bool:
+    want = getattr(settings, "RUNNER_HEARTBEAT_KEY", "")
+    if not want:
+        return True
+    # accept header, query, or JSON
+    if request.headers.get("X-BISK-KEY") == want:
+        return True
+    try:
+        import json
+        body = json.loads(request.body.decode("utf-8") or "{}")
+    except Exception:
+        body = {}
+    return (request.GET.get("key") == want
+            or body.get("hb_key") == want
+            or body.get("key") == want)
 
 @csrf_exempt
 def heartbeat(request):
@@ -37,8 +52,8 @@ def heartbeat(request):
     #     camera_fps = payload.get("fps")  # older runners send 'fps'
 
     processed_fps = payload.get("processed_fps")  # may be None
-    cam_id = payload.get("camera_id")
-    prof_id = payload.get("profile_id")
+    cam_id = payload.get("camera_id") or payload.get("camera")
+    prof_id = payload.get("profile_id") or payload.get("profile")
     pid = payload.get("pid")
     detected = payload.get("detected") or 0
     matched = payload.get("matched") or 0

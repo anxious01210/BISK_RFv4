@@ -20,10 +20,11 @@ from django.utils import timezone
 from django.conf import settings
 from apps.scheduler.resources import resolve_effective
 from apps.cameras.models import Camera
+
 from apps.attendance.models import Student, RecognitionSettings
 from apps.attendance.services import record_recognition
 from apps.attendance.utils.media_paths import DIRS, ensure_media_tree
-
+from apps.scheduler.models import StreamProfile
 import numpy as np
 from insightface.app import FaceAnalysis
 from PIL import Image
@@ -153,7 +154,7 @@ def get_app(det_size: Optional[int], device: str) -> FaceAnalysis:
 def ffmpeg_snapshot_cmd(ffmpeg_bin: str, rtsp_url: str, out_jpg: str, args) -> list:
     cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
     if getattr(args, "rtsp_transport", None) and args.rtsp_transport != "auto":
-        cmd += ["-rtsp_transport", args.rtsp_transport] + ["-rtsp_flags", "prefer_tcp"]
+        cmd += ["-rtsp_transport", args.rtsp_transport]
     if getattr(args, "hwaccel", None) == "nvdec":
         cmd += ["-hwaccel", "cuda"]
     cmd += ["-i", rtsp_url]
@@ -473,22 +474,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, fps: float,
-                    rtsp_transport: str = None, hwaccel: str = "none"):
-    """Build FFmpeg command that pipes MJPEG frames to stdout."""
-    cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
-    if rtsp_transport:
-        cmd += ["-rtsp_transport", rtsp_transport, "-rtsp_flags", "prefer_tcp"]
-    # Use -rw_timeout (microseconds). -stimeout may be unsupported in some builds.
-    cmd += ["-rw_timeout", "5000000"]
-    if (hwaccel or "").lower() in ("nvdec", "cuda"):
-        cmd += ["-hwaccel", "cuda"]
-    # Lower latency / buffering
-    cmd += ["-fflags", "nobuffer", "-flags", "low_delay"]
-    cmd += ["-i", rtsp_url]
-    # Emit MJPEG to stdout at target fps
-    cmd += ["-vf", f"fps={float(fps):.3f}", "-q:v", "3",
-            "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
-    return cmd

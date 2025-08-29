@@ -3,7 +3,7 @@
 
 # 4) Deploy / reboot checklist
 # python manage.py stop_runners
-# pgrep -af "recognize_ffmpeg\.py|ffmpeg" → should be empty
+# pgrep -af "recognize_runner_all_ffmpeg\.py|recognize_ffmpeg\.py|ffmpeg" → should be empty
 # Stop Django (gunicorn/uvicorn/devserver)
 # Pull/upgrade/migrate/etc.
 # Start Django

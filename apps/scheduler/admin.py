@@ -315,11 +315,12 @@ class RunningProcessAdmin(admin.ModelAdmin):
         "meta_pretty",
         "snapshot_preview",
         "effective_args",
+        "runner_flavor",
     )
 
     fieldsets = (
         (None, {
-            "fields": ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "meta_pretty"),
+            "fields": ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "runner_flavor", "meta_pretty"),
             "description": format_html(
                 "<div style='margin:6px 0 10px'>"
                 "<b>What is this?</b> A live record of a runner process the scheduler started.<br>"
@@ -356,6 +357,15 @@ class RunningProcessAdmin(admin.ModelAdmin):
             )
         }),
     )
+
+    # Simple indicator of which Python script the Enforcer used
+    def runner_flavor(self, obj):
+        try:
+            from django.conf import settings
+            return getattr(settings, "RUNNER_IMPL", "ffmpeg_all")
+        except Exception:
+            return "unknown"
+    runner_flavor.short_description = "Runner flavor"
 
     def last_error_badge(self, obj):
         if getattr(obj, "last_error", ""):

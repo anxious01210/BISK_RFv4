@@ -176,6 +176,16 @@ MEDIA_ROOT = BASE_DIR / "media"
 SNAPSHOT_DIR = MEDIA_ROOT / "snapshots"
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)  # ensure exists at startup
 
+# --- Runner selection ---
+# Toggle which Python runner script Enforcer should launch.
+# "ffmpeg_all" = extras/recognize_runner_all_ffmpeg.py (preferred)
+# "ffmpeg_one" = extras/recognize_runner_ffmpeg.py     (compat)
+RUNNER_IMPL = os.getenv("BISK_RUNNER_IMPL", "ffmpeg_all")  # ffmpeg_all | ffmpeg
+
+# Explicit script paths (overrideable via env if you relocate)
+RUNNER_SCRIPT_ALL = BASE_DIR / "extras" / "recognize_runner_all_ffmpeg.py"
+RUNNER_SCRIPT_ONE = BASE_DIR / "extras" / "recognize_runner_ffmpeg.py"
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -186,9 +196,9 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Snapshots will be taken every HEARTBEAT_SNAPSHOT_EVERY heartbeats.
 # The admin status badges will flip between Online/Stale/Offline based on HEARTBEAT_STALE_SEC and HEARTBEAT_OFFLINE_SEC.
 
-HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "15"))
-HEARTBEAT_STALE_SEC = int(os.getenv("HEARTBEAT_STALE_SEC", "45"))
-HEARTBEAT_OFFLINE_SEC = int(os.getenv("HEARTBEAT_OFFLINE_SEC", "120"))
+HEARTBEAT_INTERVAL_SEC = int(os.getenv("HEARTBEAT_INTERVAL_SEC", "10"))
+HEARTBEAT_STALE_SEC = int(os.getenv("HEARTBEAT_STALE_SEC", "40"))
+HEARTBEAT_OFFLINE_SEC = int(os.getenv("HEARTBEAT_OFFLINE_SEC", "60"))
 # In Django Admin → Scheduler → Runner Heartbeats, the online/stale/offline labels come from your:
 HEARTBEAT_THRESHOLDS = {"online": HEARTBEAT_INTERVAL_SEC, "stale": HEARTBEAT_STALE_SEC,
                         "offline": HEARTBEAT_OFFLINE_SEC}
@@ -201,9 +211,9 @@ RUNPROC_PRUNE_OFFLINE_MINUTES = 6
 RUNPROC_PRUNE_OFFLINE_HOURS = 1
 
 # --- BISK enforcer/scheduler ---
-ENFORCER_INTERVAL_SECONDS = int(os.getenv("ENFORCER_INTERVAL_SECONDS", "15"))
+ENFORCER_INTERVAL_SECONDS = int(os.getenv("ENFORCER_INTERVAL_SECONDS", "60"))
 # Online threshold used by admin; stale/offline use the constants above.
-HEARTBEAT_ONLINE_SEC = int(os.getenv("HEARTBEAT_ONLINE_SEC", str(max(15, HEARTBEAT_INTERVAL_SEC * 3 // 2))))
+HEARTBEAT_ONLINE_SEC = int(os.getenv("HEARTBEAT_ONLINE_SEC", str(max(20, HEARTBEAT_INTERVAL_SEC * 3 // 2))))
 
 HB_LOG_EVERY_SEC = int(os.getenv("HB_LOG_EVERY_SEC", "12"))  # rate-limit RunnerHeartbeat inserts
 

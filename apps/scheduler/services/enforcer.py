@@ -5,12 +5,15 @@ from typing import Iterable, Optional
 from django.utils import timezone
 from apps.scheduler.models import SchedulePolicy, RunningProcess, StreamProfile
 from pathlib import Path
+# Build paths inside the project like this: BASE_DIR / 'subdir'.
+BASE_DIR = Path(__file__).resolve().parent.parent
 from django.db import transaction, IntegrityError
 from django.core.cache import cache
 from apps.cameras.models import Camera
 from django.db.models import Max, Q
 from datetime import timedelta
 from django.conf import settings
+
 
 # How long a row must be Offline before we consider pruning (minutes).
 # Prefer minutes-based; fall back to hours for BC; default 6h.
@@ -123,9 +126,10 @@ def _pid_alive(pid: int) -> bool:
         return False
 
     # Extra safety: only consider it "our" runner if cmdline includes recognize_ffmpeg.py
+    # Below is the fix of double-recognize .py Processes.
     try:
         cmd = " ".join(p.cmdline())
-        if "recognize_ffmpeg.py" not in cmd:
+        if "recognize_runner_all_ffmpeg.py" not in cmd and "recognize_runner_ffmpeg.py" not in cmd:
             return False
     except psutil.Error:
         # If we can't read cmdline, err on the side of "not alive"
@@ -175,7 +179,14 @@ def _start(camera, profile):
     # Prefer detection_set; fall back to det_set for backward-compat
     det_set = str(getattr(profile, "detection_set", getattr(profile, "det_set", "auto")) or "auto")
 
-    # build the runner command (your runner builds/executes ffmpeg)
+    # Select which Python runner script to launch
+    impl = getattr(settings, "RUNNER_IMPL", "ffmpeg_all")
+    runner = {
+        "ffmpeg_all": getattr(settings, "RUNNER_SCRIPT_ALL", BASE_DIR / "extras" / "recognize_runner_all_ffmpeg.py"),
+        "ffmpeg_one": getattr(settings, "RUNNER_SCRIPT_ONE", BASE_DIR / "extras" / "recognize_runner_ffmpeg.py"),
+    }.get(impl, getattr(settings, "RUNNER_SCRIPT_ALL", BASE_DIR / "extras" / "recognize_runner_all_ffmpeg.py"))
+
+    # build the runner command (your runner builds/executes ffmpeg internally)
     rtsp_cli = []
     if rtsp_transport and rtsp_transport != "auto":
         rtsp_cli = ["--rtsp_transport", rtsp_transport]
@@ -291,7 +302,7 @@ def _kill_stray_runners_for_camera(cam_id: int) -> int:
                 continue
             # Look for our runner script
             joined = " ".join(cmd)
-            if "recognize_ffmpeg.py" not in joined:
+            if ("recognize_ffmpeg.py" not in joined) and ("recognize_runner_all_ffmpeg.py" not in joined):
                 continue
 
             # Match --camera <id>
