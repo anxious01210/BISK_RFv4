@@ -1,0 +1,80 @@
+.
+├── admin.py
+├── api.py
+├── apps.py
+├── __init__.py
+├── management
+│   └── commands
+│       ├── enforce_schedules.py
+│       ├── prune_heartbeats.py
+│       ├── __pycache__
+│       │   ├── prune_heartbeats.cpython-312.pyc
+│       │   ├── run_enforcer.cpython-312.pyc
+│       │   ├── start_enforce.cpython-312.pyc
+│       │   └── stop_runners.cpython-312.pyc
+│       ├── run_enforcer.py
+│       ├── start_enforce.py
+│       └── stop_runners.py
+├── migrations
+│   ├── 0001_initial.py
+│   ├── 0002_runnerheartbeat.py
+│   ├── 0003_runningprocess_uniq_cam_prof_pid.py
+│   ├── 0004_runningprocess_effective_opts_and_more.py
+│   ├── 0005_runningprocess_effective_args.py
+│   ├── 0006_runningprocess_cpu_affinity_and_more.py
+│   ├── 0007_streamprofile_cpu_affinity_streamprofile_device_and_more.py
+│   ├── 0008_alter_runningprocess_cpu_affinity.py
+│   ├── 0009_alter_runnerheartbeat_options_and_more.py
+│   ├── 0010_alter_runnerheartbeat_ts.py
+│   ├── 0011_runnerheartbeat_pid.py
+│   ├── 0012_globalresourcesettings_and_more.py
+│   ├── 0013_runnerheartbeat_processed_fps.py
+│   ├── __init__.py
+│   └── __pycache__
+│       ├── 0001_initial.cpython-312.pyc
+│       ├── 0002_runnerheartbeat.cpython-312.pyc
+│       ├── 0003_runningprocess_uniq_cam_prof_pid.cpython-312.pyc
+│       ├── 0004_runningprocess_effective_opts_and_more.cpython-312.pyc
+│       ├── 0005_runningprocess_effective_args.cpython-312.pyc
+│       ├── 0006_runningprocess_cpu_affinity_and_more.cpython-312.pyc
+│       ├── 0007_streamprofile_cpu_affinity_streamprofile_device_and_more.cpython-312.pyc
+│       ├── 0008_alter_runningprocess_cpu_affinity.cpython-312.pyc
+│       ├── 0009_alter_runnerheartbeat_options_and_more.cpython-312.pyc
+│       ├── 0010_alter_runnerheartbeat_ts.cpython-312.pyc
+│       ├── 0011_runnerheartbeat_pid.cpython-312.pyc
+│       ├── 0012_globalresourcesettings_and_more.cpython-312.pyc
+│       ├── 0013_runnerheartbeat_processed_fps.cpython-312.pyc
+│       └── __init__.cpython-312.pyc
+├── models.py
+├── __pycache__
+│   ├── admin.cpython-312.pyc
+│   ├── api.cpython-312.pyc
+│   ├── apps.cpython-312.pyc
+│   ├── __init__.cpython-312.pyc
+│   ├── models.cpython-312.pyc
+│   ├── resources.cpython-312.pyc
+│   ├── signals.cpython-312.pyc
+│   └── views.cpython-312.pyc
+├── resources.py
+├── services
+│   ├── enforcer.py
+│   ├── __init__.py
+│   ├── lock.py
+│   ├── __pycache__
+│   │   ├── enforcer.cpython-312.pyc
+│   │   ├── __init__.cpython-312.pyc
+│   │   ├── lock.cpython-312.pyc
+│   │   └── scheduler.cpython-312.pyc
+│   └── scheduler.py
+├── signals.py
+├── templates
+│   └── scheduler
+│       ├── system_Gd-panel.html
+│       ├── system.html
+│       ├── _system_panel.html
+│       └── _system_panel_NoRefresh.html
+├── tests.py
+├── tree_of_apps_scheduler
+└── views.py
+
+11 directories, 67 files

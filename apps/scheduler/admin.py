@@ -26,7 +26,8 @@ from django.utils.html import format_html
 from .services import _stop, enforce_schedules  # Linux-only SIGTERM to process group
 from django.conf import settings
 from datetime import timedelta
-from apps.scheduler import periodic  # for _pid_alive
+# from apps.scheduler import periodic  # for _pid_alive
+from apps.scheduler.services import enforcer as _enf  # provides _pid_alive
 from pathlib import Path
 from django.utils.timesince import timesince
 
@@ -505,13 +506,29 @@ class RunningProcessAdmin(admin.ModelAdmin):
 
     snapshot_preview.short_description = "Snapshot"
 
+    # def status_badge(self, obj):
+    #     ts = obj.last_heartbeat
+    #     # live = periodic._pid_alive(obj.pid)
+    #     live = _enf._pid_alive(obj.pid)
+    #     if not ts:
+    #         return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
+    #     age = (timezone.now() - ts).total_seconds()
+    #     if live and age <= ONLINE:  # <-- uses your settings-backed thresholds
+    #         return format_html("<span style='color:#16a34a;font-weight:600'>Online</span>")
+    #     if age > OFFLINE:
+    #         return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
+    #     return format_html("<span style='color:#d97706;font-weight:600'>Stale</span>")
+
+    # apps/scheduler/admin.py
+
     def status_badge(self, obj):
-        ts = obj.last_heartbeat
-        live = periodic._pid_alive(obj.pid)
+        # choose the freshest RP timestamp available
+        ts = getattr(obj, "last_heartbeat", None) or getattr(obj, "last_heartbeat_at", None)
+        live = _enf._pid_alive(obj.pid)
         if not ts:
             return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
         age = (timezone.now() - ts).total_seconds()
-        if live and age <= ONLINE:  # <-- uses your settings-backed thresholds
+        if live and age <= ONLINE:
             return format_html("<span style='color:#16a34a;font-weight:600'>Online</span>")
         if age > OFFLINE:
             return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
@@ -684,21 +701,40 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
 
     age_col.short_description = "Age"
 
-    def status_col(self, obj):
-        secs = (timezone.now() - obj.ts).total_seconds()
+    # def status_col(self, obj):
+    #     secs = (timezone.now() - obj.ts).total_seconds()
+    #
+    #     # require LIVE process for "Online"
+    #     rp = (RunningProcess.objects
+    #           .filter(camera=obj.camera, profile=obj.profile)
+    #           .order_by("-id")
+    #           .first())
+    #     # live = bool(rp and periodic._pid_alive(rp.pid))
+    #     live = bool(rp and _enf._pid_alive(rp.pid))
+    #
+    #     # Optional: treat repeated fps==0 as "No video"
+    #     # (a runner can be alive but camera powered off; it will send fps=0)
+    #     if secs <= STALE and obj.fps == 0 and live:
+    #         return mark_safe("<span style='color:#d97706;font-weight:600;'>No video</span>")
+    #
+    #     if live and secs <= ONLINE:
+    #         return mark_safe("<span style='color:#16a34a;font-weight:600;'>Online</span>")
+    #     if secs > OFFLINE:
+    #         return mark_safe("<span style='color:#b91c1c;font-weight:600;'>Offline</span>")
+    #     return mark_safe("<span style='color:#d97706;font-weight:600;'>Stale</span>")
 
-        # require LIVE process for "Online"
+    # in RunnerHeartbeatAdmin.status_col (apps/scheduler/admin.py)
+    def status_col(self, obj):
         rp = (RunningProcess.objects
               .filter(camera=obj.camera, profile=obj.profile)
-              .order_by("-id")
-              .first())
-        live = bool(rp and periodic._pid_alive(rp.pid))
+              .order_by("-id").first())
+        live = bool(rp and _enf._pid_alive(rp.pid))
+        # Prefer RP freshness
+        ts = getattr(rp, "last_heartbeat", None) or obj.ts
+        secs = (timezone.now() - ts).total_seconds()
 
-        # Optional: treat repeated fps==0 as "No video"
-        # (a runner can be alive but camera powered off; it will send fps=0)
         if secs <= STALE and obj.fps == 0 and live:
             return mark_safe("<span style='color:#d97706;font-weight:600;'>No video</span>")
-
         if live and secs <= ONLINE:
             return mark_safe("<span style='color:#16a34a;font-weight:600;'>Online</span>")
         if secs > OFFLINE:

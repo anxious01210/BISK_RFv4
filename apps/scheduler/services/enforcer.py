@@ -162,7 +162,7 @@ def _start(camera, profile):
     runner = Path(settings.BASE_DIR) / "extras" / "recognize_ffmpeg.py"
 
     hb_interval = int(resolve_knob(camera, profile, "hb_interval") or 10)
-    snapshot_every = int(resolve_knob(camera, profile, "snapshot_every") or 3)
+    snapshot_every = int(resolve_knob(camera, profile, "snapshot_every") or 10)
 
     rtsp_transport = resolve_knob(camera, profile, "rtsp_transport") or "auto"  # auto/tcp/udp
     hwaccel = resolve_knob(camera, profile, "hwaccel") or "none"  # none/nvdec
@@ -302,7 +302,9 @@ def _kill_stray_runners_for_camera(cam_id: int) -> int:
                 continue
             # Look for our runner script
             joined = " ".join(cmd)
-            if ("recognize_ffmpeg.py" not in joined) and ("recognize_runner_all_ffmpeg.py" not in joined):
+            if ("recognize_ffmpeg.py" not in joined
+                    and "recognize_runner_all_ffmpeg.py" not in joined
+                    and "recognize_runner_ffmpeg.py" not in joined):
                 continue
 
             # Match --camera <id>

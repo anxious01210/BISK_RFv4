@@ -1,3 +1,4 @@
+# apps.scheduler.views.py
 import os, platform, shutil, subprocess, psutil
 from dataclasses import dataclass
 from typing import Optional, List
@@ -159,13 +160,14 @@ def _collect_system_info():
         else:
             label = f'#{p.id}'
 
-        hb_ts = getattr(p, 'hb_ts', None)
+        hb_ts = getattr(p, "hb_ts", None)
+        rp_ts = getattr(p, "last_heartbeat", None) or getattr(p, "last_heartbeat_at", None)
+        if rp_ts and (not hb_ts or rp_ts > hb_ts):
+            hb_ts = rp_ts
+
         hb_age_s = None
         if hb_ts:
-            try:
-                hb_age_s = max(0, int((now_ts - hb_ts).total_seconds()))
-            except Exception:
-                hb_age_s = None
+            hb_age_s = max(0, int((now_ts - hb_ts).total_seconds()))
 
         runner_rows.append({
             "id": p.id,
