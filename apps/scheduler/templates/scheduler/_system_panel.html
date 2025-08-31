@@ -1,5 +1,8 @@
 {% load humanize %}
-
+{% load static %}
+{% get_media_prefix as MED %}
+{% load static score_tags %}
+<script src="{% static 'attendance/crop_modal.js' %}"></script>
 <style>
     /* ---------------- Theme tokens ---------------- */
     .bisk {
@@ -599,24 +602,43 @@
                         <th>Camera</th>
                         <th>Period</th>
                         <th>Time</th>
+                        <th>Thumb</th>
                     </tr>
                     </thead>
                     <tbody>
                     {% for e in recent_events %}
-                        <tr>
-                            <td>
-                                {% if e.student %}<b>{{ e.student.h_code }}</b> — {{ e.student.full_name }}{% else %}
-                                    —{% endif %}
-                            </td>
-                            <td>{{ e.score|floatformat:3 }}</td>
-                            <td>{% if e.camera %}{{ e.camera.name }}{% else %}—{% endif %}</td>
-                            <td>
-                                {% if e.period %}
-                                    {{ e.period.template.name }}
-                                {% else %}—{% endif %}
-                            </td>
-                            <td>{{ e.ts|date:"H:i:s" }}</td>
-                        </tr>
+                        {% with url=MEDIA_URL|add:e.crop_path %}
+                            <tr>
+                                <td>
+                                    {% if e.student %}<b>{{ e.student.h_code }}</b> —
+                                        {{ e.student.full_name }}{% else %}
+                                        —{% endif %}
+                                </td>
+                                {#                                <td>{{ e.score|floatformat:3 }}</td>#}
+                                <td>{{ e.score|colored_score }}</td>
+                                <td>{% if e.camera %}{{ e.camera.name }}{% else %}—{% endif %}</td>
+                                <td>
+                                    {% if e.period %}
+                                        {{ e.period.template.name }}
+                                    {% else %}—{% endif %}
+                                </td>
+                                <td>{{ e.ts|date:"H:i:s" }}</td>
+                                <td>
+                                    {% if e.crop_path %}
+                                        <span style="display:inline-flex;align-items:center;gap:6px;">
+                                          <!-- Modal thumbnail -->
+                                            <a href="#" class="bisk-img-modal" data-url="{{ url }}">
+                                            <img src="{{ url }}"
+                                                 style="height:46px;border-radius:6px;box-shadow:0 0 0 1px rgba(0,0,0,.08);"/>
+                                            </a>
+                                            <!-- ↗︎ new-tab link -->
+                                            <a href="{{ url }}" target="_blank" rel="noopener"
+                                               title="Open original" style="font-size:16px;text-decoration:none;">↗︎</a>
+                                        </span>
+                                    {% else %} — {% endif %}
+                                </td>
+                            </tr>
+                        {% endwith %}
                     {% endfor %}
                     </tbody>
                 </table>

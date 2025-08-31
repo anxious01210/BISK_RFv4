@@ -96,6 +96,14 @@ class PeriodOccurrence(models.Model):
         unique_together = [("template", "date")]
         indexes = [models.Index(fields=["date", "start_dt", "end_dt"])]
 
+    def __str__(self):
+        try:
+            s = self.start_dt.astimezone().strftime("%H:%M")
+            e = self.end_dt.astimezone().strftime("%H:%M")
+            return f"{self.template.name} ({s} - {e})"
+        except Exception:
+            return f"{self.template.name} on {self.date}"
+
 
 class AttendanceRecord(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
@@ -118,7 +126,7 @@ class AttendanceEvent(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
     period = models.ForeignKey(PeriodOccurrence, on_delete=models.SET_NULL, null=True, blank=True)
     camera = models.ForeignKey("cameras.Camera", on_delete=models.SET_NULL, null=True, blank=True)
-    ts = models.DateTimeField()
+    ts = models.DateTimeField(help_text="The timestamp of the event where it was taken.")
     score = models.FloatField()
     crop_path = models.CharField(max_length=300, blank=True, default="")
 

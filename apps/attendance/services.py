@@ -1,6 +1,8 @@
 from __future__ import annotations
 # apps/attendance/services.py
 
+from django.conf import settings
+import os
 from datetime import timedelta, datetime
 from django.db.models import F
 from django.db import transaction
@@ -52,13 +54,14 @@ def _write_from_match(
     from apps.attendance.models import AttendanceEvent, AttendanceRecord, RecognitionSettings
 
     ts_local = timezone.localtime(ts if ts else timezone.now())
+    rel_crop = _to_media_rel(crop_path)
 
     # Policies (min_score, re_register_window_sec, min_improve_delta, max_periods_per_day, ...)
     rs = RecognitionSettings.get_solo() if use_policies else None
     if rs and rs.min_score and score is not None and score < float(rs.min_score):
         # Still persist the event for audit, but it won't update the record.
         ev = AttendanceEvent.objects.create(
-            student=student, camera=camera, ts=ts_local, score=score, crop_path=crop_path
+            student=student, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
         )
         return ev, None, {"accepted": False, "reason": "below_min_score"}
 
@@ -71,7 +74,7 @@ def _write_from_match(
         camera=camera,
         ts=ts_local,
         score=score,
-        crop_path=crop_path,
+        crop_path=rel_crop,
     )
 
     if not occ:
@@ -96,7 +99,7 @@ def _write_from_match(
             best_seen=ts_local,
             best_score=score or 0.0,
             best_camera=camera,
-            best_crop=crop_path or "",
+            best_crop=rel_crop or "",
             sightings=1,
             status="present",
         ),
@@ -124,8 +127,8 @@ def _write_from_match(
         rec.best_score = score
         rec.best_seen = ts_local
         rec.best_camera = camera
-        if crop_path:
-            rec.best_crop = crop_path
+        if rel_crop:
+            rec.best_crop = rel_crop
         improved = True
 
     rec.last_seen = max(rec.last_seen, ts_local)
@@ -143,6 +146,30 @@ def _resolve_open_occurrence(ts):
         .order_by("start_dt")
         .first()
     )
+
+def _to_media_rel(path: str | None) -> str | None:
+    if not path:
+        return None
+    import os
+    p = os.path.normpath(str(path))
+    mr = os.path.normpath(str(settings.MEDIA_ROOT or ""))
+
+    try:
+        if os.path.isabs(p) and mr:
+            # Is p inside MEDIA_ROOT?
+            if os.path.commonpath([os.path.realpath(p), os.path.realpath(mr)]) == os.path.realpath(mr):
+                rel = os.path.relpath(p, mr)
+                return rel.replace(os.sep, "/")
+    except Exception:
+        pass
+
+    # Fallback: if the string contains '/media/', strip up to it
+    marker = "/media/"
+    i = p.find(marker)
+    if i != -1:
+        return p[i + len(marker):].lstrip("/")
+
+    return p.replace(os.sep, "/")
 
 
 @transaction.atomic

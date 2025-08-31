@@ -74,6 +74,9 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'django.template.context_processors.debug',
+                'django.template.context_processors.static',
+                'django.template.context_processors.media',  # ← add this, If you prefer to keep {{ MEDIA_URL }} working in all templates
             ],
         },
     },
@@ -164,10 +167,10 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
-# STATICFILES_DIRS = [
-#     BASE_DIR / 'static',
-# ]
+STATIC_ROOT = BASE_DIR / 'staticfiles'  # for collectstatic in prod
+STATICFILES_DIRS = [
+    BASE_DIR / 'static',  # python manage.py findstatic attendance/crop_modal.js -v 2
+]
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
@@ -201,7 +204,7 @@ DEFAULT_HB_INTERVAL = 10
 # Base interval the UI/admin assumes
 HEARTBEAT_INTERVAL_SEC = 10
 # Badges (must be increasing: online < stale < offline)
-HEARTBEAT_ONLINE_SEC = 15          # ≈ 1.5 × interval
+HEARTBEAT_ONLINE_SEC = 15  # ≈ 1.5 × interval
 HEARTBEAT_STALE_SEC = 45
 HEARTBEAT_OFFLINE_SEC = 120
 # How often to allow a row in RunnerHeartbeat (for the admin list/dashboard)
@@ -312,3 +315,23 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 2000  # default is 1000
 # 4) (Optional) Non-file POST data kept in memory before streaming
 # Not a cap—just a memory threshold. Leave default or tune if you like.
 # DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+# ---- Attendance score bands & colors ----
+# Bands are inclusive at the lower bound.
+#   RED:    score  < orange_min
+#   ORANGE: score >= orange_min and < yellow_min
+#   YELLOW: score >= yellow_min and < green_min
+#   GREEN:  score >= green_min
+
+ATTENDANCE_SCORE_BANDS = {
+    "green_min": 0.80,
+    "yellow_min": 0.65,
+    "orange_min": 0.50,
+}
+
+# Tailwind-ish, readable on dark UIs
+ATTENDANCE_COLOR_GREEN = "#22c55e"  # green-500
+ATTENDANCE_COLOR_YELLOW = "#facc15"  # yellow-400
+ATTENDANCE_COLOR_ORANGE = "#f59e0b"  # orange-500
+ATTENDANCE_COLOR_RED = "#ef4444"  # red-500

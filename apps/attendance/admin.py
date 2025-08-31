@@ -56,8 +56,6 @@ def _coerce_raw01(value):
     return x
 
 
-
-
 def _first_image_rel(h_code: str) -> str | None:
     folder = student_gallery_dir(h_code)
     if not os.path.isdir(folder):
@@ -191,6 +189,7 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
         enroll_from_folder_action, build_embeddings_pkl_action
     ]
     change_list_template = "admin/attendance/student/change_list.html"
+
     # resource_class = StudentResource
 
     # URL: /admin/attendance/student/upload-inbox/
@@ -314,27 +313,125 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(admin.ModelAdmin):
     date_hierarchy = "best_seen"
-    list_display = ("student_col", "face_preview", "score_col", "period_col", "best_camera", "best_seen")
+    list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
     list_filter = ("period__template", "best_camera")
     search_fields = ("student__h_code", "student__full_name")
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
 
-    def student_col(self, obj):
-        return format_html("<b>{} – {}</b>", obj.student.h_code, obj.student.full_name())
+    readonly_fields = ("best_crop_preview", "best_crop_url",)
 
+    def _image_url(self, path: str | None) -> str | None:
+        """
+        Accepts:
+          - MEDIA-relative path (preferred)
+          - absolute path under MEDIA_ROOT
+          - full http(s) URL
+        Returns a safe web URL.
+        """
+        import os
+        if not path:
+            return None
+        p = str(path)
+
+        # If it's already a full URL, just return it
+        if p.startswith("http://") or p.startswith("https://"):
+            return p
+
+        # If it's an absolute filesystem path under MEDIA_ROOT → make it MEDIA-relative
+        try:
+            mr = os.path.normpath(str(settings.MEDIA_ROOT or ""))
+            if os.path.isabs(p) and mr:
+                if os.path.commonpath([os.path.realpath(p), os.path.realpath(mr)]) == os.path.realpath(mr):
+                    p = os.path.relpath(p, mr)
+                    p = p.replace(os.sep, "/")
+        except Exception:
+            pass
+
+        # Build URL: MEDIA_URL + relative path (and trim stray slashes)
+        base = settings.MEDIA_URL or "/media/"
+        return f"{base.rstrip('/')}/{p.lstrip('/')}"
+
+    # new_tab-based face_preview
+    # def face_preview(self, obj):
+    #     url = self._image_url(getattr(obj, "best_crop", None))
+    #     if not url:
+    #         return "—"
+    #     return format_html(
+    #         '<a href="{}" target="_blank" rel="noopener">'
+    #         '<img src="{}" style="height:72px;border-radius:6px;" /></a>',
+    #         url, url
+    #     )
+
+    # modal-based face_preview
     def face_preview(self, obj):
-        if not obj.best_crop:
+        url = self._image_url(getattr(obj, "best_crop", None))
+        if not url:
             return "—"
-        return format_html('<img src="{}{}" style="height:72px;border-radius:6px;">',
-                           settings.MEDIA_URL, obj.best_crop)
+        # Modal hook: no target, href="#", and data-url for JS
+        # return format_html(
+        #     '<a href="#" class="bisk-img-modal" data-url="{}" title="Open preview">'
+        #     '  <img src="{}" style="height:72px;border-radius:6px;box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
+        #     '</a>',
+        #     url, url
+        # )
+        return format_html(
+            '<span style="display:inline-flex;gap:6px;align-items:center">'
+            '  <a href="#" class="bisk-img-modal" data-url="{}" title="Open preview">'
+            '    <img src="{}" style="height:72px;border-radius:6px;box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
+            '  </a>'
+            '  <a href="{}" target="_blank" rel="noopener" title="Open original" '
+            '     style="text-decoration:none;font-size:18px;line-height:1;">↗︎</a>'
+            '</span>',
+            url, url, url
+        )
+
+    def best_crop_url(self, obj):
+        url = self._image_url(getattr(obj, "best_crop", None))
+        if not url:
+            return "—"
+        return format_html('<a href="{0}" target="_blank" rel="noopener">{0}</a>', url)
+
+    best_crop_url.short_description = "Best crop (URL)"
+
+    # best_crop_preview.short_description = "Best crop"
+
+    def best_crop_preview(self, obj):
+        # reuse the same normalization logic as above (you may refactor into a helper)
+        return self.face_preview(obj)
+
+    best_crop_preview.short_description = "Best crop"
 
     def score_col(self, obj):
-        g = getattr(settings, "ATTENDANCE_SCORE_GREEN", 0.80)
-        o = getattr(settings, "ATTENDANCE_SCORE_ORANGE", 0.60)
-        s = obj.best_score or 0.0
-        color = "lime" if s >= g else ("orange" if s >= o else "red")
-        return format_html('<span style="color:{};font-weight:600;">{:.2f}</span>', color, s)
+        # 1) Coerce to float and pre-format to text to avoid SafeString :f errors
+        s = float(obj.best_score or 0.0)
+        s_txt = f"{s:.2f}"
+
+        # 2) Read bands & colors from settings (with safe defaults)
+        bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
+        g = float(bands.get("green_min", 0.80))
+        y = float(bands.get("yellow_min", 0.65))
+        o = float(bands.get("orange_min", 0.50))
+
+        c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
+        c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
+        c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
+        c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
+
+        # 3) Decide color by band
+        if s >= g:
+            color = c_green
+        elif s >= y:
+            color = c_yellow
+        elif s >= o:
+            color = c_orange
+        else:
+            color = c_red
+
+        return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
+
+    def student_col(self, obj):
+        return format_html("<b>{} – {}</b>", obj.student.h_code, obj.student.full_name())
 
     def period_col(self, obj):
         t = obj.period.template
@@ -342,15 +439,91 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
         e = obj.period.end_dt.astimezone().time().strftime("%H:%M:%S")
         return f"{t.name} ({s} - {e})"
 
+    # ModelAdmin Media.js = ("attendance/crop_modal.js",) asks Django to serve that path via the staticfiles pipeline. That succeeds only if a finder can locate a file with that relative path in:
+    # any app’s static/ directory (e.g. apps/attendance/static/attendance/crop_modal.js), or
+    # any directory listed in STATICFILES_DIRS (e.g. <BASE_DIR>/static/attendance/crop_modal.js).
+    class Media:
+        js = ("attendance/crop_modal.js",)
+
+
+# @admin.register(AttendanceEvent)
+# class AttendanceEventAdmin(admin.ModelAdmin):
+#     date_hierarchy = "ts"
+#     list_display = ("student", "period", "camera", "score", "ts")
+#     list_filter = ("camera", "period__template")
+#     search_fields = ("student__h_code", "student__full_name")
+#     ordering = ("-ts",)
+#     list_select_related = ("student", "period__template", "camera")
 
 @admin.register(AttendanceEvent)
 class AttendanceEventAdmin(admin.ModelAdmin):
     date_hierarchy = "ts"
-    list_display = ("student", "period", "camera", "score", "ts")
+    list_display = ("student_col", "score_col", "period_col", "camera", "ts", "face_preview",)
     list_filter = ("camera", "period__template")
     search_fields = ("student__h_code", "student__full_name")
     ordering = ("-ts",)
     list_select_related = ("student", "period__template", "camera")
+
+    # Reuse the same normalization approach as AttendanceRecord preview
+    def _image_url(self, path: str | None) -> str | None:
+        if not path:
+            return None
+        p = str(path)
+        if p.startswith("http://") or p.startswith("https://"):
+            return p
+        try:
+            import os
+            mr = str(settings.MEDIA_ROOT or "")
+            if os.path.isabs(p) and mr and os.path.normpath(p).startswith(os.path.normpath(mr)):
+                p = os.path.relpath(p, mr).replace(os.sep, "/")
+        except Exception:
+            pass
+        base = settings.MEDIA_URL or "/media/"
+        return f"{base.rstrip('/')}/{p.lstrip('/')}"
+
+    def face_preview(self, obj):
+        url = self._image_url(getattr(obj, "crop_path", None))
+        if not url:
+            return "—"
+        # modal on click + a small ↗︎ to open original
+        return format_html(
+            '<span style="display:inline-flex;gap:6px;align-items:center">'
+            '  <a href="#" class="bisk-img-modal" data-url="{0}" title="Open preview">'
+            '    <img src="{0}" style="height:60px;border-radius:6px;box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
+            '  </a>'
+            '  <a href="{0}" target="_blank" rel="noopener" title="Open original" '
+            '     style="text-decoration:none;font-size:16px;line-height:1;">↗︎</a>'
+            '</span>',
+            url
+        )
+
+    def student_col(self, obj):
+        return format_html("<b>{} — {}</b>", obj.student.h_code, obj.student.full_name())
+
+    def score_col(self, obj):
+        s = float(obj.score or 0.0);
+        s_txt = f"{s:.2f}"
+        bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
+        g = float(bands.get("green_min", 0.80));
+        y = float(bands.get("yellow_min", 0.65));
+        o = float(bands.get("orange_min", 0.50))
+        c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
+        c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
+        c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
+        c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
+        color = c_green if s >= g else c_yellow if s >= y else c_orange if s >= o else c_red
+        return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
+
+    def period_col(self, obj):
+        if not obj.period:
+            return "—"
+        t = obj.period.template
+        s = obj.period.start_dt.astimezone().time().strftime("%H:%M:%S")
+        e = obj.period.end_dt.astimezone().time().strftime("%H:%M:%S")
+        return f"{t.name} ({s} - {e})"
+
+    class Media:
+        js = ("attendance/crop_modal.js",)
 
 
 @admin.register(RecognitionSettings)
@@ -633,7 +806,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         )
         return format_html('<div class="bisk-cell">{more}{thumbs}</div><div style="font-size: 20px;">{chips}</div>',
                            thumbs=format_html("{}", thumbs), chips=chips, more=more)
-
 
     thumbs_with_chips.short_description = "Used images • chips"
 
