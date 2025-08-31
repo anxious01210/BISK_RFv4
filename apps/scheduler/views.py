@@ -117,10 +117,23 @@ def _collect_system_info():
     cache = caches["default"]
     # CPU & load
     cpu_percent = psutil.cpu_percent(interval=0.0)
+
+    # >>> ADD: cores/threads
+    cpu_threads = psutil.cpu_count() or 1
+    cpu_cores = psutil.cpu_count(logical=False) or cpu_threads
+
     try:
         load1, load5, load15 = os.getloadavg()
     except (AttributeError, OSError):
         load1 = load5 = load15 = None
+
+    # >>> ADD: helper and percentages
+    def _to_pct(v, denom):
+        try:
+            return max(0.0, (float(v) / float(denom)) * 100.0)
+        except Exception:
+            return 0.0
+
     # RAM & disk
     vm = psutil.virtual_memory()
     du = shutil.disk_usage("/")
@@ -203,7 +216,14 @@ def _collect_system_info():
         "host": platform.node(),
         "host_name": platform.node(),
         "cpu_percent": cpu_percent,
+        "cpu_threads": cpu_threads,  # <<< ADD
+        "cpu_cores": cpu_cores,  # <<< ADD
         "load": (load1, load5, load15),
+        "load_pct": (  # <<< ADD
+            _to_pct(load1, cpu_threads) if load1 is not None else None,
+            _to_pct(load5, cpu_threads) if load5 is not None else None,
+            _to_pct(load15, cpu_threads) if load15 is not None else None,
+        ),
         "ram": {"used": vm.used, "total": vm.total, "percent": vm.percent},
         "disk": {"used": du.used, "total": du.total, "percent": round(du.used / du.total * 100, 1)},
         "gpus": gpus,

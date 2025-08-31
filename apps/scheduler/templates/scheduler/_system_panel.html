@@ -352,22 +352,27 @@
         <div class="bisk-card bisk-col-6">
             <div class="bisk-h">Host</div>
             <div class="bisk-kv">
-                <div>CPU</div>
+                <!-- CPU row -->
+                <div>CPU ({{ cpu_cores }}C/{{ cpu_threads }}T):</div>
                 <div>{{ cpu_percent|floatformat:1 }}%</div>
 
-                <div>Load (1/5/15m)</div>
-                <div>
-                    {% if load.0 %}
-                        {{ load.0|floatformat:2 }} / {{ load.1|floatformat:2 }} / {{ load.2|floatformat:2 }}
+                <!-- Load row -->
+                <div>Load (1/5/15m):</div>
+                <div title="Load average = runnable processes over 1, 5, 15 minutes. Scaled relative to {{ cpu_threads }} CPUs ({{ cpu_cores }} cores / {{ cpu_threads }} threads). 100% ≈ all threads busy; >100% means runnable queue backlog.">
+                    {% if load.0 is not None %}
+                        {{ load.0|floatformat:2 }} ({{ load_pct.0|floatformat:0 }}%) /
+                        {{ load.1|floatformat:2 }} ({{ load_pct.1|floatformat:0 }}%) /
+                        {{ load.2|floatformat:2 }} ({{ load_pct.2|floatformat:0 }}%)
                     {% else %}
                         <span class="bisk-muted">n/a</span>
                     {% endif %}
                 </div>
 
-                <div>RAM</div>
+
+                <div>RAM:</div>
                 <div>{{ ram.used|filesizeformat }} / {{ ram.total|filesizeformat }} ({{ ram.percent }}%)</div>
 
-                <div>Disk /</div>
+                <div>Disk:</div>
                 <div>{{ disk.used|filesizeformat }} / {{ disk.total|filesizeformat }} ({{ disk.percent }}%)</div>
             </div>
         </div>
@@ -601,7 +606,7 @@
                         <th>Score</th>
                         <th>Camera</th>
                         <th>Period</th>
-                        <th>Time</th>
+                        <th>Date & Time</th>
                         <th>Thumb</th>
                     </tr>
                     </thead>
@@ -622,7 +627,10 @@
                                         {{ e.period.template.name }}
                                     {% else %}—{% endif %}
                                 </td>
-                                <td>{{ e.ts|date:"H:i:s" }}</td>
+                                {#                                <td>{{ e.ts|date:"H:i:s" }}</td>#}
+                                {#                                <td>{{ e.ts|date:"N j, Y, P" }}</td>#}
+                                <td>{{ e.ts|date:"DATETIME_FORMAT" }}</td>
+
                                 <td>
                                     {% if e.crop_path %}
                                         <span style="display:inline-flex;align-items:center;gap:6px;">

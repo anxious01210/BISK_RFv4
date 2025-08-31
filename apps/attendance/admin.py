@@ -2,7 +2,7 @@
 from django.urls import path, reverse
 from django.shortcuts import redirect, render, get_object_or_404
 from django.contrib import admin, messages
-from django.utils.html import format_html
+from django.utils.html import format_html, escape, conditional_escape
 from django.conf import settings
 from django.utils import timezone
 from django import forms
@@ -621,7 +621,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         "used_images",
         "embedding_norm", "embedding_sha256",
         "arcface_model", "provider",
-        "enroll_runtime_ms", "enroll_notes",
+        "enroll_runtime_ms", "enroll_notes_full",
+        # "enroll_notes",
         "source_path",
     )
 
@@ -637,10 +638,54 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                 "used_images",
                 "embedding_norm", "embedding_sha256",
                 "arcface_model", "provider",
-                "enroll_runtime_ms", "enroll_notes",
+                "enroll_runtime_ms", "enroll_notes_full",
+                # "enroll_notes",
             )
         }),
     )
+
+    def enroll_notes_full(self, obj):
+        txt = obj.enroll_notes or ""
+        # preserve newlines, don’t truncate, keep it readable
+        html = f"<div style='white-space:pre-wrap;max-width:80ch'>{escape(txt)}</div>"
+        return format_html(html)
+
+    enroll_notes_full.short_description = "Enroll notes"
+
+    # def enroll_notes_full(self, obj):
+    #     txt = obj.enroll_notes or ""
+    #     # textarea cannot be truncated by container CSS; preserves newlines and allows scrolling
+    #     return format_html(
+    #         "<textarea readonly rows='8' style='width:100%;white-space:pre-wrap;"
+    #         "font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;'>"
+    #         "{}</textarea>",
+    #         conditional_escape(txt),
+    #     )
+    #
+    # enroll_notes_full.short_description = "Enroll notes"
+
+    # def enroll_notes_full(self, obj):
+    #     txt = obj.enroll_notes or ""
+    #     safe = conditional_escape(txt)
+    #
+    #     # Heuristic: fit initial height to content lines, within sensible bounds
+    #     # (so it opens 'just right' most of the time).
+    #     lines = txt.count("\n") + 1
+    #     rows = max(4, min(lines, 24))  # min 4 rows, max 24 rows
+    #
+    #     return format_html(
+    #         "<textarea readonly rows='{rows}' wrap='soft' "
+    #         "style='display:block;width:200%;max-width:100%;box-sizing:border-box;"
+    #         "white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;"
+    #         "overflow-x:hidden;resize:vertical;"
+    #         "font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "
+    #         "Liberation Mono, monospace;'>"
+    #         "{content}</textarea>",
+    #         rows=rows,
+    #         content=safe,
+    #     )
+    #
+    # enroll_notes_full.short_description = "Enroll notes"
 
     def student_link(self, obj):
         return format_html("<b>{}</b>", getattr(obj.student, "h_code", "-"))
