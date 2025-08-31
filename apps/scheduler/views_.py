@@ -37,8 +37,6 @@ def enforce_now(request):
         f"desired {res.desired_count}, running {res.running_count}, pruned {res.pruned_count}."
     )
     return redirect(next_url)
-
-
 # def enforce_now(request):
 #     if not cache.add("bisk:enforce:now", "1", timeout=10):
 #         messages.warning(request, "Please wait ~10s between manual enforces.")
@@ -131,6 +129,7 @@ def _collect_system_info():
     # Use the same thresholds everywhere (dashboard + admin)
     hb_thresholds = getattr(settings, "HEARTBEAT_THRESHOLDS", {"online": 15, "stale": 45, "offline": 120}, )
 
+
     # ---- Runner Summary rows (latest heartbeat per camera/profile) ----
     procs = (RunningProcess.objects
              .select_related('camera', 'profile')
@@ -145,7 +144,7 @@ def _collect_system_info():
     procs = procs.annotate(
         hb_target_fps=Subquery(_latest_hb.values('target_fps')[:1]),
         hb_snapshot_every=Subquery(_latest_hb.values('snapshot_every')[:1]),
-        hb_fps=Subquery(_latest_hb.values('fps')[:1]),  # runner-reported processed/observed fps (if sent)
+        hb_fps=Subquery(_latest_hb.values('fps')[:1]),     # runner-reported processed/observed fps (if sent)
         hb_processed_fps=Subquery(_latest_hb.values('processed_fps')[:1]),
         hb_ts=Subquery(_latest_hb.values('ts')[:1]),
     )
@@ -161,20 +160,14 @@ def _collect_system_info():
         else:
             label = f'#{p.id}'
 
-        # Prefer the RP's own last_heartbeat (fresh every HB), fallback to latest HB row ts
-        rp_ts = getattr(p, 'last_heartbeat', None) or getattr(p, 'hb_ts', None)
-        if rp_ts:
-            try:
-                hb_age_s = max(0, int((now_ts - rp_ts).total_seconds()))
-            except Exception:
-                hb_age_s = None
-        # hb_ts = getattr(p, 'hb_ts', None)
-        # hb_age_s = None
-        # if hb_ts:
-        #     try:
-        #         hb_age_s = max(0, int((now_ts - hb_ts).total_seconds()))
-        #     except Exception:
-        #         hb_age_s = None
+        hb_ts = getattr(p, "hb_ts", None)
+        rp_ts = getattr(p, "last_heartbeat", None) or getattr(p, "last_heartbeat_at", None)
+        if rp_ts and (not hb_ts or rp_ts > hb_ts):
+            hb_ts = rp_ts
+
+        hb_age_s = None
+        if hb_ts:
+            hb_age_s = max(0, int((now_ts - hb_ts).total_seconds()))
 
         runner_rows.append({
             "id": p.id,
@@ -185,10 +178,8 @@ def _collect_system_info():
             "camera_fps": getattr(p, "hb_fps", None),
             "processed_fps": getattr(p, "hb_processed_fps", None),
             "snapshot_every": getattr(p, "hb_snapshot_every", None),
-            # "hb_ts": hb_ts,
-            # "hb_age_s": hb_age_s,
-            "hb_ts": rp_ts,  # <<< now RP freshness
-            "hb_age_s": hb_age_s,  # <<< computed from RP freshness
+            "hb_ts": hb_ts,
+            "hb_age_s": hb_age_s,
         })
 
     # paused cameras
@@ -261,10 +252,9 @@ def admin_system(request):
 # --- HTMX partial: system panel only ---
 from django.views.decorators.http import require_GET
 
-
 @require_GET
 def system_panel_partial(request):
-    ctx = _collect_system_info()  # you already have this
+    ctx = _collect_system_info()      # you already have this
 
     # ---------- Attendance widgets (today) ----------
     today = timezone.localdate()
@@ -294,8 +284,8 @@ def system_panel_partial(request):
 
     # Recent recognitions (last 10 events)
     recent_events = (AttendanceEvent.objects
-    .select_related("student", "camera", "period__template")
-    .order_by("-id")[:recent_limit])
+                     .select_related("student", "camera", "period__template")
+                     .order_by("-id")[:recent_limit])
 
     ctx.update({
         "occ_rows": [(p, present_by_period.get(p.id, 0)) for p in periods],

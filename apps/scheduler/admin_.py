@@ -506,14 +506,29 @@ class RunningProcessAdmin(admin.ModelAdmin):
 
     snapshot_preview.short_description = "Snapshot"
 
+    # def status_badge(self, obj):
+    #     ts = obj.last_heartbeat
+    #     # live = periodic._pid_alive(obj.pid)
+    #     live = _enf._pid_alive(obj.pid)
+    #     if not ts:
+    #         return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
+    #     age = (timezone.now() - ts).total_seconds()
+    #     if live and age <= ONLINE:  # <-- uses your settings-backed thresholds
+    #         return format_html("<span style='color:#16a34a;font-weight:600'>Online</span>")
+    #     if age > OFFLINE:
+    #         return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
+    #     return format_html("<span style='color:#d97706;font-weight:600'>Stale</span>")
+
+    # apps/scheduler/admin.py
+
     def status_badge(self, obj):
-        ts = obj.last_heartbeat
-        # live = periodic._pid_alive(obj.pid)
+        # choose the freshest RP timestamp available
+        ts = getattr(obj, "last_heartbeat", None) or getattr(obj, "last_heartbeat_at", None)
         live = _enf._pid_alive(obj.pid)
         if not ts:
             return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
         age = (timezone.now() - ts).total_seconds()
-        if live and age <= ONLINE:  # <-- uses your settings-backed thresholds
+        if live and age <= ONLINE:
             return format_html("<span style='color:#16a34a;font-weight:600'>Online</span>")
         if age > OFFLINE:
             return format_html("<span style='color:#b91c1c;font-weight:600'>Offline</span>")
@@ -710,13 +725,11 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
 
     # in RunnerHeartbeatAdmin.status_col (apps/scheduler/admin.py)
     def status_col(self, obj):
-        # Use the RunningProcess freshness, not HB ts
         rp = (RunningProcess.objects
               .filter(camera=obj.camera, profile=obj.profile)
-              .order_by("-id")
-              .first())
+              .order_by("-id").first())
         live = bool(rp and _enf._pid_alive(rp.pid))
-        # pick RP last_heartbeat first; fallback to HB ts if RP missing
+        # Prefer RP freshness
         ts = getattr(rp, "last_heartbeat", None) or obj.ts
         secs = (timezone.now() - ts).total_seconds()
 

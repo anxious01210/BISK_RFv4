@@ -2,10 +2,9 @@ from __future__ import annotations
 # apps/attendance/services.py
 
 from datetime import timedelta, datetime
-from typing import Optional, Tuple
-from django.db import transaction
 from django.db.models import F
-from django.utils.timezone import now
+from django.db import transaction
+from typing import Optional, Tuple
 from django.utils import timezone
 
 from .models import (
@@ -16,6 +15,124 @@ from .models import (
     RecognitionSettings,
     PeriodTemplate,
 )
+
+
+# --- Private: resolve today's occurrence that contains ts (inclusive) ---
+def _resolve_occurrence(ts):
+    ts_local = timezone.localtime(ts if ts else timezone.now())
+    from apps.attendance.models import PeriodOccurrence
+    return (
+        PeriodOccurrence.objects
+        .filter(
+            is_school_day=True,
+            start_dt__lte=ts_local,
+            end_dt__gte=ts_local,
+        )
+        .select_related("template")
+        .first()
+    )
+
+
+# --- Private: single source of truth for Events + Records upsert ---
+@transaction.atomic
+def _write_from_match(
+        *,
+        student,
+        camera,  # Camera instance (FK), not a str
+        score: float,
+        ts=None,
+        crop_path: Optional[str] = None,
+        use_policies: bool = True,
+):
+    """
+    Creates AttendanceEvent (always), attaches PeriodOccurrence if found,
+    and upserts AttendanceRecord(student, period) with first/last/best fields.
+    Returns: (event, record_or_None, meta_flags_dict)
+    """
+    from apps.attendance.models import AttendanceEvent, AttendanceRecord, RecognitionSettings
+
+    ts_local = timezone.localtime(ts if ts else timezone.now())
+
+    # Policies (min_score, re_register_window_sec, min_improve_delta, max_periods_per_day, ...)
+    rs = RecognitionSettings.get_solo() if use_policies else None
+    if rs and rs.min_score and score is not None and score < float(rs.min_score):
+        # Still persist the event for audit, but it won't update the record.
+        ev = AttendanceEvent.objects.create(
+            student=student, camera=camera, ts=ts_local, score=score, crop_path=crop_path
+        )
+        return ev, None, {"accepted": False, "reason": "below_min_score"}
+
+    occ = _resolve_occurrence(ts_local)
+
+    # Always log the event (even if no period window)
+    ev = AttendanceEvent.objects.create(
+        student=student,
+        period=occ,
+        camera=camera,
+        ts=ts_local,
+        score=score,
+        crop_path=crop_path,
+    )
+
+    if not occ:
+        return ev, None, {"accepted": False, "reason": "no_period"}
+
+    # Optional policy: max periods per day (skip if exceeded)
+    if rs and getattr(rs, "max_periods_per_day", None):
+        # Count distinct records for this student on this date
+        day_records = AttendanceRecord.objects.filter(
+            student=student, period__date=occ.date
+        ).values_list("period_id", flat=True).distinct().count()
+        if day_records >= int(rs.max_periods_per_day):
+            return ev, None, {"accepted": False, "reason": "max_periods_reached"}
+
+    # Upsert the per-period record
+    rec, created = AttendanceRecord.objects.get_or_create(
+        student=student,
+        period=occ,
+        defaults=dict(
+            first_seen=ts_local,
+            last_seen=ts_local,
+            best_seen=ts_local,
+            best_score=score or 0.0,
+            best_camera=camera,
+            best_crop=crop_path or "",
+            sightings=1,
+            status="present",
+        ),
+    )
+    if created:
+        return ev, rec, {"accepted": True, "created": True}
+
+    # De-dup / re-register window + improvement delta
+    if rs and getattr(rs, "re_register_window_sec", None):
+        delta = (ts_local - rec.last_seen).total_seconds()
+        if delta < float(rs.re_register_window_sec):
+            # only update if score improves by min_improve_delta (if set)
+            if getattr(rs, "min_improve_delta", None):
+                need = float(rs.min_improve_delta)
+                if (score or 0.0) < (rec.best_score or 0.0) + need:
+                    # Just update last_seen & sightings; keep best as-is
+                    rec.last_seen = max(rec.last_seen, ts_local)
+                    rec.sightings = (rec.sightings or 0) + 1
+                    rec.save(update_fields=["last_seen", "sightings"])
+                    return ev, rec, {"accepted": True, "updated": True, "improved": False}
+
+    # Default: update last_seen, and improve best if score is higher
+    improved = False
+    if score is not None and (rec.best_score is None or score > rec.best_score):
+        rec.best_score = score
+        rec.best_seen = ts_local
+        rec.best_camera = camera
+        if crop_path:
+            rec.best_crop = crop_path
+        improved = True
+
+    rec.last_seen = max(rec.last_seen, ts_local)
+    rec.sightings = (rec.sightings or 0) + 1
+    rec.status = rec.status or "present"
+    rec.save()
+    return ev, rec, {"accepted": True, "updated": True, "improved": improved}
 
 
 def _resolve_open_occurrence(ts):
@@ -30,100 +147,21 @@ def _resolve_open_occurrence(ts):
 
 @transaction.atomic
 def record_recognition(
-        *,
-        student: Student,
-        score: float,
-        camera: str,
-        ts=None,
-        crop_path: Optional[str] = None
-) -> Tuple[AttendanceEvent, Optional[AttendanceRecord]]:
+        *, student: "Student", score: float, camera, ts=None, crop_path: Optional[str] = None
+):
     """
-    Append an AttendanceEvent and, if above threshold and inside a period window,
-    create/upgrade the AttendanceRecord for (student, occurrence).
-
-    Returns: (event, record_or_none)
+    Public entrypoint used by recognizers when they already have a Student instance.
+    Normalizes timestamp to localtime, expects `camera` to be a Camera model.
+    Returns (AttendanceEvent, AttendanceRecord|None).
     """
-    ts = ts or now()
-    cfg = RecognitionSettings.get_solo()
-
-    min_score = cfg.min_score
-    improve_delta = cfg.min_improve_delta or 0.0
-    window = timedelta(seconds=cfg.re_register_window_sec or 0)
-
-    occ = _resolve_open_occurrence(ts)
-
-    # Always write the event (period may be None if no open occurrence)
-    ev = AttendanceEvent.objects.create(
+    ev, rec, _meta = _write_from_match(
         student=student,
-        period=occ,
         camera=camera,
-        ts=ts,
         score=score,
+        ts=ts,
         crop_path=crop_path,
+        use_policies=True,
     )
-
-    # If below threshold or no matching period window, stop after event.
-    if score < min_score or not occ:
-        return ev, None
-
-    # Enforce close-out: do not upgrade past end_dt + window (but creation inside window is OK).
-    allow_upgrades_until = occ.end_dt + window
-
-    # Enforce optional "max per day" cap BEFORE creating a new Record.
-    # NOTE: If the record for THIS occurrence already exists, we will update it (cap is about new periods in the same day).
-    cap = getattr(cfg, "max_periods_per_day", None)
-    if cap:
-        present_today = (
-            AttendanceRecord.objects
-            .filter(student=student, period__date=occ.date, status="present")
-            .exclude(period=occ)  # exclude this occurrence (we're about to create/update it anyway)
-            .count()
-        )
-        if present_today >= cap:
-            # Mark overflow for this occurrence (record exists or not)
-            rec, _ = AttendanceRecord.objects.get_or_create(
-                student=student, period=occ,
-                defaults={"status": "overflow"}
-            )
-            # If a 'present' record already exists, we do not downgrade it here.
-            if rec.status != "present":
-                rec.status = "overflow"
-                rec.save(update_fields=["status"])
-            return ev, rec
-
-    # Create or update the single record for (student, occurrence)
-    rec, created = AttendanceRecord.objects.get_or_create(
-        student=student, period=occ,
-        defaults=dict(
-            first_seen=ts,
-            last_seen=ts,
-            best_seen=ts,
-            best_score=score,
-            best_camera=camera,
-            best_crop=crop_path,
-            sightings=1,
-            status="present",
-        )
-    )
-
-    if created:
-        return ev, rec
-
-    # Update existing record
-    # Always bump last_seen and sightings
-    rec.last_seen = ts
-    rec.sightings = (rec.sightings or 0) + 1
-
-    # Only upgrade best_* inside window and if score is materially better
-    if ts <= allow_upgrades_until and (score >= (rec.best_score or 0) + improve_delta):
-        rec.best_score = score
-        rec.best_seen = ts
-        rec.best_camera = camera
-        if crop_path:
-            # Respect delete_old_cropped if you later implement async deletion
-            rec.best_crop = crop_path
-
-    rec.save(update_fields=["last_seen", "sightings", "best_score", "best_seen", "best_camera", "best_crop"])
     return ev, rec
 
 
@@ -154,77 +192,34 @@ def _get_settings() -> RecognitionSettings:
     # If no row, fall back to defaults of the model
     return RecognitionSettings.objects.first() or RecognitionSettings()
 
+
 def _find_occurrence(ts) -> Optional[PeriodOccurrence]:
     return (PeriodOccurrence.objects
             .filter(start_dt__lte=ts, end_dt__gte=ts, is_school_day=True)
             .order_by("start_dt")
             .first())
 
+
 @transaction.atomic
-def ingest_match(*, h_code: str, score: float, ts=None, camera=None, crop_path: str = "") -> dict:
+def ingest_match(
+        *, h_code: str, score: float, camera, ts=None, crop_path: Optional[str] = None
+) -> dict:
     """
-    Upsert a recognition into AttendanceRecord (best score within the active PeriodOccurrence).
-    Also stores a raw AttendanceEvent for auditing.
+    Public entrypoint used by pipelines that receive H-code and need us to resolve the Student.
+    Returns a dictionary of flags for quick feedback.
     """
-    ts = ts or timezone.now()
-    st = _get_settings()
+    from apps.attendance.models import Student
+    try:
+        student = Student.objects.get(h_code=h_code)
+    except Student.DoesNotExist:
+        return {"ok": False, "error": "student_not_found", "h_code": h_code}
 
-    # 1) threshold gate
-    if float(score) < float(st.min_score or 0.0):
-        return {"accepted": False, "reason": f"score<{st.min_score}"}
-
-    # 2) student
-    student = Student.objects.filter(h_code=h_code, is_active=True).first()
-    if not student:
-        return {"accepted": False, "reason": "unknown student"}
-
-    # 3) which period?
-    period = _find_occurrence(ts)
-    if not period:
-        AttendanceEvent.objects.create(student=student, period=None, camera=camera, ts=ts, score=score, crop_path=crop_path)
-        return {"accepted": False, "reason": "no active period", "logged_event": True}
-
-    # 4) raw event
-    AttendanceEvent.objects.create(student=student, period=period, camera=camera, ts=ts, score=score, crop_path=crop_path)
-
-    # 5) record upsert (best score per period)
-    rec, created = AttendanceRecord.objects.select_for_update().get_or_create(
-        student=student, period=period,
-        defaults=dict(
-            first_seen=ts, last_seen=ts, best_seen=ts, best_score=score,
-            best_camera=camera, best_crop=crop_path, sightings=1, status="present",
-        )
+    ev, rec, meta = _write_from_match(
+        student=student,
+        camera=camera,
+        score=score,
+        ts=ts,
+        crop_path=crop_path,
+        use_policies=True,
     )
-    if created:
-        return {"accepted": True, "created": True, "improved": True, "best_score": float(score)}
-
-    # re-register window logic
-    window = int(st.re_register_window_sec or 0)
-    recently_seen = (window > 0 and rec.last_seen and (ts - rec.last_seen).total_seconds() < window)
-
-    rec.last_seen = ts
-    rec.sightings = F("sightings") + 1
-
-    # require minimum improvement to replace best
-    improved = float(score) > float(rec.best_score or 0.0) + float(st.min_improve_delta or 0.0)
-    held_by_window = bool(recently_seen and improved)
-    if improved and not recently_seen:
-        rec.best_score = score
-        rec.best_seen = ts
-        rec.best_camera = camera
-        if crop_path:
-            rec.best_crop = crop_path
-
-    rec.save(update_fields=["last_seen", "sightings", "best_score", "best_seen", "best_camera", "best_crop"])
-    rec.refresh_from_db()
-    return {
-        "accepted": True,
-        "created": False,
-        # improved means “higher than current best by delta”
-        "improved": bool(improved),
-        # updated_best says whether best_* actually changed this call
-        "updated_best": bool(improved and not recently_seen),
-        # explicitly say if we held the update due to the de-dup window
-        "held_by_window": held_by_window,
-        "best_score": float(rec.best_score or 0.0),
-    }
+    return {"ok": True, "event_id": ev.id, "record_id": getattr(rec, "id", None), **meta}

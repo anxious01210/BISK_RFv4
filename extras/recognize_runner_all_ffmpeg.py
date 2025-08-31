@@ -233,12 +233,65 @@ def iter_mjpeg_frames(*, ffmpeg: str, rtsp_url: str, transport: str, fps: float,
         _kill()
 
 
-# ---------- HTTP heartbeat ----------
+# # ---------- HTTP heartbeat ----------
+# def post_json(url: str, payload: dict, key: str, timeout: float = 3.0) -> None:
+#     import urllib.request
+#     data = json.dumps(payload).encode("utf-8")
+#     req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-BISK-KEY": key})
+#     urllib.request.urlopen(req, timeout=timeout).read()
+
 def post_json(url: str, payload: dict, key: str, timeout: float = 3.0) -> None:
     import urllib.request
     data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json", "X-BISK-KEY": key})
-    urllib.request.urlopen(req, timeout=timeout).read()
+    req = urllib.request.Request(
+        url, data=data,
+        headers={"Content-Type": "application/json", "X-BISK-KEY": key}
+    )
+    # LOG before sending
+    print(f"[HB->] {url} cam={payload.get('camera_id') or payload.get('camera')} "
+          f"pid={payload.get('pid')} fps={payload.get('camera_fps') or payload.get('fps')} "
+          f"snap={payload.get('snapshot_every')}", flush=True)
+    try:
+        resp = urllib.request.urlopen(req, timeout=timeout)
+        body = resp.read()
+        # LOG after success
+        print(f"[HB<-] {resp.getcode()} bytes={len(body)}", flush=True)
+    except Exception as e:
+        # LOG on failure
+        print(f"[HB!!] send failed: {e}", flush=True)
+        raise
+
+
+
+def hb_worker(stop_evt, args, cam_id: int, prof_id: int, get_metrics=None):
+    """Posts a heartbeat every args.hb_interval seconds.
+    get_metrics() may return (camera_fps, processed_fps), else we send zeros."""
+    while not stop_evt.is_set():
+        try:
+            cam_fps, proc_fps = (0.0, 0.0)
+            if callable(get_metrics):
+                try:
+                    cam_fps, proc_fps = get_metrics()
+                except Exception:
+                    pass
+            payload = {
+                "camera_id": cam_id,
+                "profile_id": prof_id,
+                "pid": os.getpid(),
+                "camera_fps": float(cam_fps),
+                "processed_fps": float(proc_fps),
+                "snapshot_every": int(getattr(args, "snapshot_every", 10) or 10),
+                "detected": int(HB_COUNTS.get("detected", 0)),
+                "matched": int(HB_COUNTS.get("matched", 0)),
+                "latency_ms": 0.0,
+            }
+            post_json(args.hb, payload, args.hb_key, timeout=3.0)
+        except Exception:
+            # post_json already logs; keep loop alive
+            pass
+        # Sleep, but wake early if stopping
+        stop_evt.wait(float(getattr(args, "hb_interval", 10) or 10))
+
 
 
 # ---------- Recognition loop ----------
@@ -402,6 +455,16 @@ def main():
     snap_path = snap_dir / f"{cam_id}.jpg"
     ff_proc = spawn_snapshotter(args, args.rtsp, str(snap_path))
 
+    # ---- START HB THREAD ----
+    stop_hb = threading.Event()
+    hb_thread = threading.Thread(
+        target=hb_worker,
+        args=(stop_hb, args, cam_id, prof_id, None),  # no metrics yet
+        daemon=True,
+    )
+    hb_thread.start()
+    # -------------------------
+
     # Load gallery
     gal_M, gal_meta = load_gallery_from_npy()
 
@@ -453,6 +516,13 @@ def main():
                 ff_proc.kill()
         except Exception:
             pass
+        # ---- STOP HB THREAD ----
+        try:
+            stop_hb.set()
+            hb_thread.join(timeout=2.0)
+        except Exception:
+            pass
+        # ------------------------
 
     # Send one final heartbeat on exit
     payload = {
