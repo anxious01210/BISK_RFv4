@@ -293,6 +293,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
         "uptime_short",
         "age_secs",
         "fps_latest",
+        "target_fps_col", "camera_fps_col", "processed_fps_col",  # NEW
         "mem_mb",
         "threads",
         "children",
@@ -321,7 +322,8 @@ class RunningProcessAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {
-            "fields": ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "runner_flavor", "meta_pretty"),
+            "fields": ("camera", "profile", "pid", "status", "started_at", "last_heartbeat", "runner_flavor",
+                       "meta_pretty"),
             "description": format_html(
                 "<div style='margin:6px 0 10px'>"
                 "<b>What is this?</b> A live record of a runner process the scheduler started.<br>"
@@ -359,6 +361,40 @@ class RunningProcessAdmin(admin.ModelAdmin):
         }),
     )
 
+    def target_fps_col(self, obj):
+        # Prefer RP live field, fallback latest HB
+        if getattr(obj, "target_fps", None) is not None:
+            return round(obj.target_fps, 1)
+        hb = (RunnerHeartbeat.objects
+              .filter(camera=obj.camera, profile=obj.profile)
+              .only("target_fps").order_by("-id").first())
+        return round(getattr(hb, "target_fps", 0.0) or 0.0, 1)
+
+    target_fps_col.short_description = "Target FPS"
+
+    def camera_fps_col(self, obj):
+        v = getattr(obj, "camera_fps", None)
+        if v is not None and v > 0:
+            return round(v, 1)
+        hb = (RunnerHeartbeat.objects
+              .filter(camera=obj.camera, profile=obj.profile, fps__gt=0)
+              .only("fps").order_by("-id").first())
+        return round(getattr(hb, "fps", 0.0) or 0.0, 1)
+
+    camera_fps_col.short_description = "Camera FPS"
+
+    def processed_fps_col(self, obj):
+        v = getattr(obj, "processed_fps", None)
+        if v is not None and v > 0:
+            return round(v, 1)
+        hb = (RunnerHeartbeat.objects
+              .filter(camera=obj.camera, profile=obj.profile, processed_fps__gt=0)
+              .only("processed_fps").order_by("-id").first())
+        pf = getattr(hb, "processed_fps", None)
+        return round(pf, 1) if pf is not None else "—"
+
+    processed_fps_col.short_description = "Processed FPS"
+
     # Simple indicator of which Python script the Enforcer used
     def runner_flavor(self, obj):
         try:
@@ -366,6 +402,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
             return getattr(settings, "RUNNER_IMPL", "ffmpeg_all")
         except Exception:
             return "unknown"
+
     runner_flavor.short_description = "Runner flavor"
 
     def last_error_badge(self, obj):
@@ -415,12 +452,14 @@ class RunningProcessAdmin(admin.ModelAdmin):
     age_secs.short_description = "Age (s)"
 
     def fps_latest(self, obj):
+        # Prefer RP live mirror (already last-non-zero); fallback to last HB with fps>0
+        if getattr(obj, "camera_fps", None) not in (None, 0):
+            return round(obj.camera_fps, 1)
         hb = (RunnerHeartbeat.objects
-              .filter(camera=obj.camera, profile=obj.profile)
-              .only("fps", "ts")
-              .order_by("-ts")
-              .first())
-        return getattr(hb, "fps", None)
+              .filter(camera=obj.camera, profile=obj.profile, fps__gt=0)
+              .only("fps").order_by("-ts").first())
+        v = getattr(hb, "fps", None)
+        return round(v, 1) if v is not None else "—"
 
     fps_latest.short_description = "FPS"
 
@@ -633,8 +672,14 @@ class RunnerHeartbeatForm(forms.ModelForm):
 @admin.register(RunnerHeartbeat)
 class RunnerHeartbeatAdmin(admin.ModelAdmin):
     form = RunnerHeartbeatForm
-    list_display = ("camera", "profile", "ts", "fps", "target_fps", "snapshot_every", "detected", "matched",
-                    "latency_ms", "last_error", "age_col", "status_col")
+    # list_display = (
+    #     "camera", "profile", "ts", "fps", "target_fps", "snapshot_every", "detected", "matched",
+    #     "latency_ms", "last_error", "age_col", "status_col"
+    # )
+    list_display = (
+        "camera", "profile", "ts", "fps", "processed_fps", "target_fps", "snapshot_every",
+        "detected", "matched", "latency_ms", "last_error", "age_col", "status_col"
+    )
     list_filter = ("profile", "camera")
     search_fields = ("camera__name", "profile__name", "last_error")
     ordering = ("-ts",)

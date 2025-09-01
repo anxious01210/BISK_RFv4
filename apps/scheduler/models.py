@@ -83,6 +83,11 @@ class RunningProcess(models.Model):
     cpu_affinity = models.CharField(max_length=100, blank=True, default="")
     last_error = models.CharField(max_length=512, blank=True, default="")  # most recent friendly error from runner
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)  # runner pings update this
+    # Live telemetry mirrored from latest HB (optional, for admin tables)
+    camera_fps = models.FloatField(null=True, blank=True)
+    processed_fps = models.FloatField(null=True, blank=True)
+    target_fps = models.FloatField(null=True, blank=True)
+    snapshot_every = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         indexes = [models.Index(fields=["camera", "profile"])]

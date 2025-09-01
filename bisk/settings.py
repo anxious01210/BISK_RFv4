@@ -161,6 +161,8 @@ TIME_ZONE = "Asia/Baghdad"
 
 USE_I18N = True
 
+# if the server time is in UTC and TZ aware, then the time will be saved in UTC in the DB,
+# you also need to set the TIME_ZONE here to the correct IANA TZ name
 USE_TZ = True
 
 # Static files (CSS, JavaScript, Images)

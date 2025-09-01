@@ -33,6 +33,27 @@ SAVE_DEBUG_UNMATCHED = True
 HB_COUNTS = {"detected": 0, "matched": 0}
 
 
+class FPSMeter:
+    """Exponential moving average FPS meter using inter-arrival time."""
+
+    def __init__(self, alpha: float = 0.2):
+        self.alpha = float(alpha)
+        self._ema = 0.0
+        self._last = None
+
+    def tick(self):
+        now = time.monotonic()
+        if self._last is not None:
+            dt = now - self._last
+            if dt > 0:
+                inst = 1.0 / dt
+                self._ema = (1 - self.alpha) * self._ema + self.alpha * inst if self._ema > 0 else inst
+        self._last = now
+
+    def value(self) -> float:
+        return float(self._ema)
+
+
 def log(msg: str):
     print(msg, flush=True)
 
@@ -89,6 +110,8 @@ _APP: Optional[FaceAnalysis] = None
 # _APP_DET = (800, 800)
 # _APP_DET = (864, 864)
 _APP_DET = (1024, 1024)
+
+
 # _APP_DET = (1600, 1600)
 # _APP_DET = (2048, 2048)
 
@@ -262,7 +285,6 @@ def post_json(url: str, payload: dict, key: str, timeout: float = 3.0) -> None:
         raise
 
 
-
 def hb_worker(stop_evt, args, cam_id: int, prof_id: int, get_metrics=None):
     """Posts a heartbeat every args.hb_interval seconds.
     get_metrics() may return (camera_fps, processed_fps), else we send zeros."""
@@ -280,6 +302,7 @@ def hb_worker(stop_evt, args, cam_id: int, prof_id: int, get_metrics=None):
                 "pid": os.getpid(),
                 "camera_fps": float(cam_fps),
                 "processed_fps": float(proc_fps),
+                "target_fps": float(getattr(args, "_computed_target_fps", 0) or 0) or None,
                 "snapshot_every": int(getattr(args, "snapshot_every", 10) or 10),
                 "detected": int(HB_COUNTS.get("detected", 0)),
                 "matched": int(HB_COUNTS.get("matched", 0)),
@@ -293,9 +316,9 @@ def hb_worker(stop_evt, args, cam_id: int, prof_id: int, get_metrics=None):
         stop_evt.wait(float(getattr(args, "hb_interval", 10) or 10))
 
 
-
 # ---------- Recognition loop ----------
-def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Camera, rs_cfg: RecognitionSettings):
+def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Camera, rs_cfg: RecognitionSettings,
+                     cam_meter: FPSMeter, proc_meter: FPSMeter):
     # Target fps preference
     target_fps = (eff.max_fps if eff.max_fps is not None else None) or (args.fps if args.fps else None) or 6.0
     det_size = None
@@ -340,8 +363,18 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
     )
 
     for frame_rgb in frame_iter:
+        # Ingest FPS (per-frame arrival)
+        try:
+            cam_meter.tick()
+        except Exception:
+            pass
         # frame_rgb is RGB HxWx3 uint8
         faces = app.get(frame_rgb)  # InsightFace expects RGB by default
+        # Processed FPS (after detection step finishes for this frame)
+        try:
+            proc_meter.tick()
+        except Exception:
+            pass
         HB_COUNTS["detected"] += len(faces)
         log(f"[faces] detected={len(faces)}")
 
@@ -448,6 +481,13 @@ def main():
     except Exception:
         pass
 
+    # Determine effective target FPS once (profile / args fallback)
+    computed_target_fps = (
+                              eff.max_fps if eff.max_fps is not None else None
+                          ) or (
+                              args.fps if args.fps else None
+                          ) or 6.0
+    setattr(args, "_computed_target_fps", float(computed_target_fps))
     cam_id = int(args.camera)
     prof_id = int(args.profile)
     snap_dir = Path(args.snapshots);
@@ -456,10 +496,18 @@ def main():
     ff_proc = spawn_snapshotter(args, args.rtsp, str(snap_path))
 
     # ---- START HB THREAD ----
+    cam_meter = FPSMeter(alpha=0.2)
+    proc_meter = FPSMeter(alpha=0.2)
+
+    def _get_metrics():
+        # Return current EMA values; hb_worker handles float/None
+        return (cam_meter.value() or 0.0, proc_meter.value() or 0.0)
+
     stop_hb = threading.Event()
     hb_thread = threading.Thread(
         target=hb_worker,
-        args=(stop_hb, args, cam_id, prof_id, None),  # no metrics yet
+        # args=(stop_hb, args, cam_id, prof_id, None),  # no metrics yet
+        args=(stop_hb, args, cam_id, prof_id, _get_metrics),
         daemon=True,
     )
     hb_thread.start()
@@ -505,7 +553,8 @@ def main():
 
     # Start recognition loop (same process)
     try:
-        recognition_loop(args=args, eff=eff, gal_M=gal_M, gal_meta=gal_meta, camera_obj=camera_obj, rs_cfg=rs_cfg)
+        recognition_loop(args=args, eff=eff, gal_M=gal_M, gal_meta=gal_meta, camera_obj=camera_obj, rs_cfg=rs_cfg,
+                         cam_meter=cam_meter, proc_meter=proc_meter)
     finally:
         log("[runner] stopping...")
         try:
@@ -525,10 +574,18 @@ def main():
         # ------------------------
 
     # Send one final heartbeat on exit
+    try:
+        cam_fps_final, proc_fps_final = _get_metrics()
+    except Exception:
+        cam_fps_final, proc_fps_final = (0.0, 0.0)
     payload = {
         "camera_id": cam_id,
         "profile_id": prof_id,
-        "fps": float(args.fps or 0.0),
+        "pid": os.getpid(),
+        "camera_fps": float(cam_fps_final),
+        "processed_fps": float(proc_fps_final),
+        "target_fps": float(getattr(args, "_computed_target_fps", 0) or 0) or None,
+        "snapshot_every": int(getattr(args, "snapshot_every", 10) or 10),
         "detected": int(HB_COUNTS["detected"]),
         "matched": int(HB_COUNTS["matched"]),
         "latency_ms": 0.0,

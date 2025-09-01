@@ -34,6 +34,7 @@ def _auth_ok(request) -> bool:
             or body.get("hb_key") == want
             or body.get("key") == want)
 
+
 @csrf_exempt
 def heartbeat(request):
     if request.method != "POST":
@@ -105,8 +106,40 @@ def heartbeat(request):
         if hasattr(rp, "last_heartbeat"):
             rp.last_heartbeat = now
             update_fields.append("last_heartbeat")
-        rp.save(update_fields=update_fields or None)
 
+        # Hold last *non-zero* values so admin stays useful during dropouts/pauses
+        def _hold_last_nonzero(old, incoming):
+            try:
+                v = float(incoming)
+            except Exception:
+                return old
+            if v > 0:
+                return v
+            return old if (old or 0) > 0 else 0.0
+
+        if hasattr(rp, "camera_fps") and camera_fps is not None:
+            rp.camera_fps = _hold_last_nonzero(rp.camera_fps, camera_fps)
+            update_fields.append("camera_fps")
+
+        if hasattr(rp, "processed_fps") and processed_fps is not None:
+            rp.processed_fps = _hold_last_nonzero(rp.processed_fps, processed_fps)
+            update_fields.append("processed_fps")
+
+        # Backfill target_fps from profile if not posted
+        if target_fps is None and hasattr(rp, "profile_id") and rp.profile_id:
+            try:
+                target_fps = rp.profile.fps
+            except Exception:
+                pass
+        if hasattr(rp, "target_fps") and target_fps is not None:
+            rp.target_fps = float(target_fps)
+            update_fields.append("target_fps")
+
+        # snapshot_every mirrors directly when present
+        if hasattr(rp, "snapshot_every") and snapshot_every is not None:
+            rp.snapshot_every = int(snapshot_every)
+            update_fields.append("snapshot_every")
+        rp.save(update_fields=update_fields or None)
 
     # ---- Persist a heartbeat row, rate-limited per (camera,profile), but never block on cache errors
     if cam_id and prof_id:

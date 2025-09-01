@@ -165,6 +165,20 @@ def _collect_system_info():
 
     runner_rows = []
     now_ts = timezone.now()
+
+    def _pick_last_good(rp_val, hb_val):
+        try:
+            rv = float(rp_val) if rp_val is not None else None
+        except Exception:
+            rv = None
+        if rv is not None and rv > 0:
+            return round(rv, 1)
+        try:
+            hv = float(hb_val) if hb_val is not None else None
+        except Exception:
+            hv = None
+        return round(hv, 1) if (hv is not None and hv > 0) else None
+
     for p in procs:
         # Build a readable label
         if getattr(p, 'camera', None):
@@ -174,35 +188,54 @@ def _collect_system_info():
         else:
             label = f'#{p.id}'
 
-        # Prefer the RP's own last_heartbeat (fresh every HB), fallback to latest HB row ts
+        # Freshness: prefer RP's own last_heartbeat; fallback to latest HB ts we annotated
         rp_ts = getattr(p, 'last_heartbeat', None) or getattr(p, 'hb_ts', None)
+        hb_age_s = None
         if rp_ts:
             try:
                 hb_age_s = max(0, int((now_ts - rp_ts).total_seconds()))
             except Exception:
                 hb_age_s = None
-        # hb_ts = getattr(p, 'hb_ts', None)
-        # hb_age_s = None
-        # if hb_ts:
-        #     try:
-        #         hb_age_s = max(0, int((now_ts - hb_ts).total_seconds()))
-        #     except Exception:
-        #         hb_age_s = None
+
+        # Values: RP first (last non-zero), else HB; add sensible backfills
+        target_fps = getattr(p, "target_fps", None)
+        if target_fps is None:
+            target_fps = getattr(p, "hb_target_fps", None)
+        if target_fps is None and getattr(p, "profile", None):
+            target_fps = p.profile.fps  # final fallback to profile
+
+        camera_fps = _pick_last_good(getattr(p, "camera_fps", None), getattr(p, "hb_fps", None))
+        processed_fps = _pick_last_good(getattr(p, "processed_fps", None), getattr(p, "hb_processed_fps", None))
+        snapshot_every = getattr(p, "snapshot_every", None) or getattr(p, "hb_snapshot_every", None)
 
         runner_rows.append({
             "id": p.id,
             "label": label,
             "pid": getattr(p, "pid", None),
             "status": getattr(p, "status", None),
-            "target_fps": getattr(p, "hb_target_fps", None),
-            "camera_fps": getattr(p, "hb_fps", None),
-            "processed_fps": getattr(p, "hb_processed_fps", None),
-            "snapshot_every": getattr(p, "hb_snapshot_every", None),
-            # "hb_ts": hb_ts,
-            # "hb_age_s": hb_age_s,
-            "hb_ts": rp_ts,  # <<< now RP freshness
-            "hb_age_s": hb_age_s,  # <<< computed from RP freshness
+            "target_fps": target_fps,
+            "camera_fps": camera_fps,
+            "processed_fps": processed_fps,
+            "snapshot_every": snapshot_every,
+            "hb_ts": rp_ts,
+            "hb_age_s": hb_age_s,
         })
+
+
+        # runner_rows.append({
+        #     "id": p.id,
+        #     "label": label,
+        #     "pid": getattr(p, "pid", None),
+        #     "status": getattr(p, "status", None),
+        #     "target_fps": getattr(p, "hb_target_fps", None),
+        #     "camera_fps": getattr(p, "hb_fps", None),
+        #     "processed_fps": getattr(p, "hb_processed_fps", None),
+        #     "snapshot_every": getattr(p, "hb_snapshot_every", None),
+        #     # "hb_ts": hb_ts,
+        #     # "hb_age_s": hb_age_s,
+        #     "hb_ts": rp_ts,  # <<< now RP freshness
+        #     "hb_age_s": hb_age_s,  # <<< computed from RP freshness
+        # })
 
     # paused cameras
     try:
