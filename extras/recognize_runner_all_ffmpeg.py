@@ -193,20 +193,37 @@ def spawn_snapshotter(args, rtsp_url: str, out_jpg: str) -> subprocess.Popen:
     )
 
 
-def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str, fps: float, hwaccel: str) -> list:
+# def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str, fps: float, hwaccel: str) -> list:
+#     cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
+#     if transport and transport != "auto":
+#         cmd += ["-rtsp_transport", transport]
+#     if hwaccel == "nvdec":
+#         cmd += ["-hwaccel", "cuda"]
+#     # Use mjpeg over pipe for easier decoding with PIL
+#     cmd += ["-i", rtsp_url, "-vf", f"fps={max(0.1, float(fps))}", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
+#     return cmd
+def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str,
+                    fps: Optional[float], hwaccel: str) -> list:
     cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
     if transport and transport != "auto":
         cmd += ["-rtsp_transport", transport]
     if hwaccel == "nvdec":
         cmd += ["-hwaccel", "cuda"]
-    # Use mjpeg over pipe for easier decoding with PIL
-    cmd += ["-i", rtsp_url, "-vf", f"fps={max(0.1, float(fps))}", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
+    cmd += ["-i", rtsp_url]
+    # Only downsample if an fps was explicitly provided
+    if fps and float(fps) > 0:
+        cmd += ["-vf", f"fps={max(0.1, float(fps))}"]
+    cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
     return cmd
 
 
-def iter_mjpeg_frames(*, ffmpeg: str, rtsp_url: str, transport: str, fps: float, hwaccel: str):
-    # Yield RGB numpy frames by parsing JPEG SOI/EOI from FFmpeg stdout.
+
+# def iter_mjpeg_frames(*, ffmpeg: str, rtsp_url: str, transport: str, fps: float, hwaccel: str):
+#     # Yield RGB numpy frames by parsing JPEG SOI/EOI from FFmpeg stdout.
+#     args = ffmpeg_pipe_cmd(ffmpeg, rtsp_url, transport=transport, fps=fps, hwaccel=hwaccel)
+def iter_mjpeg_frames(*, ffmpeg: str, rtsp_url: str, transport: str, fps: Optional[float], hwaccel: str):
     args = ffmpeg_pipe_cmd(ffmpeg, rtsp_url, transport=transport, fps=fps, hwaccel=hwaccel)
+
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
     buf = bytearray()
     SOI, EOI = b"\xff\xd8", b"\xff\xd9"
@@ -358,7 +375,8 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
         ffmpeg=args.ffmpeg,
         rtsp_url=args.rtsp,
         transport=args.rtsp_transport,
-        fps=target_fps,
+        fps=None,  # <— no downsample; measure true ingest
+        # fps=target_fps,           # <— this was downsampling the pipe
         hwaccel=args.hwaccel,
     )
 
@@ -368,6 +386,29 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
             cam_meter.tick()
         except Exception:
             pass
+
+        # # Ingest FPS (per-frame arrival)
+        # cam_meter.tick()
+
+        # -*-*- throttle: keep processed FPS at target_fps (or below) ---
+        tgt = float(getattr(args, "_computed_target_fps", 0) or 0.0)
+        if tgt > 0.0:
+            # Process at most 1 / tgt seconds
+            # Keep a 'next_due' timestamp on the function object so it persists across frames
+            if not hasattr(recognition_loop, "_next_due"):
+                recognition_loop._next_due = time.monotonic()  # first call
+            now = time.monotonic()
+            interval = 1.0 / tgt
+
+            # If we're early for the next slot, skip this frame (cheap and keeps latency low)
+            if now < recognition_loop._next_due - 0.002:  # 2ms slack
+                continue
+
+            # We are due; schedule the next slot.
+            # If we were late, don't accumulate debt—just move the window forward from 'now'.
+            recognition_loop._next_due = max(recognition_loop._next_due + interval, now + interval)
+        # -*-*- end throttle ---
+
         # frame_rgb is RGB HxWx3 uint8
         faces = app.get(frame_rgb)  # InsightFace expects RGB by default
         # Processed FPS (after detection step finishes for this frame)
