@@ -71,6 +71,7 @@ def heartbeat(request):
     # NEW: resource-derived telemetry
     target_fps = payload.get("target_fps")
     snapshot_every = payload.get("snapshot_every")
+    min_face_px = payload.get("min_face_px")
 
     now = timezone.now()
 
@@ -158,6 +159,7 @@ def heartbeat(request):
                     matched=int(matched or 0),
                     latency_ms=float(latency or 0.0),
                     last_error=last_err if last_err else None,
+                    min_face_px=int(min_face_px) if min_face_px is not None else None,
                 )
 
             else:
@@ -185,6 +187,7 @@ def heartbeat(request):
                         matched=int(matched or 0),
                         latency_ms=float(latency or 0.0),
                         last_error=None,
+                        min_face_px=int(min_face_px) if min_face_px is not None else None,
                     )
 
                     # Best-effort: set the gate; ignore cache errors

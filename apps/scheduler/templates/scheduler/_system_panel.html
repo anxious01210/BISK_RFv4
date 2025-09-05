@@ -418,7 +418,14 @@
                                     <div class="fw-semibold">{{ r.label }}</div>
                                     {% if r.status %}
                                         <div class="bisk-sub">Status: {{ r.status }}</div>{% endif %}
+                                    {% if r.min_face_px %}
+                                        <div class="bisk-badges" style="margin-top:6px;">
+                                            <span class="bisk-badge">min_face_px: <span class="bisk-mono"
+                                                                                        style="margin-left:6px">{{ r.min_face_px }}</span></span>
+                                        </div>
+                                    {% endif %}
                                 </td>
+
                                 <td class="bisk-mono">{% if r.pid %}{{ r.pid }}{% else %}—{% endif %}</td>
 
                                 <td class="text-end">

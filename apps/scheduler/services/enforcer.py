@@ -114,13 +114,14 @@ def _choose_resources(camera):
         "device": None, "hwaccel": None, "gpu_index": None,
         "cpu_affinity": None, "cpu_nice": None,
         "gpu_memory_fraction": None, "gpu_target_util_percent": None,
+        "cpu_quota_percent": None,  # <--- ADD THIS
         "max_fps_cap": None, "det_set_max": None,
         "use_global": False, "use_cro": False,
     }
     if grs and getattr(grs, "is_active", True):
         res["use_global"] = True
         for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
-                  "gpu_memory_fraction", "gpu_target_util_percent"):
+                  "gpu_memory_fraction", "gpu_target_util_percent", "cpu_quota_percent"):
             v = getattr(grs, k, None)
             if v not in (None, ""): res[k] = v
         # caps defaults
@@ -134,7 +135,7 @@ def _choose_resources(camera):
     if cro and getattr(cro, "is_active", False):
         res["use_cro"] = True
         for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
-                  "gpu_memory_fraction", "gpu_target_util_percent"):
+                  "gpu_memory_fraction", "gpu_target_util_percent", "cpu_quota_percent"):
             v = getattr(cro, k, None)
             if v not in (None, ""): res[k] = v
         # caps overrides
@@ -330,6 +331,7 @@ def _start(camera, profile):
     if min_score is not None:
         cmd += ["--min_score", str(min_score)]
     if model_tag:
+
         cmd += ["--model", str(model_tag)]
 
     # 5) Placement ONLY from normalized resources (res_eff)
@@ -348,6 +350,20 @@ def _start(camera, profile):
     env = os.environ.copy()
     env["BISK_HB_INTERVAL"] = str(hb_interval)
     env["BISK_SNAPSHOT_EVERY"] = str(snapshot_every)
+
+    # --- pass resource targets to the runner ---
+    if res_eff.get("gpu_target_util_percent") not in (None, ""):
+        env["BISK_GPU_TARGET_UTIL"] = str(int(res_eff["gpu_target_util_percent"]))
+    # Optional smoothing window; leave unset if you don't have a model field
+    if res_eff.get("gpu_util_window_ms") not in (None, ""):
+        env["BISK_GPU_UTIL_WINDOW_MS"] = str(int(res_eff["gpu_util_window_ms"]))
+    if res_eff.get("cpu_quota_percent") not in (None, ""):
+        env["BISK_CPU_QUOTA_PERCENT"] = str(int(res_eff["cpu_quota_percent"]))
+    if res_eff.get("gpu_memory_fraction") not in (None, ""):
+        env["BISK_GPU_MEMORY_FRAC"] = str(float(res_eff["gpu_memory_fraction"]))
+    # let runners know the placement index too (handy for pacer)
+    if res_eff.get("gpu_index") not in (None, ""):
+        env["BISK_PLACE_GPU_INDEX"] = str(res_eff["gpu_index"])
 
     p = subprocess.Popen(
         cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -381,6 +397,15 @@ def _start(camera, profile):
         env_snapshot["BISK_CPU_NICE"] = str(res_eff["cpu_nice"])
     if res_eff.get("cpu_affinity") not in (None, ""):
         env_snapshot["BISK_CPU_AFFINITY"] = str(res_eff["cpu_affinity"])
+
+    if res_eff.get("gpu_target_util_percent") not in (None, ""):
+        env_snapshot["BISK_GPU_TARGET_UTIL"] = str(res_eff["gpu_target_util_percent"])
+    if res_eff.get("cpu_quota_percent") not in (None, ""):
+        env_snapshot["BISK_CPU_QUOTA_PERCENT"] = str(res_eff["cpu_quota_percent"])
+    if res_eff.get("gpu_memory_fraction") not in (None, ""):
+        env_snapshot["BISK_GPU_MEMORY_FRAC"] = str(res_eff["gpu_memory_fraction"])
+    if res_eff.get("gpu_index") not in (None, ""):
+        env_snapshot["BISK_PLACE_GPU_INDEX"] = str(res_eff["gpu_index"])
 
     # mask and return
     def _mask_url(s: str) -> str:

@@ -70,7 +70,10 @@ def ffmpeg_cmd(src: str, *, fps: float, transport: str, hwaccel: str) -> List[st
     if src.startswith("rtsp://"):
         if transport != "auto": cmd += ["-rtsp_transport", transport]
         if hwaccel == "nvdec": cmd += ["-hwaccel", "cuda"]
-    cmd += ["-i", src, "-vf", f"fps={max(0.1, float(fps))}", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
+    # cmd += ["-i", src, "-vf", f"fps={max(0.1, float(fps))}", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
+    cmd += ["-i", src,
+            "-vf", f"fps={max(0.1, float(fps))}",
+            "-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"]
     return cmd
 
 def iter_frames(src: str, *, fps: float, transport: str="tcp", hwaccel: str="none"):

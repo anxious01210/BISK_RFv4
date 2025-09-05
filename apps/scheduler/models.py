@@ -104,6 +104,7 @@ class RunnerHeartbeat(models.Model):
     target_fps = models.FloatField(null=True, blank=True)
     snapshot_every = models.PositiveIntegerField(null=True, blank=True)
     processed_fps = models.FloatField(null=True, blank=True)
+    min_face_px = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ("-ts",)

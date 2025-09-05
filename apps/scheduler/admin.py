@@ -33,7 +33,6 @@ from apps.scheduler.services import enforcer as _enf  # provides _pid_alive
 from pathlib import Path
 from django.utils.timesince import timesince
 
-
 # Status thresholds (seconds)
 ONLINE = getattr(settings, "HEARTBEAT_ONLINE_SEC", max(15, int(getattr(settings, "HEARTBEAT_INTERVAL_SEC", 10) * 1.5)))
 STALE = getattr(settings, "HEARTBEAT_STALE_SEC", 45)
@@ -200,20 +199,6 @@ class StreamProfileAdmin(admin.ModelAdmin):
     list_filter = ("script_type", "detection_set", "is_active")
     search_fields = ("name",)
     save_on_top = True
-
-    # LEGACY_PROFILE_FIELDS = ["device","hwaccel","gpu_index","cpu_affinity","nice"]
-    #
-    # def _clip(self, fields):
-    #     model_fields = {f.name for f in self.model._meta.get_fields()}
-    #     return [f for f in fields if f in model_fields]
-    #
-    # def get_readonly_fields(self, request, obj=None):
-    #     ro = super().get_readonly_fields(request, obj)
-    #     return tuple(set(ro) | set(self._clip(self.LEGACY_PROFILE_FIELDS)))
-    #
-    # def get_exclude(self, request, obj=None):
-    #     ex = super().get_exclude(request, obj) or ()
-    #     return tuple(set(ex) | set(self._clip(self.LEGACY_PROFILE_FIELDS)))
 
 
 class WindowInline(admin.TabularInline):
@@ -595,7 +580,6 @@ class RunningProcessAdmin(admin.ModelAdmin):
 
     status_badge.short_description = "Status"
 
-
     # --- Policy / Resources / Final clarity columns ---
     def col_policy_requested(self, obj):
         """
@@ -604,14 +588,15 @@ class RunningProcessAdmin(admin.ModelAdmin):
         pol = _enf._choose_policy(obj.camera, obj.profile)
         det = pol.get("det_req") or "auto"
         fps = pol.get("fps_req") or "—"
-        hb  = pol.get("hb_interval") or "—"
+        hb = pol.get("hb_interval") or "—"
         snap = pol.get("snapshot_every") or "—"
-        tr  = pol.get("rtsp_transport") or "auto"
+        tr = pol.get("rtsp_transport") or "auto"
         return format_html(
             "<div><b>det:</b> {} &nbsp; <b>fps:</b> {}<br>"
             "<b>hb:</b> {}s &nbsp; <b>snap:</b> {}s &nbsp; <b>rtsp:</b> {}</div>",
             det, fps, hb, snap, tr
         )
+
     col_policy_requested.short_description = "Requested (Policy)"
 
     def col_resources_caps(self, obj):
@@ -629,6 +614,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
             "<b>cap fps:</b> {} &nbsp; <b>cap det:</b> {}</div>",
             dev, gpu, acc, cap_fps, cap_det
         )
+
     col_resources_caps.short_description = "Caps / Placement (Resources)"
 
     def col_final(self, obj):
@@ -649,9 +635,8 @@ class RunningProcessAdmin(admin.ModelAdmin):
             "<b>cap fps:</b> {} &nbsp; <b>cap det:</b> {}</div>",
             det, fps, dev, gpu, acc, cap_fps, cap_det
         )
+
     col_final.short_description = "Final (RP)"
-
-
 
     # ---------- actions ----------
     actions = [

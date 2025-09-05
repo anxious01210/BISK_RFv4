@@ -161,6 +161,7 @@ def _collect_system_info():
         hb_fps=Subquery(_latest_hb.values('fps')[:1]),  # runner-reported processed/observed fps (if sent)
         hb_processed_fps=Subquery(_latest_hb.values('processed_fps')[:1]),
         hb_ts=Subquery(_latest_hb.values('ts')[:1]),
+        hb_min_face_px=Subquery(_latest_hb.values('min_face_px')[:1]),
     )
 
     runner_rows = []
@@ -257,6 +258,7 @@ def _collect_system_info():
             "policy": policy_block,
             "resources": resources_block,
             "final": final_block,
+            "min_face_px": getattr(p, "hb_min_face_px", None),
         })
 
     # paused cameras
