@@ -31,6 +31,7 @@ import io
 
 SAVE_DEBUG_UNMATCHED = True
 HB_COUNTS = {"detected": 0, "matched": 0}
+HB_EXTRAS = {}  # values to ship with every heartbeat (e.g., min_face_px)
 
 
 class FPSMeter:
@@ -193,15 +194,6 @@ def spawn_snapshotter(args, rtsp_url: str, out_jpg: str) -> subprocess.Popen:
     )
 
 
-# def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str, fps: float, hwaccel: str) -> list:
-#     cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
-#     if transport and transport != "auto":
-#         cmd += ["-rtsp_transport", transport]
-#     if hwaccel == "nvdec":
-#         cmd += ["-hwaccel", "cuda"]
-#     # Use mjpeg over pipe for easier decoding with PIL
-#     cmd += ["-i", rtsp_url, "-vf", f"fps={max(0.1, float(fps))}", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
-#     return cmd
 def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str,
                     fps: Optional[float], hwaccel: str) -> list:
     cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
@@ -213,14 +205,12 @@ def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str,
     # Only downsample if an fps was explicitly provided
     if fps and float(fps) > 0:
         cmd += ["-vf", f"fps={max(0.1, float(fps))}"]
-    cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
+    # cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
+    # High-quality JPEGs for the pipe to avoid blockiness/blur
+    cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"]
     return cmd
 
 
-
-# def iter_mjpeg_frames(*, ffmpeg: str, rtsp_url: str, transport: str, fps: float, hwaccel: str):
-#     # Yield RGB numpy frames by parsing JPEG SOI/EOI from FFmpeg stdout.
-#     args = ffmpeg_pipe_cmd(ffmpeg, rtsp_url, transport=transport, fps=fps, hwaccel=hwaccel)
 def iter_mjpeg_frames(*, ffmpeg: str, rtsp_url: str, transport: str, fps: Optional[float], hwaccel: str):
     args = ffmpeg_pipe_cmd(ffmpeg, rtsp_url, transport=transport, fps=fps, hwaccel=hwaccel)
 
@@ -325,6 +315,7 @@ def hb_worker(stop_evt, args, cam_id: int, prof_id: int, get_metrics=None):
                 "matched": int(HB_COUNTS.get("matched", 0)),
                 "latency_ms": 0.0,
             }
+            payload.update(HB_EXTRAS)
             post_json(args.hb, payload, args.hb_key, timeout=3.0)
         except Exception:
             # post_json already logs; keep loop alive
@@ -355,6 +346,13 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
     threshold = float(args.threshold) if args.threshold is not None else float(
         getattr(rs_cfg, "min_score", 0.80) or 0.80)
     debounce_sec = int(getattr(rs_cfg, "re_register_window_sec", 10) or 10)
+
+    log(f"[cfg] init: min_score={threshold:.2f} debounce={debounce_sec}s min_face_px={getattr(rs_cfg, 'min_face_px', 40)}")
+    HB_EXTRAS["min_face_px"] = int(getattr(rs_cfg, "min_face_px", 40) or 40)  # ← add this line
+
+    # Track settings changes for hot-reload
+    rs_changed_at = getattr(rs_cfg, "changed_at", None)
+
     last_seen: Dict[int, float] = {}
 
     ensure_media_tree()
@@ -381,14 +379,39 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
     )
 
     for frame_rgb in frame_iter:
+        # --- Hot-reload RecognitionSettings every ~2s ---
+        if not hasattr(recognition_loop, "_last_rs_check"):
+            recognition_loop._last_rs_check = 0.0
+        now_mono = time.monotonic()
+        if now_mono - recognition_loop._last_rs_check > 2.0:
+            recognition_loop._last_rs_check = now_mono
+            try:
+                # lightweight probe: only fetch the change marker
+                new_changed = (RecognitionSettings.objects
+                               .only("changed_at")
+                               .get(pk=rs_cfg.pk).changed_at)
+                if new_changed != rs_changed_at:
+                    # re-load full settings row
+                    rs_cfg = RecognitionSettings.get_solo()
+                    rs_changed_at = getattr(rs_cfg, "changed_at", new_changed)
+                    # re-compute derived values (respect CLI override for --threshold)
+                    if args.threshold is None:
+                        threshold = float(getattr(rs_cfg, "min_score", 0.80) or 0.80)
+                    debounce_sec = int(getattr(rs_cfg, "re_register_window_sec", 10) or 10)
+                    log(f"[cfg] reloaded: min_score={threshold:.2f}  "
+                        f"debounce={debounce_sec}s  "
+                        f"min_face_px={getattr(rs_cfg, 'min_face_px', 40)}")
+                    HB_EXTRAS["min_face_px"] = int(getattr(rs_cfg, "min_face_px", 40) or 40)
+            except Exception:
+                pass
+        # --- end hot-reload ---
+
         # Ingest FPS (per-frame arrival)
         try:
             cam_meter.tick()
         except Exception:
             pass
 
-        # # Ingest FPS (per-frame arrival)
-        # cam_meter.tick()
 
         # -*-*- throttle: keep processed FPS at target_fps (or below) ---
         tgt = float(getattr(args, "_computed_target_fps", 0) or 0.0)
@@ -416,6 +439,11 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
             proc_meter.tick()
         except Exception:
             pass
+
+        pacer = getattr(args, "_pacer", None)
+        if pacer:
+            pacer.maybe_sleep()
+
         HB_COUNTS["detected"] += len(faces)
         log(f"[faces] detected={len(faces)}")
 
@@ -445,6 +473,22 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
             H, W = frame_rgb.shape[0], frame_rgb.shape[1]
             x1, y1 = max(0, x1), max(0, y1)
             x2, y2 = min(W - 1, x2), min(H - 1, y2)
+
+            # NEW: size gate from RecognitionSettings (default 40px)
+            min_side = min(x2 - x1, y2 - y1)
+            min_px = int(getattr(rs_cfg, "min_face_px", 40) or 40)
+            HB_EXTRAS["min_face_px"] = int(min_px)
+            if min_side < min_px:
+                # (optional) keep a debug for tuning, same pattern used for unmatched crops
+                if SAVE_DEBUG_UNMATCHED:
+                    today = timezone.localdate()
+                    dbg_dir = dbg_cam_root / f"{today:%Y/%m/%d}"
+                    dbg_dir.mkdir(parents=True, exist_ok=True)
+                    Image.fromarray(frame_rgb[y1:y2, x1:x2]).save(
+                        dbg_dir / f"small_{int(time.time() * 1000)}.jpg", quality=90
+                    )
+                continue
+
             crop_rgb = frame_rgb[y1:y2, x1:x2].copy()
 
             if score < threshold:
@@ -509,6 +553,21 @@ def main():
     p.add_argument("--fps", type=float, default=6.0)
 
     args, _ = p.parse_known_args()
+
+    # ---- CPU quota (set before heavy threads start)
+    from apps.scheduler.resources_cpu import apply_cpu_quota_percent, approximate_quota_with_affinity
+    CPU_QUOTA = int(os.getenv("BISK_CPU_QUOTA_PERCENT", "0") or "0")
+    if CPU_QUOTA > 0:
+        ok = apply_cpu_quota_percent(CPU_QUOTA)
+        if not ok:
+            approximate_quota_with_affinity(CPU_QUOTA)
+
+    # ---- GPU pacer
+    from apps.scheduler.resources_gpu import GpuPacer
+    GPU_TARGET = int(os.getenv("BISK_GPU_TARGET_UTIL", "0") or "0")
+    GPU_WIN_MS = int(os.getenv("BISK_GPU_UTIL_WINDOW_MS", "1500") or "1500")
+    GPU_INDEX = int(os.getenv("BISK_PLACE_GPU_INDEX", str(getattr(args, "gpu_index", 0))))
+    args._pacer = GpuPacer(GPU_INDEX, GPU_TARGET, GPU_WIN_MS) if GPU_TARGET > 0 else None
 
     # Resolve resource policy BEFORE GPU frameworks init
     eff = resolve_effective(camera_id=args.camera)
@@ -632,6 +691,7 @@ def main():
         "latency_ms": 0.0,
         "last_error": last_error or "",
     }
+    payload.update(HB_EXTRAS)
     try:
         post_json(args.hb, payload, args.hb_key, timeout=3.0)
         log(f"[hb-final] {payload}")
@@ -641,22 +701,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, fps: float,
-                    rtsp_transport: str = None, hwaccel: str = "none"):
-    """Build FFmpeg command that pipes MJPEG frames to stdout."""
-    cmd = [ffmpeg_bin, "-nostdin", "-hide_banner", "-loglevel", "warning"]
-    if rtsp_transport:
-        cmd += ["-rtsp_transport", rtsp_transport, "-rtsp_flags", "prefer_tcp"]
-    # Use -rw_timeout (microseconds). -stimeout may be unsupported in some builds.
-    cmd += ["-rw_timeout", "5000000"]
-    if (hwaccel or "").lower() in ("nvdec", "cuda"):
-        cmd += ["-hwaccel", "cuda"]
-    # Lower latency / buffering
-    cmd += ["-fflags", "nobuffer", "-flags", "low_delay"]
-    cmd += ["-i", rtsp_url]
-    # Emit MJPEG to stdout at target fps
-    cmd += ["-vf", f"fps={float(fps):.3f}", "-q:v", "3",
-            "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
-    return cmd

@@ -418,7 +418,14 @@
                                     <div class="fw-semibold">{{ r.label }}</div>
                                     {% if r.status %}
                                         <div class="bisk-sub">Status: {{ r.status }}</div>{% endif %}
+                                    {% if r.min_face_px %}
+                                        <div class="bisk-badges" style="margin-top:6px;">
+                                            <span class="bisk-badge">min_face_px: <span class="bisk-mono"
+                                                                                        style="margin-left:6px">{{ r.min_face_px }}</span></span>
+                                        </div>
+                                    {% endif %}
                                 </td>
+
                                 <td class="bisk-mono">{% if r.pid %}{{ r.pid }}{% else %}—{% endif %}</td>
 
                                 <td class="text-end">
@@ -469,6 +476,76 @@
                 </div>
             {% else %}
                 <div class="bisk-muted">No runner heartbeats yet.</div>
+            {% endif %}
+        </div>
+
+
+        <!-- Policy / Resources / Final -->
+        <div class="bisk-card bisk-col-12">
+            <div class="bisk-h">Policy / Resources / Final</div>
+
+            {% if runner_rows %}
+                <div style="max-height: 360px; overflow: auto;">
+                    <table class="bisk-table">
+                        <thead>
+                        <tr>
+                            <th>Runner</th>
+                            <th>Requested (Policy)</th>
+                            <th>Caps & Placement (Resources)</th>
+                            <th>Final (RP)</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        {% for r in runner_rows %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ r.label }}</div>
+                                    {% if r.status %}
+                                        <div class="bisk-sub">Status: {{ r.status }}</div>{% endif %}
+                                </td>
+                                <td>
+                                    <div><b>det:</b> {{ r.policy.det }} &nbsp; <b>fps:</b>
+                                        {% if r.policy.fps is not None %}{{ r.policy.fps }}{% else %}
+                                            <span class="bisk-muted">—</span>{% endif %}
+                                    </div>
+                                    <div><b>hb:</b>
+                                        {% if r.policy.hb is not None %}{{ r.policy.hb }}s{% else %}
+                                            <span class="bisk-muted">—</span>{% endif %}
+                                        &nbsp; <b>snap:</b>
+                                        {% if r.policy.snap is not None %}{{ r.policy.snap }}s{% else %}
+                                            <span class="bisk-muted">—</span>{% endif %}
+                                        &nbsp; <b>rtsp:</b> {{ r.policy.rtsp }}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div><b>device:</b> {{ r.resources.device|default:"—" }} &nbsp;
+                                        <b>gpu:</b> {{ r.resources.gpu|default:"—" }} &nbsp;
+                                        <b>hwaccel:</b> {{ r.resources.hwaccel|default:"—" }}
+                                    </div>
+                                    <div><b>cap fps:</b> {{ r.resources.cap_fps|default:"—" }} &nbsp;
+                                        <b>cap det:</b> {{ r.resources.cap_det|default:"—" }}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div><b>--det_set:</b> {{ r.final.det|default:"—" }} &nbsp;
+                                        <b>--fps:</b> {% if r.final.fps is not None %}{{ r.final.fps }}{% else %}
+                                            <span class="bisk-muted">—</span>{% endif %}
+                                    </div>
+                                    <div><b>device:</b> {{ r.final.device|default:"—" }} &nbsp;
+                                        <b>gpu:</b> {{ r.final.gpu|default:"—" }} &nbsp;
+                                        <b>hwaccel:</b> {{ r.final.hwaccel|default:"—" }}
+                                    </div>
+                                    <div><b>cap fps:</b> {{ r.final.cap_fps|default:"—" }} &nbsp;
+                                        <b>cap det:</b> {{ r.final.cap_det|default:"—" }}
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="bisk-muted">No runners.</div>
             {% endif %}
         </div>
 

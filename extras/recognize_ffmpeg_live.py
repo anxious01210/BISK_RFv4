@@ -291,6 +291,11 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
         # Throttle loop
         elapsed = time.monotonic() - t0
         sleep_for = dt - elapsed
+
+        pacer = getattr(args, "_pacer", None)
+        if pacer:
+            pacer.maybe_sleep()
+
         if sleep_for > 0:
             time.sleep(sleep_for)
 
@@ -317,6 +322,19 @@ def main():
     p.add_argument("--threshold", type=float, default=None)  # default pulls from RecognitionSettings
 
     args, _ = p.parse_known_args()
+
+    from apps.scheduler.resources_cpu import apply_cpu_quota_percent, approximate_quota_with_affinity
+    CPU_QUOTA = int(os.getenv("BISK_CPU_QUOTA_PERCENT", "0") or "0")
+    if CPU_QUOTA > 0:
+        ok = apply_cpu_quota_percent(CPU_QUOTA)
+        if not ok:
+            approximate_quota_with_affinity(CPU_QUOTA)
+
+    from apps.scheduler.resources_gpu import GpuPacer
+    GPU_TARGET = int(os.getenv("BISK_GPU_TARGET_UTIL", "0") or "0")
+    GPU_WIN_MS = int(os.getenv("BISK_GPU_UTIL_WINDOW_MS", "1500") or "1500")
+    GPU_INDEX = int(os.getenv("BISK_PLACE_GPU_INDEX", str(getattr(args, "gpu_index", 0))))
+    args._pacer = GpuPacer(GPU_INDEX, GPU_TARGET, GPU_WIN_MS) if GPU_TARGET > 0 else None
 
     # Resolve resource caps and niceness/affinity BEFORE GPU frameworks init
     eff = resolve_effective(camera_id=args.camera)

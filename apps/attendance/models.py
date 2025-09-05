@@ -142,6 +142,11 @@ class RecognitionSettings(models.Model):
         null=True, blank=True,
         help_text="If set, cap how many periods can count as 'present' per student per day."
     )
+    min_face_px = models.PositiveIntegerField(
+        default=40,
+        help_text="Drop faces smaller than this many pixels on the shortest bbox side. (ex. like 36px to have maximum up to 5m distance for recognitions.)"
+    )
+    changed_at = models.DateTimeField(auto_now=True, help_text="Bumps on every save to notify runners.")
 
     @classmethod
     def get_solo(cls):

@@ -66,9 +66,11 @@
             background: var(--bisk-badge-det);
         }
 
-        .grid {display: grid;
+        .grid {
+            display: grid;
             grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
-            gap: 10px;}
+            gap: 10px;
+        }
 
         .card {
             border: 1px solid var(--bisk-card-br);
@@ -117,6 +119,7 @@
                 {% for r in rows %}
                     <div class="card"
                          title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+
                                  {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}">
                         <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
                         <div class="meta">
@@ -188,6 +191,36 @@
                 </ul>
             </div>
         </details>
+        <hr style="margin:24px 0;opacity:.25">
+
+        <h3 style="margin:0 0 12px;font-size:18px;">Live capture (FFmpeg)</h3>
+        <form method="post" action="{{ capture_url }}" style="display:block;margin-bottom:16px;">
+            {% csrf_token %}
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+                <div>
+                    <label style="display:block;font-size:12px;opacity:.8">Camera</label>
+                    {{ capture_form.camera }}
+                </div>
+                <div>
+                    <label style="display:block;font-size:12px;opacity:.8">Top-K images</label>
+                    {{ capture_form.k }}
+                </div>
+                <div>
+                    <label style="display:block;font-size:12px;opacity:.8">det_set</label>
+                    {{ capture_form.det_size }}
+                </div>
+
+                <div>
+                    <button type="submit" class="button" style="margin-top:18px;">Run live capture</button>
+                </div>
+            </div>
+
+            <p style="margin-top:8px;color:#9aa">
+                Captures a short burst from the selected camera, clusters faces, picks the dominant
+                person, ranks by quality (sharpness/brightness/size), and averages the top-K into
+                <code>media/embeddings/{{ fe.student.h_code }}.npy</code>, then activates a new embedding.
+            </p>
+        </form>
 
     </div>
 {% endblock %}

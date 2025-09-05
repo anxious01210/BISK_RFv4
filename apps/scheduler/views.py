@@ -161,6 +161,7 @@ def _collect_system_info():
         hb_fps=Subquery(_latest_hb.values('fps')[:1]),  # runner-reported processed/observed fps (if sent)
         hb_processed_fps=Subquery(_latest_hb.values('processed_fps')[:1]),
         hb_ts=Subquery(_latest_hb.values('ts')[:1]),
+        hb_min_face_px=Subquery(_latest_hb.values('min_face_px')[:1]),
     )
 
     runner_rows = []
@@ -208,6 +209,40 @@ def _collect_system_info():
         processed_fps = _pick_last_good(getattr(p, "processed_fps", None), getattr(p, "hb_processed_fps", None))
         snapshot_every = getattr(p, "snapshot_every", None) or getattr(p, "hb_snapshot_every", None)
 
+        # --- Policy/Resources/Final clarity (reuse Phase-2 helpers via _enf) ---
+        try:
+            from apps.scheduler.services import enforcer as _enf
+            pol = _enf._choose_policy(p.camera, p.profile)
+            res = _enf._choose_resources(p.camera)
+            det_final, fps_final = _enf._clamp_and_finalize(pol, res)
+        except Exception:
+            pol, res, det_final, fps_final = {}, {}, None, None
+
+        policy_block = {
+            "det": pol.get("det_req") or "auto",
+            "fps": pol.get("fps_req"),
+            "hb": pol.get("hb_interval"),
+            "snap": pol.get("snapshot_every"),
+            "rtsp": pol.get("rtsp_transport") or "auto",
+        }
+        resources_block = {
+            "device": res.get("device"),
+            "gpu": res.get("gpu_index"),
+            "hwaccel": res.get("hwaccel"),
+            "cap_fps": res.get("max_fps_cap"),
+            "cap_det": res.get("det_set_max"),
+        }
+        final_block = {
+            "det": det_final,
+            "fps": fps_final,
+            "device": (getattr(p, "effective_env", {}) or {}).get("BISK_PLACE_DEVICE"),
+            "gpu": (getattr(p, "effective_env", {}) or {}).get("BISK_PLACE_GPU_INDEX"),
+            "hwaccel": (getattr(p, "effective_env", {}) or {}).get("BISK_PLACE_HWACCEL"),
+            "cap_fps": (getattr(p, "effective_env", {}) or {}).get("BISK_CAP_MAX_FPS"),
+            "cap_det": (getattr(p, "effective_env", {}) or {}).get("BISK_CAP_DET_SET_MAX"),
+        }
+
+
         runner_rows.append({
             "id": p.id,
             "label": label,
@@ -219,23 +254,12 @@ def _collect_system_info():
             "snapshot_every": snapshot_every,
             "hb_ts": rp_ts,
             "hb_age_s": hb_age_s,
+            # NEW:
+            "policy": policy_block,
+            "resources": resources_block,
+            "final": final_block,
+            "min_face_px": getattr(p, "hb_min_face_px", None),
         })
-
-
-        # runner_rows.append({
-        #     "id": p.id,
-        #     "label": label,
-        #     "pid": getattr(p, "pid", None),
-        #     "status": getattr(p, "status", None),
-        #     "target_fps": getattr(p, "hb_target_fps", None),
-        #     "camera_fps": getattr(p, "hb_fps", None),
-        #     "processed_fps": getattr(p, "hb_processed_fps", None),
-        #     "snapshot_every": getattr(p, "hb_snapshot_every", None),
-        #     # "hb_ts": hb_ts,
-        #     # "hb_age_s": hb_age_s,
-        #     "hb_ts": rp_ts,  # <<< now RP freshness
-        #     "hb_age_s": hb_age_s,  # <<< computed from RP freshness
-        # })
 
     # paused cameras
     try:

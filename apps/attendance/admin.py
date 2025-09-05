@@ -1,4 +1,13 @@
 # apps/attendance/admin.py
+import hashlib
+import subprocess
+import sys
+from pathlib import Path
+import numpy as np
+from django.views.decorators.http import require_POST
+from django.utils.decorators import method_decorator
+
+from apps.cameras.models import Camera
 from django.urls import path, reverse
 from django.shortcuts import redirect, render, get_object_or_404
 from django.contrib import admin, messages
@@ -528,9 +537,12 @@ class AttendanceEventAdmin(admin.ModelAdmin):
 
 @admin.register(RecognitionSettings)
 class RecognitionSettingsAdmin(admin.ModelAdmin):
-    list_display = ("min_score", "re_register_window_sec", "min_improve_delta",
-                    "delete_old_cropped", "save_all_crops", "use_cosine_similarity")
-
+    list_display = ("id", "min_score", "re_register_window_sec", "min_improve_delta", "min_face_px", "changed_at",
+                    "delete_old_cropped", "save_all_crops", "use_cosine_similarity",)
+    readonly_fields = ("changed_at",)
+    list_editable = ("min_score", "re_register_window_sec", "min_improve_delta", "min_face_px",
+                       "delete_old_cropped", "save_all_crops", "use_cosine_similarity",)
+    list_display_links = ('id',)
 
 @admin.action(description="Activate selected")
 def activate_embeddings(modeladmin, request, queryset):
@@ -862,6 +874,9 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                  name="attendance_faceembedding_re_enroll"),
             path("<int:pk>/re-enroll/run/", self.admin_site.admin_view(self.re_enroll_run),
                  name="attendance_faceembedding_re_enroll_run"),
+            # NEW:
+            path("<int:pk>/capture/", self.admin_site.admin_view(self.re_enroll_capture_run),
+                 name="attendance_faceembedding_capture_run"),
         ]
         return extra + urls
 
@@ -874,6 +889,17 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         det_size = forms.IntegerField(required=False, help_text="Detector input size (e.g., 640 / 1024)")
         min_score = forms.FloatField(required=False, help_text="Min quality score 0..1")
         strict_top = forms.BooleanField(required=False, initial=False, help_text="Filter by min-score before K")
+
+    class _CaptureForm(forms.Form):
+        camera = forms.ModelChoiceField(
+            queryset=Camera.objects.all().order_by("name"),
+            required=True, label="Camera"
+        )
+        k = forms.IntegerField(min_value=1, initial=3, required=True, label="Top-K images")
+        det_size = forms.ChoiceField(
+            choices=[(640, "640"), (800, "800"), (1024, "1024"), (1280, "1280"), (1600, "1600"), (2048, "2048")],
+            initial=1024, required=True, label="det_set"
+        )
 
     # ---- GET: render gallery + overrides ----
     def re_enroll_modal(self, request, pk: int):
@@ -907,11 +933,128 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             "strict_top": False,
         }
         form = self._ReEnrollForm(initial=init)
-        ctx = {"opts": self.model._meta, "fe": fe, "student": student, "rows": rows, "form": form}
+        # ctx = {"opts": self.model._meta, "fe": fe, "student": student, "rows": rows, "form": form}
+        # return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
+        capture_form = self._CaptureForm(initial={"k": fe.last_used_k or 3, "det_size": fe.last_used_det_size or 1024})
+        capture_url = reverse("admin:attendance_faceembedding_capture_run", args=[fe.pk])
+
+        ctx = {
+            "opts": self.model._meta,
+            "fe": fe,
+            "student": student,
+            "rows": rows,
+            "form": form,
+            # NEW:
+            "capture_form": capture_form,
+            "capture_url": capture_url,
+        }
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
+
+    @transaction.atomic
+    @method_decorator(require_POST)
+    def re_enroll_capture_run(self, request, pk: int):
+        fe = get_object_or_404(FaceEmbedding, pk=pk)
+        student = fe.student
+        hcode = getattr(student, "h_code", None)
+        if not hcode:
+            messages.error(request, "Student H-code missing.")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        form = self._CaptureForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Invalid capture inputs.")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        cam = form.cleaned_data["camera"]
+        k = int(form.cleaned_data["k"])
+        det_size = int(form.cleaned_data["det_size"])
+
+        # Resolve RTSP/URL field (be tolerant to different field names)
+        rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
+        if not rtsp:
+            messages.error(request, "Selected camera has no RTSP/URL configured.")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        # Build script path
+        proj_root = Path(settings.BASE_DIR)  # your Django base
+        script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
+        if not script.exists():
+            messages.error(request, f"Capture script not found: {script}")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        # Run capture (synchronously; keep it simple for now)
+        cmd = [
+            sys.executable, str(script),
+            "--rtsp", str(rtsp),
+            "--hcode", hcode,
+            "--k", str(k),
+            "--det_size", str(det_size),
+            "--device", "auto",
+            "--fps", "4",
+            "--duration", "30",
+            "--rtsp_transport", "tcp",
+        ]
+        try:
+            run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+        except subprocess.TimeoutExpired:
+            messages.error(request, "Capture timed out.")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        if run.returncode != 0:
+            messages.error(request, f"Capture failed:\n{run.stderr or run.stdout}")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        # Expect the script to have written media/embeddings/<HCODE>.npy
+        emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
+        npy_path = emb_dir / f"{hcode}.npy"
+        if not npy_path.exists():
+            messages.error(request, f"Capture finished but .npy not found: {npy_path}")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        # Ingest into FaceEmbedding (active singleton per student)
+        try:
+            vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
+            # L2 norm should be ~1.0; store as raw bytes
+            norm = float(np.linalg.norm(vec)) if vec.size else 0.0
+            raw = vec.tobytes()
+            sha = hashlib.sha256(raw).hexdigest()
+
+            # Deactivate existing active rows for this student
+            FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
+
+            fe2 = FaceEmbedding.objects.create(
+                student=student,
+                dim=int(vec.size),
+                vector=raw,
+                source_path=str(npy_path.relative_to(Path(settings.MEDIA_ROOT))).replace("\\", "/"),
+                camera=cam,
+                is_active=True,
+                last_enrolled_at=timezone.now(),
+                last_used_k=k,
+                last_used_det_size=det_size,
+                images_considered=0,
+                images_used=k,
+                embedding_norm=norm,
+                embedding_sha256=sha,
+                arcface_model="buffalo_l",
+                provider="CUDAExecutionProvider" if "CUDA" in (run.stdout or "") else "CPUExecutionProvider",
+                enroll_runtime_ms=0,
+                enroll_notes=(
+                    f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
+                    f"vec_dim={vec.size}; norm={norm:.4f}"
+                ),
+            )
+            messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
+        except Exception as e:
+            messages.error(request, f"Failed to save embedding from .npy: {e}")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        # persist last_used_min_score=None, we didn’t threshold here
+        return redirect("../../")
 
     # ---- POST: run enrollment with overrides (force) ----
     @transaction.atomic
+    @method_decorator(require_POST)
     def re_enroll_run(self, request, pk: int):
         fe = get_object_or_404(FaceEmbedding, pk=pk)
         form = self._ReEnrollForm(request.POST)

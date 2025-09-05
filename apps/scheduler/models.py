@@ -2,6 +2,8 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 
+HWACCEL_CHOICES = [("", "(inherit)"), ("none", "none"), ("nvdec", "nvdec")]
+DEVICE_CHOICES = [("", "(inherit)"), ("cpu", "CPU"), ("cuda", "CUDA")]
 
 class StreamProfile(models.Model):
     FFMPEG, OPENCV = 1, 2
@@ -15,20 +17,12 @@ class StreamProfile(models.Model):
     detection_set = models.CharField(max_length=16, choices=DET_CHOICES, default="auto")
     extra_args = models.JSONField(default=dict, blank=True)
     RTSP_TRANSPORT_CHOICES = [("", "(inherit)"), ("auto", "auto"), ("tcp", "tcp"), ("udp", "udp")]
-    HWACCEL_CHOICES = [("", "(inherit)"), ("none", "none"), ("nvdec", "nvdec")]
-    DEVICE_CHOICES = [("", "(inherit)"), ("cpu", "CPU"), ("cuda", "CUDA")]
+    # HWACCEL_CHOICES = [("", "(inherit)"), ("none", "none"), ("nvdec", "nvdec")]
+    # DEVICE_CHOICES = [("", "(inherit)"), ("cpu", "CPU"), ("cuda", "CUDA")]
 
     rtsp_transport = models.CharField(max_length=8, choices=RTSP_TRANSPORT_CHOICES, blank=True, default="")
-    hwaccel = models.CharField(max_length=8, choices=HWACCEL_CHOICES, blank=True, default="")
-    device = models.CharField(max_length=8, choices=DEVICE_CHOICES, blank=True, default="")
-    gpu_index = models.PositiveSmallIntegerField(null=True, blank=True)
-
     hb_interval = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Seconds between heartbeats")
     snapshot_every = models.PositiveSmallIntegerField(null=True, blank=True, help_text="Snapshot every N heartbeats")
-
-    nice = models.SmallIntegerField(null=True, blank=True, help_text="Process niceness (-20..19)")
-    cpu_affinity = models.CharField(max_length=64, blank=True, default="", help_text='e.g. "0,1"')
-
     is_active = models.BooleanField(default=True)
 
     def __str__(
@@ -110,6 +104,7 @@ class RunnerHeartbeat(models.Model):
     target_fps = models.FloatField(null=True, blank=True)
     snapshot_every = models.PositiveIntegerField(null=True, blank=True)
     processed_fps = models.FloatField(null=True, blank=True)
+    min_face_px = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
         ordering = ("-ts",)
@@ -126,6 +121,16 @@ class GlobalResourceSettings(models.Model):
     Singleton defaults for runner processes.
     Leave values null to mean 'no default at this layer'.
     """
+    # Placement defaults (nullable → no default at this layer)
+    device = models.CharField(
+        max_length=8, choices=DEVICE_CHOICES, null=True, blank=True,
+        help_text="Default compute device (cuda/cpu). Null=not set here."
+    )
+    hwaccel = models.CharField(
+        max_length=8, choices=HWACCEL_CHOICES, null=True, blank=True,
+        help_text="Default decode accel (nvdec/none). Null=not set here."
+    )
+
     # CPU
     cpu_nice = models.IntegerField(null=True, blank=True, help_text="e.g. 10 for background")
     cpu_affinity = models.CharField(
@@ -158,6 +163,10 @@ class GlobalResourceSettings(models.Model):
     det_set_max = models.CharField(
         max_length=16, null=True, blank=True, help_text="Upper bound like '1600' to clamp detector size."
     )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="If disabled, global defaults/caps are ignored."
+    )
 
     def __str__(self):
         return "Global Resource Settings"
@@ -179,12 +188,22 @@ class CameraResourceOverride(models.Model):
         related_name="resource_override"
     )
 
+
     # CPU
     cpu_nice = models.IntegerField(null=True, blank=True)
     cpu_affinity = models.CharField(max_length=64, null=True, blank=True)
     cpu_quota_percent = models.PositiveSmallIntegerField(null=True, blank=True)
 
     # GPU
+    # Placement overrides (non-null wins)
+    device = models.CharField(
+        max_length=8, choices=DEVICE_CHOICES, null=True, blank=True,
+        help_text="Override compute device for this camera only."
+    )
+    hwaccel = models.CharField(
+        max_length=8, choices=HWACCEL_CHOICES, null=True, blank=True,
+        help_text="Override decode accel for this camera only."
+    )
     gpu_index = models.CharField(max_length=32, null=True, blank=True)
     gpu_memory_fraction = models.FloatField(null=True, blank=True)
     gpu_target_util_percent = models.PositiveSmallIntegerField(null=True, blank=True)
@@ -192,6 +211,10 @@ class CameraResourceOverride(models.Model):
     # Pipeline levers
     max_fps = models.PositiveSmallIntegerField(null=True, blank=True)
     det_set_max = models.CharField(max_length=16, null=True, blank=True)
+    is_active = models.BooleanField(
+        default=False,
+        help_text="Master toggle for considering any per-camera resource overrides."
+    )
 
     def __str__(self):
         return f"Overrides for {self.camera.name if self.camera_id else 'unknown'}"
