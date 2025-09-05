@@ -12,6 +12,8 @@ from zoneinfo import ZoneInfo
 from apps.scheduler.services import enforce_schedules
 from .models import Camera
 from .utils import snapshot_url_for
+from ..scheduler.models import RunningProcess
+
 
 def _ffprobe_test(url: str, timeout_sec: int = 8):
     """Run ffprobe on the given RTSP URL and return (ok, message)."""
@@ -83,27 +85,70 @@ def pause_until_tomorrow_08(modeladmin, request, queryset):
 def unpause_cameras(modeladmin, request, queryset):
     _apply_pause(request, queryset, None, "Unpaused")
 
+@admin.action(description="Restart with latest config")
+def restart_with_latest_config(modeladmin, request, queryset):
+    # queryset should be Camera (or RunningProcess) depending on where you register it
+    from apps.scheduler.services.enforcer import _stop
+    for cam in queryset:
+        for rp in RunningProcess.objects.filter(camera=cam):
+            _stop(rp.pid)
+            rp.status = "dead"
+            rp.save(update_fields=["status"])
+    # NEW: kick the enforcer now so it starts with the fresh spec immediately
+    enforce_schedules()
 
 @admin.register(Camera)
 class CameraAdmin(admin.ModelAdmin):
-    list_display = (
-        "name", "location", "script_type_default", "scan_station", "is_active",
-        "rtsp_transport", "hwaccel", "device", "gpu_index",
-        "cpu_affinity", "nice", "hb_interval", "snapshot_every",
-        "pause_until", "snapshot_thumb",
+    fieldsets = (
+        (None, {
+            "fields": ("name", "rtsp_url", "location", "scan_station", "script_type_default", "is_active",
+                       "pause_until"),
+        }),
+        ("Streaming / Policy", {
+            "fields": (
+                "rtsp_transport",
+                "hb_interval",
+                "snapshot_every",
+                "prefer_camera_over_profile",
+            ),
+            "description": "Baseline streaming flags that are still policy-level."
+        }),
+        ("Policy overrides (camera-first when enabled)", {
+            "fields": ("target_fps_req", "det_set_req"),
+            "classes": ("collapse",),
+            "description": "Nullable. Used only when 'prefer_camera_over_profile' is enabled."
+        }),
+
     )
+
+    list_display = ("name", "location", "is_active", "script_type_default", "prefer_camera_over_profile",
+                    "target_fps_req", "det_set_req", "pause_until", "snapshot_thumb",)
     list_editable = (
-        "rtsp_transport", "hwaccel", "device", "gpu_index",
-        "cpu_affinity", "nice", "hb_interval", "snapshot_every",
+        "is_active", "pause_until",
     )
     search_fields = ("name", "location")
     list_filter = ("script_type_default", "scan_station", "is_active")
+
+    # LEGACY_CAMERA_FIELDS = ["device", "hwaccel", "gpu_index", "cpu_affinity", "nice"]
+    # def _clip(self, fields):
+    #     model_fields = {f.name for f in self.model._meta.get_fields()}
+    #     return [f for f in fields if f in model_fields]
+    #
+    # def get_readonly_fields(self, request, obj=None):
+    #     ro = super().get_readonly_fields(request, obj)
+    #     return tuple(set(ro) | set(self._clip(self.LEGACY_CAMERA_FIELDS)))
+    #
+    # def get_exclude(self, request, obj=None):
+    #     ex = super().get_exclude(request, obj) or ()
+    #     return tuple(set(ex) | set(self._clip(self.LEGACY_CAMERA_FIELDS)))
+
     actions = [
         pause_30_min,
         pause_2_hours,
         pause_until_tomorrow_08,
         unpause_cameras,
         "action_test_rtsp",
+        restart_with_latest_config,
     ]
 
     @admin.action(description="Test RTSP (ffprobe, 8s)")

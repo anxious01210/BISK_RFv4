@@ -1,0 +1,119 @@
+<svg width="1080" height="760" viewBox="0 0 1080 760" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <style>
+      .title{font:700 20px sans-serif; fill:#111}
+      .h{font:700 16px sans-serif; fill:#111}
+      .t{font:500 13px sans-serif; fill:#111}
+      .s{font:500 12px sans-serif; fill:#333}
+      .box{fill:#fff; stroke:#111; stroke-width:1.5}
+      .grp{fill:#f6f7fb; stroke:#111; stroke-dasharray:6 4; stroke-width:1.5}
+      .arrow{stroke:#111; stroke-width:1.5; marker-end:url(#m);}
+      .cap{fill:#eef9f2}
+      .pol{fill:#eef2ff}
+      .eff{fill:#fff7e6}
+    </style>
+    <marker id="m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#111"></path>
+    </marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="540" y="36" text-anchor="middle" class="title">BISK_RFv4 — Policy/Resource Merge → Effective Runtime → Telemetry</text>
+
+  <!-- POLICY group -->
+  <rect x="40" y="70" width="420" height="290" class="grp"></rect>
+  <text x="50" y="95" class="h">POLICY — what we want to run</text>
+
+  <!-- StreamProfile -->
+  <rect x="60" y="120" width="185" height="220" class="box pol"></rect>
+  <text x="70" y="145" class="h">StreamProfile</text>
+  <text x="70" y="170" class="t">• det_set_req</text>
+  <text x="70" y="190" class="t">• target_fps_req</text>
+  <text x="70" y="210" class="t">• snapshot_every</text>
+  <text x="70" y="230" class="t">• hb_interval</text>
+  <text x="70" y="250" class="t">• thresholds</text>
+  <text x="70" y="270" class="t">• model_detect/rec</text>
+  <text x="70" y="290" class="t">• rtsp_transport</text>
+
+  <!-- Camera -->
+  <rect x="260" y="120" width="185" height="220" class="box pol"></rect>
+  <text x="270" y="145" class="h">Camera</text>
+  <text x="270" y="170" class="t">• prefer_camera_over_profile</text>
+  <text x="270" y="190" class="t">• (nullable) det_set_req</text>
+  <text x="270" y="210" class="t">• (nullable) target_fps_req</text>
+  <text x="270" y="230" class="t">• (nullable) snapshot_every</text>
+  <text x="270" y="250" class="t">• (nullable) thresholds…</text>
+  <text x="270" y="270" class="s">Used only if prefer=on &amp; value set</text>
+
+  <!-- RESOURCES group -->
+  <rect x="40" y="380" width="420" height="290" class="grp"></rect>
+  <text x="50" y="405" class="h">RESOURCES — where/how &amp; caps</text>
+
+  <!-- GlobalResourceSettings -->
+  <rect x="60" y="430" width="185" height="220" class="box cap"></rect>
+  <text x="70" y="455" class="h">GlobalResourceSettings</text>
+  <text x="70" y="480" class="t">• device (cpu/cuda)</text>
+  <text x="70" y="500" class="t">• hwaccel (nvdec/none)</text>
+  <text x="70" y="520" class="t">• gpu_index (opt)</text>
+  <text x="70" y="540" class="t">• det_set_max_default</text>
+  <text x="70" y="560" class="t">• max_fps_cap_default</text>
+  <text x="70" y="580" class="t">• cpu_affinity / nice</text>
+
+  <!-- CameraResourceOverride -->
+  <rect x="260" y="430" width="185" height="220" class="box cap"></rect>
+  <text x="270" y="455" class="h">CameraResourceOverride</text>
+  <text x="270" y="480" class="t">• device/hwaccel</text>
+  <text x="270" y="500" class="t">• gpu_index</text>
+  <text x="270" y="520" class="t">• det_set_max</text>
+  <text x="270" y="540" class="t">• max_fps_cap</text>
+  <text x="270" y="560" class="t">• cpu_affinity / nice</text>
+  <text x="270" y="580" class="s">Non-null wins over Global</text>
+
+  <!-- Enforcer / Merge -->
+  <rect x="500" y="240" width="220" height="140" class="box"></rect>
+  <text x="610" y="265" text-anchor="middle" class="h">Enforcer Merge</text>
+  <text x="610" y="290" text-anchor="middle" class="t">Policy resolve + Resource caps</text>
+  <text x="610" y="310" text-anchor="middle" class="t">Clamp det_set / fps pre-spawn</text>
+  <text x="610" y="330" text-anchor="middle" class="t">Write RP.effective_args/env</text>
+
+  <!-- Final Runtime Spec -->
+  <rect x="760" y="120" width="280" height="120" class="box eff"></rect>
+  <text x="770" y="145" class="h">Final Runtime Spec</text>
+  <text x="770" y="170" class="t">• det_set_final, target_fps_final</text>
+  <text x="770" y="190" class="t">• device/gpu_index/hwaccel</text>
+  <text x="770" y="210" class="t">• snapshot_every, hb_interval</text>
+
+  <!-- Runner -->
+  <rect x="760" y="270" width="280" height="90" class="box"></rect>
+  <text x="770" y="295" class="h">Runner</text>
+  <text x="770" y="320" class="t">Skip-throttle to hold processed ≤ target</text>
+
+  <!-- Heartbeat -->
+  <rect x="760" y="390" width="280" height="120" class="box"></rect>
+  <text x="770" y="415" class="h">Runner Heartbeat</text>
+  <text x="770" y="440" class="t">camera_fps (ingest), processed_fps</text>
+  <text x="770" y="460" class="t">EMA metrics, device/gpu info</text>
+
+  <!-- UI -->
+  <rect x="760" y="540" width="280" height="130" class="box"></rect>
+  <text x="770" y="565" class="h">Admin &amp; /dash/system</text>
+  <text x="770" y="590" class="t">RP-first values; HB fallback</text>
+  <text x="770" y="610" class="t">Show requested vs capped (clamped)</text>
+  <text x="770" y="630" class="t">Multi-GPU placement visible</text>
+
+  <!-- Arrows -->
+  <line x1="245" y1="230" x2="500" y2="260" class="arrow"></line>
+  <line x1="245" y1="540" x2="500" y2="360" class="arrow"></line>
+  <line x1="720" y1="310" x2="760" y2="310" class="arrow"></line>
+  <line x1="900" y1="240" x2="900" y2="270" class="arrow"></line>
+  <line x1="900" y1="360" x2="900" y2="390" class="arrow"></line>
+  <line x1="900" y1="510" x2="900" y2="540" class="arrow"></line>
+
+  <!-- Legend -->
+  <rect x="40" y="686" width="1000" height="54" class="box"></rect>
+  <text x="60" y="710" class="t">Legend:</text>
+  <rect x="130" y="695" width="16" height="16" class="box pol"></rect><text x="152" y="708" class="s">Policy objects</text>
+  <rect x="280" y="695" width="16" height="16" class="box cap"></rect><text x="302" y="708" class="s">Resource defaults/overrides</text>
+  <rect x="520" y="695" width="16" height="16" class="box eff"></rect><text x="542" y="708" class="s">Final clamped spec (pre-spawn)</text>
+  <text x="780" y="708" class="s">Arrows show data/decision flow</text>
+</svg>

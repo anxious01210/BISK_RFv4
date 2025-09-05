@@ -9,7 +9,7 @@ from django.forms.models import BaseInlineFormSet
 from django.core.exceptions import ValidationError
 from django.db.models import F, Window
 from django.db.models.functions import RowNumber
-
+from apps.cameras.models import Camera
 from .models import (
     StreamProfile,
     SchedulePolicy,
@@ -17,6 +17,8 @@ from .models import (
     ScheduleException,
     RunningProcess,
     RunnerHeartbeat,
+    GlobalResourceSettings,
+    CameraResourceOverride,
 )
 from django.utils import timezone
 from django.db.models import Q
@@ -31,30 +33,48 @@ from apps.scheduler.services import enforcer as _enf  # provides _pid_alive
 from pathlib import Path
 from django.utils.timesince import timesince
 
+
 # Status thresholds (seconds)
 ONLINE = getattr(settings, "HEARTBEAT_ONLINE_SEC", max(15, int(getattr(settings, "HEARTBEAT_INTERVAL_SEC", 10) * 1.5)))
 STALE = getattr(settings, "HEARTBEAT_STALE_SEC", 45)
 OFFLINE = getattr(settings, "HEARTBEAT_OFFLINE_SEC", 120)
 
 admin.site.empty_value_display = "—"
-from django.contrib import admin
-from .models import GlobalResourceSettings, CameraResourceOverride
 
 
 @admin.register(GlobalResourceSettings)
 class GlobalResourceSettingsAdmin(admin.ModelAdmin):
-    list_display = ("id", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
+    list_display = ("id", "is_active", "device", "hwaccel", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
                     "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
                     "max_fps_default", "det_set_max")
-    readonly_fields = ("id",)
+    readonly_fields = ()
+    fieldsets = (
+        (None, {"fields": ("is_active",)}),
+        ("Placement defaults", {"fields": ("device", "hwaccel")}),
+        ("CPU", {"fields": ("cpu_nice", "cpu_affinity", "cpu_quota_percent")}),
+        ("GPU", {"fields": ("gpu_index", "gpu_memory_fraction", "gpu_target_util_percent")}),
+        ("Caps", {"fields": ("max_fps_default", "det_set_max")}),
+    )
+
+    def has_add_permission(self, request):  # singleton UX
+        return self.model.objects.count() == 0
 
 
 @admin.register(CameraResourceOverride)
 class CameraResourceOverrideAdmin(admin.ModelAdmin):
-    list_display = ("camera", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
+    list_display = ("camera", "is_active", "device", "hwaccel", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
                     "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
                     "max_fps", "det_set_max")
+    list_filter = ("is_active",)
     search_fields = ("camera__name",)
+    autocomplete_fields = ("camera",)
+    fieldsets = (
+        (None, {"fields": ("camera", "is_active")}),
+        ("Placement overrides", {"fields": ("device", "hwaccel")}),
+        ("CPU", {"fields": ("cpu_nice", "cpu_affinity", "cpu_quota_percent")}),
+        ("GPU", {"fields": ("gpu_index", "gpu_memory_fraction", "gpu_target_util_percent")}),
+        ("Caps", {"fields": ("max_fps", "det_set_max")}),
+    )
 
 
 # ----------------------------
@@ -181,6 +201,20 @@ class StreamProfileAdmin(admin.ModelAdmin):
     search_fields = ("name",)
     save_on_top = True
 
+    # LEGACY_PROFILE_FIELDS = ["device","hwaccel","gpu_index","cpu_affinity","nice"]
+    #
+    # def _clip(self, fields):
+    #     model_fields = {f.name for f in self.model._meta.get_fields()}
+    #     return [f for f in fields if f in model_fields]
+    #
+    # def get_readonly_fields(self, request, obj=None):
+    #     ro = super().get_readonly_fields(request, obj)
+    #     return tuple(set(ro) | set(self._clip(self.LEGACY_PROFILE_FIELDS)))
+    #
+    # def get_exclude(self, request, obj=None):
+    #     ex = super().get_exclude(request, obj) or ()
+    #     return tuple(set(ex) | set(self._clip(self.LEGACY_PROFILE_FIELDS)))
+
 
 class WindowInline(admin.TabularInline):
     model = ScheduleWindow
@@ -300,6 +334,7 @@ class RunningProcessAdmin(admin.ModelAdmin):
         "last_heartbeat_at",
         "last_error_badge",
         "snapshot_thumb",
+        "col_policy_requested", "col_resources_caps", "col_final",
     )
     list_select_related = ("camera", "profile")
     list_filter = ("status", "camera", "profile")
@@ -560,6 +595,64 @@ class RunningProcessAdmin(admin.ModelAdmin):
 
     status_badge.short_description = "Status"
 
+
+    # --- Policy / Resources / Final clarity columns ---
+    def col_policy_requested(self, obj):
+        """
+        Requested (Policy): profile → camera override (when prefer & non-null).
+        """
+        pol = _enf._choose_policy(obj.camera, obj.profile)
+        det = pol.get("det_req") or "auto"
+        fps = pol.get("fps_req") or "—"
+        hb  = pol.get("hb_interval") or "—"
+        snap = pol.get("snapshot_every") or "—"
+        tr  = pol.get("rtsp_transport") or "auto"
+        return format_html(
+            "<div><b>det:</b> {} &nbsp; <b>fps:</b> {}<br>"
+            "<b>hb:</b> {}s &nbsp; <b>snap:</b> {}s &nbsp; <b>rtsp:</b> {}</div>",
+            det, fps, hb, snap, tr
+        )
+    col_policy_requested.short_description = "Requested (Policy)"
+
+    def col_resources_caps(self, obj):
+        """
+        Caps & Placement (Resources): Global defaults → Camera override (active & non-null).
+        """
+        res = _enf._choose_resources(obj.camera)
+        dev = res.get("device") or "—"
+        acc = res.get("hwaccel") or "—"
+        gpu = res.get("gpu_index") or "—"
+        cap_fps = res.get("max_fps_cap") or "—"
+        cap_det = res.get("det_set_max") or "—"
+        return format_html(
+            "<div><b>device:</b> {} &nbsp; <b>gpu:</b> {} &nbsp; <b>hwaccel:</b> {}<br>"
+            "<b>cap fps:</b> {} &nbsp; <b>cap det:</b> {}</div>",
+            dev, gpu, acc, cap_fps, cap_det
+        )
+    col_resources_caps.short_description = "Caps / Placement (Resources)"
+
+    def col_final(self, obj):
+        """
+        Final (what launched): from effective_env/args snapshot saved at start.
+        """
+        env = obj.effective_env or {}
+        dev = env.get("BISK_PLACE_DEVICE", "—")
+        gpu = env.get("BISK_PLACE_GPU_INDEX", "—")
+        acc = env.get("BISK_PLACE_HWACCEL", "—")
+        cap_fps = env.get("BISK_CAP_MAX_FPS", "—")
+        cap_det = env.get("BISK_CAP_DET_SET_MAX", "—")
+        det = env.get("_det_set", "—")
+        fps = env.get("_fps", "—")
+        return format_html(
+            "<div style='min-width:220px;'><b>--det_set:</b> {} &nbsp; <b>--fps:</b> {}<br>"
+            "<b>device:</b> {} &nbsp; <b>gpu:</b> {} &nbsp; <b>hwaccel:</b> {}<br>"
+            "<b>cap fps:</b> {} &nbsp; <b>cap det:</b> {}</div>",
+            det, fps, dev, gpu, acc, cap_fps, cap_det
+        )
+    col_final.short_description = "Final (RP)"
+
+
+
     # ---------- actions ----------
     actions = [
         "action_stop_selected", "action_kill_selected",
@@ -730,28 +823,6 @@ class RunnerHeartbeatAdmin(admin.ModelAdmin):
         return f"{int(secs)}s"
 
     age_col.short_description = "Age"
-
-    # def status_col(self, obj):
-    #     secs = (timezone.now() - obj.ts).total_seconds()
-    #
-    #     # require LIVE process for "Online"
-    #     rp = (RunningProcess.objects
-    #           .filter(camera=obj.camera, profile=obj.profile)
-    #           .order_by("-id")
-    #           .first())
-    #     # live = bool(rp and periodic._pid_alive(rp.pid))
-    #     live = bool(rp and _enf._pid_alive(rp.pid))
-    #
-    #     # Optional: treat repeated fps==0 as "No video"
-    #     # (a runner can be alive but camera powered off; it will send fps=0)
-    #     if secs <= STALE and obj.fps == 0 and live:
-    #         return mark_safe("<span style='color:#d97706;font-weight:600;'>No video</span>")
-    #
-    #     if live and secs <= ONLINE:
-    #         return mark_safe("<span style='color:#16a34a;font-weight:600;'>Online</span>")
-    #     if secs > OFFLINE:
-    #         return mark_safe("<span style='color:#b91c1c;font-weight:600;'>Offline</span>")
-    #     return mark_safe("<span style='color:#d97706;font-weight:600;'>Stale</span>")
 
     # in RunnerHeartbeatAdmin.status_col (apps/scheduler/admin.py)
     def status_col(self, obj):

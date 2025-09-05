@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 780">
+  <style>
+    .title{font:700 22px system-ui, sans-serif}
+    .h{font:600 16px system-ui, sans-serif}
+    .t{font:500 13px system-ui, sans-serif}
+    .box{fill:#fff;stroke:#1f2937;stroke-width:1.2;rx:10}
+    .policy{fill:#eef6ff;stroke:#2563eb}
+    .res{fill:#f5f3ff;stroke:#7c3aed}
+    .proc{fill:#ecfdf5;stroke:#059669}
+    .ui{fill:#fff7ed;stroke:#ea580c}
+    .arrow{stroke:#374151;stroke-width:1.4;marker-end:url(#a)}
+    .note{fill:#fef3c7;stroke:#d97706}
+  </style>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#374151"></path>
+    </marker>
+  </defs>
+
+  <text x="640" y="34" text-anchor="middle" class="title">BISK_RFv4 · Policy vs Resources → Normalized Runtime → Telemetry</text>
+
+  <!-- Policy layer -->
+  <rect x="60" y="70" width="520" height="250" class="box policy"></rect>
+  <text x="320" y="95" text-anchor="middle" class="h">POLICY (what to run)</text>
+
+    <rect x="90" y="120" width="220" height="180" class="box"></rect>
+    <text x="200" y="145" text-anchor="middle" class="h">StreamProfile</text>
+    <text x="100" y="170" class="t">• det_set_req</text>
+    <text x="100" y="190" class="t">• target_fps_req</text>
+    <text x="100" y="210" class="t">• snapshot_every, hb_interval</text>
+    <text x="100" y="230" class="t">• min_score, re_register_window</text>
+    <text x="100" y="250" class="t">• model_tag, rtsp_transport</text>
+    <text x="100" y="270" class="t">• is_active</text>
+
+    <rect x="340" y="120" width="220" height="180" class="box"></rect>
+    <text x="450" y="145" text-anchor="middle" class="h">Camera (policy overrides)</text>
+    <text x="350" y="170" class="t">• prefer_camera_over_profile</text>
+    <text x="350" y="190" class="t">• det_set_req?, target_fps_req?</text>
+    <text x="350" y="210" class="t">• snapshot_every?, hb_interval?</text>
+    <text x="350" y="230" class="t">• min_score?, model_tag?, transport?</text>
+    <text x="350" y="250" class="t">• is_active</text>
+
+  <!-- Resource layer -->
+  <rect x="700" y="70" width="520" height="250" class="box res"></rect>
+  <text x="960" y="95" text-anchor="middle" class="h">RESOURCES (where/how &amp; caps)</text>
+
+    <rect x="730" y="120" width="230" height="180" class="box"></rect>
+    <text x="845" y="145" text-anchor="middle" class="h">GlobalResourceSettings</text>
+    <text x="740" y="170" class="t">• device, hwaccel, gpu_index</text>
+    <text x="740" y="190" class="t">• cpu_affinity_mask, nice</text>
+    <text x="740" y="210" class="t">• max_fps_cap_default</text>
+    <text x="740" y="230" class="t">• det_set_max_default</text>
+    <text x="740" y="250" class="t">• is_active</text>
+
+    <rect x="990" y="120" width="200" height="180" class="box"></rect>
+    <text x="1090" y="145" text-anchor="middle" class="h">CameraResourceOverride</text>
+    <text x="1000" y="170" class="t">• device?, hwaccel?, gpu_index?</text>
+    <text x="1000" y="190" class="t">• cpu_affinity_mask?, nice?</text>
+    <text x="1000" y="210" class="t">• max_fps_cap?, det_set_max?</text>
+    <text x="1000" y="230" class="t">• is_active</text>
+
+  <!-- Merge arrows to Enforcer -->
+  <line x1="320" y1="320" x2="320" y2="430" class="arrow"></line>
+  <line x1="960" y1="320" x2="960" y2="430" class="arrow"></line>
+
+  <!-- Enforcer -->
+  <rect x="250" y="430" width="720" height="120" class="box proc"></rect>
+  <text x="610" y="455" text-anchor="middle" class="h">Enforcer → Normalize &amp; Clamp</text>
+  <text x="270" y="480" class="t">1) Requested policy = Profile → (Camera if prefer &amp; non-null)</text>
+  <text x="270" y="500" class="t">2) Resources = Global → (CRO if active &amp; non-null)</text>
+  <text x="270" y="520" class="t">3) Final = clamp(requested, caps) + placement → effective_args</text>
+
+  <!-- Runner + HB -->
+  <line x1="610" y1="550" x2="610" y2="610" class="arrow"></line>
+  <rect x="480" y="610" width="260" height="110" class="box"></rect>
+  <text x="610" y="635" text-anchor="middle" class="h">Runner</text>
+  <text x="500" y="660" class="t">• reads effective_args</text>
+  <text x="500" y="680" class="t">• skip-throttle to ≤ target_fps</text>
+  <text x="500" y="700" class="t">• heartbeat: camera_fps / processed_fps</text>
+
+  <!-- UI -->
+  <rect x="820" y="610" width="360" height="110" class="box ui"></rect>
+  <text x="1000" y="635" text-anchor="middle" class="h">Admin &amp; /dash/system</text>
+  <text x="840" y="660" class="t">• RP-first / HB-fallback display</text>
+  <text x="840" y="680" class="t">• show Requested vs Caps vs Final</text>
+
+  <line x1="740" y1="665" x2="820" y2="665" class="arrow"></line>
+  <line x1="740" y1="705" x2="820" y2="705" class="arrow"></line>
+
+  <!-- Note -->
+  <rect x="60" y="350" width="540" height="50" class="box note"></rect>
+  <text x="70" y="380" class="t">Rule of thumb: Policy lives in Profile/Camera. Resources &amp; caps live in Global/CRO only.</text>
+</svg>

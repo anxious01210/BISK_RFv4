@@ -3,8 +3,16 @@ import os, sys, signal, subprocess, time, shlex, psutil, re
 from dataclasses import dataclass
 from typing import Iterable, Optional
 from django.utils import timezone
-from apps.scheduler.models import SchedulePolicy, RunningProcess, StreamProfile
+
+from apps.scheduler.models import (
+    SchedulePolicy,
+    RunningProcess,
+    StreamProfile,
+    GlobalResourceSettings,
+    CameraResourceOverride,
+)
 from pathlib import Path
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 from django.db import transaction, IntegrityError
@@ -13,7 +21,6 @@ from apps.cameras.models import Camera
 from django.db.models import Max, Q
 from datetime import timedelta
 from django.conf import settings
-
 
 # How long a row must be Offline before we consider pruning (minutes).
 # Prefer minutes-based; fall back to hours for BC; default 6h.
@@ -42,6 +49,134 @@ DEFAULTS = {
     "fps": getattr(settings, "DEFAULT_FPS", 6),
     "detection_set": getattr(settings, "DEFAULT_DET_SET", "auto"),
 }
+
+
+# --- Policy/Resource normalization (Phase 2) ---
+def _as_int_or_none(x):
+    try:
+        if x in (None, "", "auto"): return None
+        return int(x)
+    except Exception:
+        return None
+
+
+def _choose_policy(camera, profile):
+    """
+    Requested policy values. Camera overrides win only if prefer flag is ON and value is non-null.
+    Returns dict with requested 'det_set', 'target_fps', 'hb_interval', 'snapshot_every',
+    'rtsp_transport', plus optional items if present on your models (min_score, model_tag).
+    """
+    prefer = bool(getattr(camera, "prefer_camera_over_profile", False))
+    # Profile (baseline)
+    det_req_p = getattr(profile, "det_set_req", getattr(profile, "detection_set", "auto"))
+    fps_req_p = getattr(profile, "target_fps_req", getattr(profile, "fps", None))
+    hb_p = getattr(profile, "hb_interval", None)
+    snap_p = getattr(profile, "snapshot_every", None)
+    tr_p = getattr(profile, "rtsp_transport", "") or ""
+    min_p = getattr(profile, "min_score", None)
+    model_p = getattr(profile, "model_tag", None)
+
+    # Camera overrides (nullable)
+    det_req_c = getattr(camera, "det_set_req", None)
+    fps_req_c = getattr(camera, "target_fps_req", None)
+    hb_c = getattr(camera, "hb_interval", None)
+    snap_c = getattr(camera, "snapshot_every", None)
+    tr_c = getattr(camera, "rtsp_transport", "") or ""
+    min_c = getattr(camera, "min_score", None)
+    model_c = getattr(camera, "model_tag", None)
+
+    def pick(cam_val, prof_val):
+        return cam_val if (prefer and cam_val not in (None, "")) else prof_val
+
+    return {
+        "det_req": str(pick(det_req_c, det_req_p) or "auto"),
+        "fps_req": _as_int_or_none(pick(fps_req_c, fps_req_p)),
+        "hb_interval": _as_int_or_none(pick(hb_c, hb_p)),
+        "snapshot_every": _as_int_or_none(pick(snap_c, snap_p)),
+        "rtsp_transport": (pick(tr_c, tr_p) or "auto"),
+        "min_score": pick(min_c, min_p),
+        "model_tag": pick(model_c, model_p),
+    }
+
+
+def _choose_resources(camera):
+    """
+    Effective placement defaults and caps:
+      start with Global (if active), then override with CRO (if active & non-null).
+    Returns dict with device, hwaccel, gpu_index, cpu_affinity, cpu_nice,
+    gpu_memory_fraction, gpu_target_util_percent, max_fps_cap, det_set_max.
+    """
+    # Global defaults
+    grs = GlobalResourceSettings.get_solo() if hasattr(GlobalResourceSettings,
+                                                       "get_solo") else GlobalResourceSettings.objects.order_by(
+        "pk").first()
+    res = {
+        "device": None, "hwaccel": None, "gpu_index": None,
+        "cpu_affinity": None, "cpu_nice": None,
+        "gpu_memory_fraction": None, "gpu_target_util_percent": None,
+        "max_fps_cap": None, "det_set_max": None,
+        "use_global": False, "use_cro": False,
+    }
+    if grs and getattr(grs, "is_active", True):
+        res["use_global"] = True
+        for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
+                  "gpu_memory_fraction", "gpu_target_util_percent"):
+            v = getattr(grs, k, None)
+            if v not in (None, ""): res[k] = v
+        # caps defaults
+        if getattr(grs, "max_fps_default", None) not in (None, ""):
+            res["max_fps_cap"] = getattr(grs, "max_fps_default")
+        if getattr(grs, "det_set_max", None) not in (None, ""):
+            res["det_set_max"] = str(getattr(grs, "det_set_max"))
+
+    # Camera override
+    cro = CameraResourceOverride.objects.filter(camera=camera).first()
+    if cro and getattr(cro, "is_active", False):
+        res["use_cro"] = True
+        for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
+                  "gpu_memory_fraction", "gpu_target_util_percent"):
+            v = getattr(cro, k, None)
+            if v not in (None, ""): res[k] = v
+        # caps overrides
+        if getattr(cro, "max_fps", None) not in (None, ""):
+            res["max_fps_cap"] = getattr(cro, "max_fps")
+        if getattr(cro, "det_set_max", None) not in (None, ""):
+            res["det_set_max"] = str(getattr(cro, "det_set_max"))
+
+    return res
+
+
+def _clamp_and_finalize(policy_req: dict, res: dict):
+    """
+    Clamp det_set and fps to caps; return (final_det_set:str, final_fps:int|None).
+    det_set policy is a string like 'auto','640','800','1024','1600','2048'.
+    """
+    # det_set
+    det_req = policy_req.get("det_req") or "auto"
+    det_max = res.get("det_set_max")
+
+    def det_to_int(s):
+        v = _as_int_or_none(s)
+        return v if v is not None else 10 ** 9  # 'auto' treated as huge so min(auto,cap)=cap
+
+    if det_max not in (None, "", "auto"):
+        det_final = str(min(det_to_int(det_req), det_to_int(det_max)))
+    else:
+        det_final = str(det_req)
+
+    # fps
+    fps_req = policy_req.get("fps_req")
+    fps_cap = res.get("max_fps_cap")
+    if fps_req is None and fps_cap is None:
+        fps_final = None
+    elif fps_req is None:
+        fps_final = int(fps_cap)
+    elif fps_cap is None:
+        fps_final = int(fps_req)
+    else:
+        fps_final = int(min(int(fps_req), int(fps_cap)))
+
+    return det_final, fps_final
 
 
 def _val(v):
@@ -153,101 +288,108 @@ def _in_window(now_t, s, e):
 
 
 def _start(camera, profile):
-    """
-    Start a runner for (camera, profile).
-    Returns (pid, cmdline_str).
-    """
-
     py = sys.executable
-    runner = Path(settings.BASE_DIR) / "extras" / "recognize_ffmpeg.py"
 
-    hb_interval = int(resolve_knob(camera, profile, "hb_interval") or 10)
-    snapshot_every = int(resolve_knob(camera, profile, "snapshot_every") or 10)
+    # 1) Normalize policy/resources
+    policy_req = _choose_policy(camera, profile)
+    res_eff = _choose_resources(camera)
+    det_set, fps = _clamp_and_finalize(policy_req, res_eff)
 
-    rtsp_transport = resolve_knob(camera, profile, "rtsp_transport") or "auto"  # auto/tcp/udp
-    hwaccel = resolve_knob(camera, profile, "hwaccel") or "none"  # none/nvdec
-    device = resolve_knob(camera, profile, "device") or "cpu"  # cpu/cuda
-    gpu_index = int(resolve_knob(camera, profile, "gpu_index") or 0)
+    # 2) Fill remaining policy knobs
+    hb_interval = policy_req.get("hb_interval") or getattr(settings, "HEARTBEAT_INTERVAL_DEFAULT", 10)
+    snapshot_every = policy_req.get("snapshot_every") or getattr(settings, "SNAPSHOT_EVERY_DEFAULT", 30)
+    rtsp_transport = policy_req.get("rtsp_transport") or "auto"
+    min_score = policy_req.get("min_score", None)
+    model_tag = policy_req.get("model_tag", None)
 
-    affinity_csv = resolve_knob(camera, profile, "cpu_affinity") or ""
-    cpu_affinity_s = affinity_csv.strip()
-    nice_raw = resolve_knob(camera, profile, "nice")
-    nice_value = int(nice_raw) if (nice_raw is not None and str(nice_raw) != "") else 0
-
-    # Still profile-driven (not affected by the toggle)
-    fps = int(getattr(profile, "fps", 6) or 6)
-    # Prefer detection_set; fall back to det_set for backward-compat
-    det_set = str(getattr(profile, "detection_set", getattr(profile, "det_set", "auto")) or "auto")
-
-    # Select which Python runner script to launch
+    # 3) Runner script
     impl = getattr(settings, "RUNNER_IMPL", "ffmpeg_all")
     runner = {
         "ffmpeg_all": getattr(settings, "RUNNER_SCRIPT_ALL", BASE_DIR / "extras" / "recognize_runner_all_ffmpeg.py"),
         "ffmpeg_one": getattr(settings, "RUNNER_SCRIPT_ONE", BASE_DIR / "extras" / "recognize_runner_ffmpeg.py"),
     }.get(impl, getattr(settings, "RUNNER_SCRIPT_ALL", BASE_DIR / "extras" / "recognize_runner_all_ffmpeg.py"))
 
-    # build the runner command (your runner builds/executes ffmpeg internally)
-    rtsp_cli = []
-    if rtsp_transport and rtsp_transport != "auto":
-        rtsp_cli = ["--rtsp_transport", rtsp_transport]
+    # 4) Build command (NO legacy placement here)
+    rtsp_cli = ["--rtsp_transport", rtsp_transport] if (rtsp_transport and rtsp_transport != "auto") else []
     cmd = [
-        str(py), str(runner),
-        "--camera", str(camera.id),
-        "--profile", str(profile.id),
-        "--fps", str(fps),
-        "--det_set", det_set,
-        "--hb", settings.RUNNER_HEARTBEAT_URL,
-        "--hb_key", settings.RUNNER_HEARTBEAT_KEY,
-        "--rtsp", camera.rtsp_url,  # keep your current field
-        "--ffmpeg", settings.FFMPEG_PATH,
-        "--ffprobe", settings.FFPROBE_PATH,
-        "--snapshots", str(settings.SNAPSHOT_DIR),
-        "--hb_interval", str(hb_interval),
-        "--snapshot_every", str(snapshot_every),
-        "--hwaccel", hwaccel,
-        "--device", device,
-        "--gpu_index", str(gpu_index),
-    ] + rtsp_cli
+              str(py), str(runner),
+              "--camera", str(camera.id),
+              "--profile", str(profile.id),
+              "--fps", str(fps if fps is not None else 0),
+              "--det_set", det_set,
+              "--hb", settings.RUNNER_HEARTBEAT_URL,
+              "--hb_key", settings.RUNNER_HEARTBEAT_KEY,
+              "--rtsp", camera.rtsp_url,
+              "--ffmpeg", settings.FFMPEG_PATH,
+              "--ffprobe", settings.FFPROBE_PATH,
+              "--snapshots", str(settings.SNAPSHOT_DIR),
+              "--hb_interval", str(hb_interval),
+              "--snapshot_every", str(snapshot_every),
+          ] + rtsp_cli
 
-    # Build env for the runner
+    if min_score is not None:
+        cmd += ["--min_score", str(min_score)]
+    if model_tag:
+        cmd += ["--model", str(model_tag)]
+
+    # 5) Placement ONLY from normalized resources (res_eff)
+    if res_eff.get("device"):
+        cmd += ["--device", str(res_eff["device"])]
+    if res_eff.get("gpu_index") not in (None, "", "auto"):
+        cmd += ["--gpu_index", str(res_eff["gpu_index"])]
+    if res_eff.get("hwaccel"):
+        cmd += ["--hwaccel", str(res_eff["hwaccel"])]
+
+    # 6) OS-level knobs come from resources too
+    cpu_affinity_s = (res_eff.get("cpu_affinity") or "").strip()
+    nice_value = int(res_eff.get("cpu_nice")) if res_eff.get("cpu_nice") not in (None, "") else 0
+
+    # 7) run
     env = os.environ.copy()
-    env["BISK_HB_INTERVAL"] = str(hb_interval)  # already computed above
-    env["BISK_SNAPSHOT_EVERY"] = str(snapshot_every)  # already computed above
+    env["BISK_HB_INTERVAL"] = str(hb_interval)
+    env["BISK_SNAPSHOT_EVERY"] = str(snapshot_every)
 
-    # spawn in its own session so killpg() works
     p = subprocess.Popen(
-        cmd,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        preexec_fn=os.setsid,
-        close_fds=True,
-        env=env,
+        cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        preexec_fn=os.setsid, close_fds=True, env=env
     )
 
-    # set affinity / nice for the runner (ffmpeg inherits)
+    # apply affinity/nice at OS level
     try:
         proc = psutil.Process(p.pid)
         if cpu_affinity_s:
             cores = [int(x) for x in cpu_affinity_s.split(",") if x.strip().isdigit()]
-            if cores:
-                proc.cpu_affinity(cores)
-        if nice_value:
-            proc.nice(nice_value)
+            if cores: proc.cpu_affinity(cores)
+        if nice_value: proc.nice(nice_value)
     except Exception:
         pass
 
-    # Helpers to mask any credentials in RTSP URLs before persisting
+    # Build the **env_snapshot** here (it needs res_eff)
+    env_snapshot = {
+        "hb_interval": str(hb_interval),
+        "snapshot_every": str(snapshot_every),
+        "rtsp_transport": rtsp_transport or "auto",
+        "BISK_PLACE_DEVICE": str(res_eff.get("device") or ""),
+        "BISK_PLACE_GPU_INDEX": str(res_eff.get("gpu_index") or ""),
+        "BISK_PLACE_HWACCEL": str(res_eff.get("hwaccel") or ""),
+        "BISK_CAP_MAX_FPS": str(res_eff.get("max_fps_cap") or ""),
+        "BISK_CAP_DET_SET_MAX": str(res_eff.get("det_set_max") or ""),
+        "_det_set": str(det_set),
+        "_fps": str(fps if fps is not None else 0),
+    }
+    if res_eff.get("cpu_nice") not in (None, ""):
+        env_snapshot["BISK_CPU_NICE"] = str(res_eff["cpu_nice"])
+    if res_eff.get("cpu_affinity") not in (None, ""):
+        env_snapshot["BISK_CPU_AFFINITY"] = str(res_eff["cpu_affinity"])
+
+    # mask and return
     def _mask_url(s: str) -> str:
-        # rtsp://user:pass@host -> rtsp://user:***@host
         return re.sub(r'(rtsp://[^:@\s]+:)[^@/\s]+(@)', r'\1***\2', s)
 
     def _mask_cmdline(argv):
         return " ".join(shlex.quote(_mask_url(x)) for x in argv)
 
-    # return PID and the masked command we ran (for audit/UI)
-    return p.pid, _mask_cmdline(cmd)
-
+    return p.pid, _mask_cmdline(cmd), env_snapshot, (nice_value if nice_value else None), cpu_affinity_s
 
 
 def _stop(pid: int, deadline: float = 3.0) -> bool:
@@ -414,6 +556,10 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
             for w in p.windows.filter(day_of_week=now_local.weekday()):
                 if _in_window(now_local.timetz().replace(tzinfo=None), w.start_time, w.end_time):
                     for cam in p.cameras.all():
+                        if hasattr(cam, "is_active") and cam.is_active is False:
+                            continue
+                        if hasattr(cam, "scan") and cam.scan is False:
+                            continue
                         pu = cam.pause_until
                         if pu and now < pu:
                             continue  # still paused
@@ -479,6 +625,62 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
         # Auto-prune long-dead rows (minute-based threshold)
         pruned = _prune_long_dead(now)
 
+        # --- NEW: spec-drift detection (restart runners whose config no longer matches) ---
+        for pair, rows in list(alive_by_pair.items()):
+            cam_id, prof_id = pair
+            try:
+                camera = Camera.objects.get(id=cam_id)
+                profile = StreamProfile.objects.get(id=prof_id)
+            except Camera.DoesNotExist:
+                continue
+
+            # Recompute the intended, normalized spec
+            pol = _choose_policy(camera, profile)
+            res = _choose_resources(camera)
+            det_final, fps_final = _clamp_and_finalize(pol, res)
+
+            # Build the minimal “desired env” view that we compare against what we saved at start
+            desired_env = {
+                "hb_interval": str(pol.get("hb_interval") or getattr(settings, "HEARTBEAT_INTERVAL_DEFAULT", 10)),
+                "snapshot_every": str(pol.get("snapshot_every") or getattr(settings, "SNAPSHOT_EVERY_DEFAULT", 30)),
+                "rtsp_transport": (pol.get("rtsp_transport") or "auto"),
+                "BISK_PLACE_DEVICE": str(res.get("device") or ""),
+                "BISK_PLACE_GPU_INDEX": str(res.get("gpu_index") or ""),
+                "BISK_PLACE_HWACCEL": str(res.get("hwaccel") or ""),
+                "BISK_CAP_MAX_FPS": str(res.get("max_fps_cap") or ""),
+                "BISK_CAP_DET_SET_MAX": str(res.get("det_set_max") or ""),
+                # Not strictly required, but cheap to include:
+                "_det_set": str(det_final),
+                "_fps": str(fps_final if fps_final is not None else 0),
+            }
+            # Optional CPU knobs if present
+            if res.get("cpu_nice") not in (None, ""):
+                desired_env["BISK_CPU_NICE"] = str(res["cpu_nice"])
+            if res.get("cpu_affinity") not in (None, ""):
+                desired_env["BISK_CPU_AFFINITY"] = str(res["cpu_affinity"])
+
+            # Compare against each alive row (if any differ, stop them now)
+            for r in rows:
+                current_env = dict(r.effective_env or {})
+                # embed det/fps from effective_args if you didn’t store them in env:
+                # (Cheap parse heuristic; safe to skip if you already store them in env)
+                # -- we rely mainly on the keys written by _start(), which you already do.
+                needs_restart = False
+                for k, v in desired_env.items():
+                    if str(current_env.get(k, "")) != str(v):
+                        needs_restart = True
+                        break
+                if needs_restart:
+                    if _stop(r.pid):
+                        r.status = "dead"
+                    else:
+                        r.status = "stopping"
+                    r.save(update_fields=["status"])
+                    # Remove this pair from 'alive' so the “start missing” pass will relaunch it
+                    alive_by_pair.pop(pair, None)
+                    break  # if there were multiple rows, one stop is enough
+        # --- end spec-drift detection ---
+
         # Start missing: desired pairs with no alive PID
         for cam_id, prof_id in desired - set(alive_by_pair.keys()):
             camera = Camera.objects.filter(id=cam_id).first()
@@ -497,67 +699,33 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                     old.status = "dead"
                     old.save(update_fields=["status"])
 
-            pid, cmdline = _start(camera, profile)
+            pid, cmdline, env_snapshot, nice_value, cpu_affinity_s = _start(camera, profile)
 
-            affinity_csv = resolve_knob(camera, profile, "cpu_affinity") or ""
-            cpu_affinity_s = affinity_csv.strip()
-
-            nice_raw = resolve_knob(camera, profile, "nice")
-            nice_value = int(nice_raw) if (nice_raw is not None and str(nice_raw) != "") else None
-
-
-            # Build a snapshot of the knobs we effectively used (camera-first/profile-first aware)
-            env_snapshot = {
-                "hb_interval": str(int(resolve_knob(camera, profile, "hb_interval") or 10)),
-                "snapshot_every": str(int(resolve_knob(camera, profile, "snapshot_every") or 3)),
-                "rtsp_transport": (resolve_knob(camera, profile, "rtsp_transport") or "auto"),
-                "hwaccel": (resolve_knob(camera, profile, "hwaccel") or "none"),
-                "device": (resolve_knob(camera, profile, "device") or "cpu"),
-                "gpu_index": int(resolve_knob(camera, profile, "gpu_index") or 0),
-            }
             with transaction.atomic():
-                try:
-                    row, created = RunningProcess.objects.get_or_create(
-                        camera=camera,
-                        profile=profile,
-                        pid=pid,
-                        defaults={
-                            "status": "running",
-                            "effective_args": cmdline,  # masked
-                            "effective_env": env_snapshot,
-                            "nice": (nice_value if (nice_raw is not None and str(nice_raw) != "") else None),
-                            "cpu_affinity": cpu_affinity_s,
-                        },
-                    )
-                    updates = []
-
-                    if not created and row.effective_args != cmdline:
-                        row.effective_args = cmdline
-                        updates.append("effective_args")
-
-                    if not created and row.effective_env != env_snapshot:
-                        row.effective_env = env_snapshot
-                        updates.append("effective_env")
-
-                    # persist knobs we applied OS-side
-                    expected_nice = nice_value if (nice_raw is not None and str(nice_raw) != "") else None
-                    if not created and row.nice != expected_nice:
-                        row.nice = expected_nice
-                        updates.append("nice")
-
-                    if not created and row.cpu_affinity != cpu_affinity_s:
-                        row.cpu_affinity = cpu_affinity_s
-                        updates.append("cpu_affinity")
-
-                    if updates:
-                        row.save(update_fields=updates)
-
-                except IntegrityError:
-                    row = RunningProcess.objects.get(camera=camera, profile=profile, pid=pid)
-
-                # ensure only this row is active for the pair
-                RunningProcess.objects.filter(camera=camera, profile=profile) \
-                    .exclude(id=row.id).update(status="dead")
+                row, created = RunningProcess.objects.get_or_create(
+                    camera=camera, profile=profile, pid=pid,
+                    defaults={
+                        "status": "running",
+                        "effective_args": cmdline,
+                        "effective_env": env_snapshot,
+                        "nice": nice_value,
+                        "cpu_affinity": cpu_affinity_s,
+                    },
+                )
+                updates = []
+                if not created and row.effective_args != cmdline:
+                    row.effective_args = cmdline;
+                    updates.append("effective_args")
+                if not created and row.effective_env != env_snapshot:
+                    row.effective_env = env_snapshot;
+                    updates.append("effective_env")
+                if not created and row.nice != nice_value:
+                    row.nice = nice_value;
+                    updates.append("nice")
+                if not created and row.cpu_affinity != cpu_affinity_s:
+                    row.cpu_affinity = cpu_affinity_s;
+                    updates.append("cpu_affinity")
+                if updates: row.save(update_fields=updates)
 
             started_list.append((camera.name, profile.name, pid))
 
