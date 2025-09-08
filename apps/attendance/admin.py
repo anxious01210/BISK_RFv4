@@ -188,7 +188,7 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
 
 @admin.register(Student)
 class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
-    list_display = ("h_code", "full_name", "gallery_count", "gallery_thumb", "is_active")
+    list_display = ("h_code", "is_active", "full_name", "grade", "gallery_count", "gallery_thumb", "has_lunch", "has_bus")
     search_fields = ("h_code", "first_name", "middle_name", "last_name")
     list_filter = ("is_active",)
     actions = [
@@ -197,6 +197,7 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
         sort_gallery_intake_crop_discard_action,  # crop + discard raw (enhanced)
         enroll_from_folder_action, build_embeddings_pkl_action
     ]
+
     change_list_template = "admin/attendance/student/change_list.html"
 
     # resource_class = StudentResource
@@ -328,7 +329,9 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
 
-    readonly_fields = ("best_crop_preview", "best_crop_url",)
+    readonly_fields = ("student", "period", "first_seen", "last_seen", "best_seen", "best_camera",
+                       "best_crop_preview", "best_crop_url", "best_score", "sightings", "status")
+    exclude = ("best_crop",)
 
     def _image_url(self, path: str | None) -> str | None:
         """
@@ -472,6 +475,8 @@ class AttendanceEventAdmin(admin.ModelAdmin):
     search_fields = ("student__h_code", "student__full_name")
     ordering = ("-ts",)
     list_select_related = ("student", "period__template", "camera")
+    readonly_fields = ("student_col", "score_col", "period_col", "camera", "ts", "face_preview", "crop_path")
+    exclude = ["period", "score", "student"]
 
     # Reuse the same normalization approach as AttendanceRecord preview
     def _image_url(self, path: str | None) -> str | None:
@@ -541,8 +546,9 @@ class RecognitionSettingsAdmin(admin.ModelAdmin):
                     "delete_old_cropped", "save_all_crops", "use_cosine_similarity",)
     readonly_fields = ("changed_at",)
     list_editable = ("min_score", "re_register_window_sec", "min_improve_delta", "min_face_px",
-                       "delete_old_cropped", "save_all_crops", "use_cosine_similarity",)
+                     "delete_old_cropped", "save_all_crops", "use_cosine_similarity",)
     list_display_links = ('id',)
+
 
 @admin.action(description="Activate selected")
 def activate_embeddings(modeladmin, request, queryset):

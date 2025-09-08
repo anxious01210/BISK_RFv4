@@ -1,16 +1,17 @@
-from datetime import datetime, time
-from django.conf import settings
-from django.contrib.auth.decorators import login_required
-from django.db.models import Q, OuterRef, Subquery
-from django.http import HttpResponse, HttpResponseForbidden
-from django.shortcuts import render
+from django.db.models import Q
+from django.db.models.functions import RowNumber
+from django.db.models.expressions import Window
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
-from django.utils.html import escape
+from datetime import datetime, time
+from django.contrib.auth.decorators import login_required
+from django.http import HttpResponse, HttpResponseForbidden
 from django.views.decorators.http import require_GET
+from django.shortcuts import render
+from django.utils.html import escape
+from django.conf import settings
 
 from .models import AttendanceRecord
-
 
 def _parse_any(s):
     if not s:
@@ -39,6 +40,10 @@ def lunch_page(request):
 @login_required
 @require_GET
 def lunch_stream_rows(request):
+    """
+    Streams <tr> rows for the lunch table based on filters in #params.
+    Returns HTML (tbody fragments). HTMX appends them with hx-swap="beforeend".
+    """
     if not _is_lunch_supervisor(request.user):
         return HttpResponseForbidden("Requires lunch_supervisor")
 
@@ -46,16 +51,16 @@ def lunch_stream_rows(request):
           .select_related("student", "period__template", "best_camera")
           .all())
 
-    # Period filter
+    # Periods (comma list; case-insensitive on template name)
     period_param = request.GET.get("period", "lunch-pri,lunch-sec")
-    parts = [p.strip() for p in (period_param or "").split(",") if p.strip()]
+    parts = [p.strip() for p in period_param.split(",") if p.strip()]
     if parts:
         q = Q()
         for p in parts:
             q |= Q(period__template__name__iexact=p)
         qs = qs.filter(q)
 
-    # Camera filter
+    # Camera filter (comma list of camera names; case-insensitive per value)
     camera_param = request.GET.get("camera")
     if camera_param:
         cams = [c.strip() for c in camera_param.split(",") if c.strip()]
@@ -65,19 +70,19 @@ def lunch_stream_rows(request):
                 cam_q |= Q(best_camera__name__iexact=c)
             qs = qs.filter(cam_q)
 
-    # Eligible
+    # Eligible only
     if request.GET.get("eligible_only") in ("1", "true", "True", "yes"):
         qs = qs.filter(student__has_lunch=True)
 
-    # Min score
+    # Min score (optional)
     try:
         min_score = float(request.GET.get("min_score", "") or "nan")
-        if min_score == min_score:
+        if min_score == min_score:  # not NaN
             qs = qs.filter(best_score__gte=min_score)
     except ValueError:
         pass
 
-    # Search
+    # Search q (H-code or name)  <-- ensure '=' not '?'
     qtxt = request.GET.get("q")
     if qtxt:
         qs = qs.filter(
@@ -87,7 +92,7 @@ def lunch_stream_rows(request):
             Q(student__last_name__icontains=qtxt)
         )
 
-    # Date range
+    # date_from / date_to (accept date or datetime ISO)
     start_dt = _parse_any(request.GET.get("date_from"))
     end_dt = _parse_any(request.GET.get("date_to"))
     if start_dt:
@@ -95,54 +100,44 @@ def lunch_stream_rows(request):
     if end_dt:
         qs = qs.filter(best_seen__lte=end_dt)
 
-    mode = request.GET.get("mode", "latest")
-
-    # Cursor only for all mode
+    # Incremental: after_ts (best_seen >= after_ts)
     at = _parse_any(request.GET.get("after_ts"))
-    if at and mode != "latest":
+    if at:
         qs = qs.filter(best_seen__gte=at)
 
+    # Mode: all vs latest-per-student-per-period
+    mode = request.GET.get("mode", "latest")  # 'latest' or 'all'
     if mode == "latest":
-        latest_pk = (
-            AttendanceRecord.objects
-            .filter(student_id=OuterRef("student_id"),
-                    period_id=OuterRef("period_id"))
-            .order_by("-best_seen", "-id")
-            .values("pk")[:1]
-        )
-        qs = qs.filter(pk=Subquery(latest_pk))
+        qs = qs.annotate(
+            rn=Window(
+                expression=RowNumber(),
+                partition_by=["student_id", "period_id"],
+                order_by=["-best_seen"],
+            )
+        ).filter(rn=1)
 
+    # Order ascending by time so incremental appends make sense
     qs = qs.order_by("best_seen")[:200]
 
+    # Build tbody rows
     rows = []
-    media_url = (settings.MEDIA_URL or "").rstrip("/")
+    media_url = settings.MEDIA_URL.rstrip("/") if getattr(settings, "MEDIA_URL", "") else ""
     for rec in qs:
-        st = rec.student
-        h = escape(getattr(st, "h_code", ""))
-        name = escape(st.full_name() if hasattr(st, "full_name") else "")
+        h = escape(getattr(rec.student, "h_code", ""))
+        name = escape(rec.student.full_name() if hasattr(rec.student, "full_name") else "")
         per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
         score = f"{float(rec.best_score or 0.0):.2f}"
         cam = escape(getattr(rec.best_camera, "name", "") or "-")
-        eligible = "Yes" if getattr(st, "has_lunch", False) else "No"
-        eligible_html = f"<span class='badge g'>LUNCH</span>" if st.has_lunch else f"<span class='badge r'>No Lunch</span>"
         ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
         pc = int(getattr(rec, "pass_count", 1) or 1)
         badge_class = "badge r" if pc >= 2 else "badge g"
-
         crop = getattr(rec, "best_crop", "") or ""
-        crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
-        crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
+        if crop.startswith("http://") or crop.startswith("https://"):
+            img_url = crop
+        else:
+            img_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
 
-        gallery_url = ""
-        try:
-            if hasattr(st, "gallery_photo_relurl"):
-                u = st.gallery_photo_relurl()
-                gallery_url = u or ""
-        except Exception:
-            gallery_url = ""
-        gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
-
-        img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
+        img_html = f'<img src="{img_url}" class="photo" loading="lazy"/>' if img_url else "—"
 
         rows.append(
             f"<tr>"
@@ -150,7 +145,6 @@ def lunch_stream_rows(request):
             f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
             f"<td>{per_name}</td>"
             f"<td>{cam}</td>"
-            f"<td>{eligible_html}</td>"
             f"<td><span class='{badge_class}'>{pc}</span></td>"
             f"<td>{score}</td>"
             f"<td class='small'>{ts}</td>"
@@ -164,7 +158,7 @@ def lunch_stream_rows(request):
     headers = {}
     if rows:
         try:
-            last_ts = qs[len(qs) - 1].best_seen.astimezone().isoformat()
+            last_ts = qs[len(qs)-1].best_seen.astimezone().isoformat()
             headers["HX-Trigger"] = f'{{"lunch:last_ts": "{last_ts}"}}'
         except Exception:
             pass

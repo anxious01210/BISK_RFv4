@@ -1,0 +1,31 @@
+{% for r in records %}
+    <tr data-seen-ts="{{ r.best_seen|date:'c' }}" data-new="1">
+        <td>
+            {# gallery photo (first image in face_gallery) #}
+            {% if r.student.gallery_photo_relurl %}
+                <img class="photo" src="{{ r.student.gallery_photo_relurl }}" alt="">
+            {% else %}
+                <div class="photo" style="background:#333;border-radius:6px;"></div>
+            {% endif %}
+
+            {# LIVE CROP from AttendanceRecord.best_crop #}
+            {% if r.best_crop %}
+                <img class="photo" src="/media/{{ r.best_crop }}" alt="" style="margin-left:6px;">
+            {% endif %}
+        </td>
+
+        <td>{{ r.student.h_code }}</td>
+        <td>{{ r.student.full_name }}</td>
+        <td>{{ r.student.grade|default:"—" }}</td>
+
+        <td>{% if r.student.has_lunch %}<span class="badge g">Eligible</span>{% else %}
+            <span class="badge r">No Lunch</span>{% endif %}</td>
+
+        <td>{% if r.pass_count|default:1 >= 2 %}<span class="badge r">{{ r.pass_count|default:1 }}</span>
+        {% else %}<span class="badge g">{{ r.pass_count|default:1 }}</span>{% endif %}</td>
+
+        <td>{{ r.best_score|floatformat:2 }}</td>
+        <td class="small">{{ r.best_seen|date:"H:i:s" }}</td>
+        <td class="small">{{ r.best_camera.name|default:r.best_camera }}</td>
+    </tr>
+{% endfor %}

@@ -1,0 +1,246 @@
+{% load static %}
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Lunch — Live</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    body { background:#0b0b0b; color:#ddd; font-family:system-ui,sans-serif; }
+    .sticky-head { position:sticky; top:0; background:#111; color:#fff; padding:10px; z-index:10; }
+    .badge { padding:2px 8px; border-radius:9999px; font-size:12px; color:#fff; }
+    .g { background:#16a34a } .r { background:#dc2626 }
+    .photo { width:44px; height:44px; object-fit:cover; border-radius:6px; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { padding:8px; border-bottom:1px solid #333; vertical-align:middle; }
+    .small { font-size:12px; opacity:.8; }
+  </style>
+</head>
+<body>
+
+<div class="sticky-head">
+  <strong>Lunch — Live</strong>
+  <span id="live-counts" class="small" style="margin-left:8px;"></span>
+  <div class="small" style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <label>Mode
+      <select id="modeSel">
+        <option value="latest" selected>Latest per student</option>
+        <option value="all">All records</option>
+      </select>
+    </label>
+
+    <label>Periods
+      <select id="periodSel" multiple size="2">
+        <option value="lunch-pri" selected>lunch-pri</option>
+        <option value="lunch-sec" selected>lunch-sec</option>
+      </select>
+    </label>
+
+    <label>Camera
+      <input id="cameraInp" placeholder="Dept_01,Dept_02" style="width:160px;">
+    </label>
+
+    <label>Eligible only
+      <input id="eligibleChk" type="checkbox">
+    </label>
+
+    <label>Min score
+      <input id="minScore" type="number" step="0.01" min="0" max="1" style="width:80px;">
+    </label>
+
+    <label>Since
+      <select id="sinceSel">
+        <option value="today" selected>Today</option>
+        <option value="15m">Last 15m</option>
+        <option value="1h">Last 1h</option>
+      </select>
+    </label>
+
+    <label>Poll
+      <select id="pollSel">
+        <option value="2000" selected>2s</option>
+        <option value="3000">3s</option>
+        <option value="5000">5s</option>
+        <option value="0">Paused</option>
+      </select>
+    </label>
+
+    <button id="resetBtn" type="button">Reset cursor</button>
+    <span id="spinner" class="small" style="display:none;margin-left:10px;">Loading…</span>
+  </div>
+
+  <audio id="ding" preload="auto">
+    <source src="{% static 'attendance/ding.mp3' %}" type="audio/mpeg">
+  </audio>
+</div>
+
+<form id="params">
+  <input type="hidden" name="mode" id="mode" value="latest">
+  <input type="hidden" name="period" id="period" value="lunch-pri,lunch-sec">
+  <input type="hidden" name="camera" id="camera" value="">
+  <input type="hidden" name="eligible_only" id="eligible_only" value="">
+  <input type="hidden" name="min_score" id="min_score" value="">
+  <input type="hidden" name="q" id="q" value="">
+  <input type="hidden" name="date_from" id="date_from" value="">
+  <input type="hidden" name="date_to" id="date_to" value="">
+  <input type="hidden" name="after_ts" id="after_ts" value="">
+</form>
+
+<table>
+  <thead>
+    <tr>
+      <th>Photos</th><th>Student</th><th>Period</th><th>Camera</th>
+      <th>Eligible</th><th>Pass</th><th>Score</th><th>Time</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<!-- HTMX driver -->
+<div id="lunch-driver"
+     hx-get="{% url 'attendance:lunch_stream_rows' %}"
+     hx-trigger="load, refresh, every 2s"
+     hx-include="#params"
+     hx-target="#rows"
+     hx-swap="innerHTML"
+     hx-indicator="#spinner"></div>
+
+<script>
+  // Debug: log outgoing params
+  document.body.addEventListener('htmx:beforeRequest', e => {
+    if (e.detail.elt?.id === 'lunch-driver') {
+      const obj = Object.fromEntries(new FormData(document.getElementById('params')).entries());
+      console.log('[HTMX] fetching rows with', obj);
+    }
+  });
+
+  let _lastTs = null;
+
+  function isoTodayStart() {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    return start.toISOString();
+  }
+  function isoSince(minutes) {
+    const now = new Date();
+    const d = new Date(now.getTime() - minutes * 60 * 1000);
+    return d.toISOString();
+  }
+  function updateSince() {
+    const sel = document.getElementById('sinceSel').value;
+    let from;
+    if (sel === 'today') from = isoTodayStart();
+    else if (sel === '15m') from = isoSince(15);
+    else from = isoSince(60);
+    document.getElementById('date_from').value = from;
+  }
+  function updatePeriods() {
+    const opts = Array.from(document.getElementById('periodSel').selectedOptions).map(o => o.value);
+    document.getElementById('period').value = opts.join(',') || 'lunch-pri,lunch-sec';
+  }
+  function updateEligible() {
+    document.getElementById('eligible_only').value = document.getElementById('eligibleChk').checked ? '1' : '';
+  }
+  function updateMode() {
+    const mode = document.getElementById('modeSel').value;
+    document.getElementById('mode').value = mode;
+    setSwapForMode();
+  }
+  function updateCamera() {
+    document.getElementById('camera').value = document.getElementById('cameraInp').value.trim();
+  }
+  function updateMinScore() {
+    document.getElementById('min_score').value = document.getElementById('minScore').value.trim();
+  }
+  function resetCursor() {
+    _lastTs = null;
+    document.getElementById('after_ts').value = '';
+    document.getElementById('rows').innerHTML = '';
+  }
+
+  // Choose swap & cursor policy per mode
+  function setSwapForMode() {
+    const driver = document.getElementById('lunch-driver');
+    const mode = document.getElementById('modeSel').value;
+    if (mode === 'latest') {
+      driver.setAttribute('hx-swap', 'innerHTML');  // replace tbody each refresh
+      document.getElementById('after_ts').value = ''; // ignore cursor in latest
+    } else {
+      driver.setAttribute('hx-swap', 'beforeend');   // stream append in All
+    }
+  }
+
+  // Poll interval: keep 'refresh', re-init node, re-bind HTMX, and fetch
+  function applyPollInterval() {
+    const ms = parseInt(document.getElementById('pollSel').value || '2000', 10);
+    const driver = document.getElementById('lunch-driver');
+
+    let trigger = 'load, refresh';
+    if (ms > 0) trigger += `, every ${Math.max(1, Math.round(ms / 1000))}s`;
+    driver.setAttribute('hx-trigger', trigger);
+
+    // preserve hx-swap decided by mode
+    const swap = driver.getAttribute('hx-swap') || 'beforeend';
+
+    const clone = driver.cloneNode(true);
+    clone.setAttribute('hx-swap', swap);
+    driver.replaceWith(clone);
+    if (window.htmx && htmx.process) htmx.process(clone);
+
+    htmx.trigger('#lunch-driver', 'refresh');
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    updateSince();
+    updatePeriods();
+    updateEligible();
+    updateMode();
+    updateCamera();
+    updateMinScore();
+    setSwapForMode();
+
+    document.getElementById('modeSel').addEventListener('change',  () => { updateMode();     resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('periodSel').addEventListener('change',() => { updatePeriods();  resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('eligibleChk').addEventListener('change',() => { updateEligible();resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('cameraInp').addEventListener('change', () => { updateCamera();  resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('minScore').addEventListener('change',() => { updateMinScore(); resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('sinceSel').addEventListener('change', () => { updateSince();   resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('pollSel').addEventListener('change', applyPollInterval);
+    document.getElementById('resetBtn').addEventListener('click', () => { resetCursor();    htmx.trigger('#lunch-driver', 'refresh'); });
+
+    // first fetch
+    htmx.trigger('#lunch-driver', 'refresh');
+  });
+
+  // After rows arrive: update counts + advance cursor + (try to) play sound
+  document.body.addEventListener('htmx:afterSwap', (e) => {
+    if (e.detail.elt?.id !== 'rows') return;
+
+    const rowsAdded = (e.detail.xhr?.responseText || '').trim().length > 0;
+    if (rowsAdded) {
+      const total = document.querySelectorAll('#rows tr').length;
+      document.getElementById('live-counts').textContent = `${total} row(s)`;
+
+      const trig = e.detail.xhr.getResponseHeader('HX-Trigger');
+      if (trig) {
+        try {
+          const data = JSON.parse(trig);
+          if (data['lunch:last_ts']) {
+            _lastTs = data['lunch:last_ts'];
+            document.getElementById('after_ts').value = _lastTs;
+          }
+        } catch (_) {}
+      } else {
+        const nowIso = new Date().toISOString();
+        _lastTs = nowIso;
+        document.getElementById('after_ts').value = nowIso;
+      }
+
+      const audio = document.getElementById('ding');
+      if (audio && audio.play) { audio.currentTime = 0; audio.play().catch(() => {}); }
+    }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+{% load static %}
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Lunch — Live</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        body {
+            background: #0b0b0b;
+            color: #ddd;
+            font-family: system-ui, sans-serif;
+        }
+
+        .sticky-head {
+            position: sticky;
+            top: 0;
+            background: #111;
+            color: #fff;
+            padding: 10px;
+            z-index: 10;
+        }
+
+        .badge {
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-size: 12px;
+            color: #fff;
+        }
+
+        .g {
+            background: #16a34a
+        }
+
+        .r {
+            background: #dc2626
+        }
+
+        .photo {
+            width: 44px;
+            height: 44px;
+            object-fit: cover;
+            border-radius: 6px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 8px;
+            border-bottom: 1px solid #333;
+        }
+
+        .small {
+            font-size: 12px;
+            opacity: .8;
+        }
+    </style>
+</head>
+<body>
+<div class="sticky-head">
+    <strong>Lunch — Live</strong>
+    <span id="live-counts" class="small" style="margin-left:8px;"></span>
+    <audio id="ding" preload="auto">
+        <source src="{% static 'attendance/ding.mp3' %}" type="audio/mpeg">
+    </audio>
+</div>
+
+<script>
+    window._lunchLastTs = null;
+
+    function setTodayStart() {
+        const now = new Date();
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+        document.getElementById("period").value = "lunch-pri,lunch-sec";
+        document.getElementById("date_from").value = start.toISOString();
+    }
+
+    // called after each swap to bump after_ts and play sound
+    function onRowsAppended() {
+        const tbody = document.getElementById("rows");
+        const newRows = tbody.querySelectorAll('tr[data-seen-ts][data-new="1"]');
+        if (newRows.length) {
+            let maxTs = window._lunchLastTs;
+            newRows.forEach(r => {
+                const ts = r.getAttribute("data-seen-ts");
+                if (!maxTs || ts > maxTs) maxTs = ts;
+                r.removeAttribute("data-new");
+            });
+            window._lunchLastTs = maxTs;
+            document.getElementById("after_ts").value = maxTs || "";
+            const ding = document.getElementById("ding");
+            if (ding) {
+                ding.play().catch(() => {
+                });
+            }   // swallow autoplay rejection
+        }
+        document.getElementById("live-counts").textContent =
+            `rows: ${document.querySelectorAll("#rows tr").length}`;
+    }
+
+    // global listener instead of hx-on inline
+    document.addEventListener("htmx:afterSwap", function (evt) {
+        if (evt.target && evt.target.id === "rows") onRowsAppended();
+    });
+
+    // set defaults on load
+    function setTodayStart() {
+        const now = new Date();
+        // send just the date, not a full ISO datetime
+        const yyyyMmDd = now.toISOString().slice(0, 10);
+        document.getElementById("period").value = "lunch-pri,lunch-sec";
+        document.getElementById("date_from").value = yyyyMmDd;
+    }
+
+    document.addEventListener("DOMContentLoaded", setTodayStart);
+</script>
+
+<form id="params">
+    <input type="hidden" name="period" id="period" value="">
+    <input type="hidden" name="date_from" id="date_from" value="">
+    <input type="hidden" name="after_ts" id="after_ts" value="">
+</form>
+
+<div id="lunch-driver"
+     hx-get="{% url 'attendance:lunch_stream_rows' %}"
+     hx-trigger="load, every 2s"
+     hx-include="#params"
+     hx-target="#rows"
+     hx-swap="beforeend">
+</div>
+
+<table>
+    <thead class="small">
+    <tr>
+        <th>Photo</th>
+        <th>H-code</th>
+        <th>Name</th>
+        <th>Grade</th>
+        <th>Eligible</th>
+        <th>Pass</th>
+        <th>Score</th>
+        <th>Time</th>
+        <th>Camera</th>
+    </tr>
+    <tbody id="rows"></tbody>
+</table>
+
+
+</body>
+</html>
