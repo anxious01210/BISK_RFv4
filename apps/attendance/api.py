@@ -10,9 +10,17 @@ from django.utils.dateparse import parse_datetime
 from django.conf import settings
 from apps.cameras.models import Camera  # adjust if your path differs
 from .services import ingest_match
+from django.db.models import Q
 
 import base64
 from rest_framework import status
+
+
+def parse_iso(dt_str):
+    if not dt_str:
+        return None
+    dt = parse_datetime(dt_str)
+    return dt  # your project runs system time at UTC+3; keep consistent
 
 
 class AttendanceRecordFilter(FilterSet):
@@ -21,7 +29,7 @@ class AttendanceRecordFilter(FilterSet):
     min_score = NumberFilter(field_name="best_score", lookup_expr="gte")
     h_code = CharFilter(field_name="student__h_code", lookup_expr="iexact")
     camera = CharFilter(field_name="best_camera__name", lookup_expr="iexact")
-    period = CharFilter(field_name="period__template__name", lookup_expr="iexact")
+    # period = CharFilter(field_name="period__template__name", lookup_expr="iexact")
 
     class Meta:
         model = AttendanceRecord
@@ -38,9 +46,27 @@ class AttendanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
     ordering = ["-best_seen"]
 
     def get_queryset(self):
-        return (AttendanceRecord.objects
-                .select_related("student", "period__template", "best_camera")
-                .all())
+        from django.db.models import Q
+        qs = (AttendanceRecord.objects
+              .select_related("student", "period__template", "best_camera")
+              .all())
+
+        # Multi-period: ?period=a,b,c (case-insensitive)
+        period_param = self.request.GET.get("period")
+        if period_param:
+            parts = [p.strip() for p in period_param.split(",") if p.strip()]
+            if parts:
+                q = Q()
+                for p in parts:
+                    q |= Q(period__template__name__iexact=p)
+                qs = qs.filter(q)
+
+        # Incremental: ?after_ts=ISO8601  (on best_seen)
+        after_ts = parse_iso(self.request.GET.get("after_ts"))
+        if after_ts:
+            qs = qs.filter(best_seen__gte=after_ts)
+
+        return qs
 
 
 class IngestView(APIView):

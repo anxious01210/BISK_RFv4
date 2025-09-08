@@ -2,24 +2,48 @@
 from django.db import models
 from django.db.models import Q, UniqueConstraint
 from django.utils import timezone
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.conf import settings
+from pathlib import Path
 
 
 class Student(models.Model):
-    # --- existing fields (keep yours, e.g. h_code, is_active, etc.) ---
-    h_code = models.CharField(max_length=32, unique=True)
+    GRADE_CHOICES = [
+        ("KG1", "Kindergarten 1"), ("KG2", "Kindergarten 2"),
+        ("G1", "Grade 1"), ("G2", "Grade 2"), ("G3", "Grade 3"),
+        ("G4", "Grade 4"), ("G5", "Grade 5"), ("G6", "Grade 6"),
+        ("G7", "Grade 7"), ("G8", "Grade 8"), ("G9", "Grade 9"),
+        ("G10", "Grade 10"), ("G11", "Grade 11"), ("G12", "Grade 12"),
+    ]
+    h_code = models.CharField(max_length=32, unique=True,
+                              help_text="Human/School code (unique student identifier, e.g., H123456).")
     is_active = models.BooleanField(default=True)
 
     # NEW: split name fields (use empty strings rather than NULLs)
-    first_name = models.CharField(max_length=100, blank=True, default="")
-    middle_name = models.CharField(max_length=100, blank=True, default="")
-    last_name = models.CharField(max_length=100, blank=True, default="")
+    first_name = models.CharField(max_length=100, blank=True, default="", help_text="Given name.")
+    middle_name = models.CharField(max_length=100, blank=True, default="", help_text="Middle name(s), if any.")
+    last_name = models.CharField(max_length=100, blank=True, default="", help_text="Family name / surname.")
 
-    # REMOVE the old full_name = models.CharField(...) field.
-    # (Do NOT delete it here yet; we will remove it in the 2nd migration!)
-    # For the code edit step: comment it out now so makemigrations detects removal.
-    # full_name = models.CharField(max_length=255, blank=True, default="")  # <- to be removed
+    grade = models.CharField(max_length=8, choices=GRADE_CHOICES, blank=True, null=True, db_index=True)
+    has_lunch = models.BooleanField(default=True, db_index=True)
+    has_bus = models.BooleanField(default=False, db_index=True)
 
-    # ... whatever else you already had ...
+    # --- helper: derive face_gallery first image (no ImageField yet) ---
+    def gallery_photo_relurl(self) -> str | None:
+        """
+        Return "/media/face_gallery/<H_CODE>/first_image.jpg" or None if not found.
+        """
+        if not getattr(self, "h_code", None):
+            return None
+        base_fs = Path(settings.MEDIA_ROOT) / "face_gallery" / str(self.h_code)
+        if not base_fs.exists():
+            return None
+        exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        files = sorted([p for p in base_fs.rglob("*") if p.is_file() and p.suffix.lower() in exts])
+        if not files:
+            return None
+        rel = files[0].relative_to(settings.MEDIA_ROOT).as_posix()
+        return f"{settings.MEDIA_URL}{rel}"
 
     def full_name(self) -> str:
         """
@@ -111,11 +135,24 @@ class AttendanceRecord(models.Model):
     first_seen = models.DateTimeField()
     last_seen = models.DateTimeField()
     best_seen = models.DateTimeField()
-    best_score = models.FloatField()
     best_camera = models.ForeignKey("cameras.Camera", null=True, blank=True, on_delete=models.SET_NULL)
-    best_crop = models.CharField(max_length=300, blank=True, default="")
-    sightings = models.PositiveIntegerField(default=1)
-    status = models.CharField(max_length=16, default="present")
+    best_score = models.FloatField(
+        help_text="Highest similarity score observed during this record’s time window."
+    )
+    best_crop = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="MEDIA-relative path of the best face crop for this record."
+    )
+    sightings = models.PositiveIntegerField(
+        default=1,
+        help_text="How many frames contributed to this record (debounced within the window)."
+    )
+    status = models.CharField(
+        max_length=16, default="present",
+        help_text="Computed attendance status for the period (e.g., present/late/absent)."
+    )
+    pass_count = models.PositiveIntegerField(default=1)          # new
+    last_pass_at = models.DateTimeField(blank=True, null=True, db_index=True)  # new
 
     class Meta:
         unique_together = [("student", "period")]
@@ -126,27 +163,88 @@ class AttendanceEvent(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
     period = models.ForeignKey(PeriodOccurrence, on_delete=models.SET_NULL, null=True, blank=True)
     camera = models.ForeignKey("cameras.Camera", on_delete=models.SET_NULL, null=True, blank=True)
-    ts = models.DateTimeField(help_text="The timestamp of the event where it was taken.")
-    score = models.FloatField()
-    crop_path = models.CharField(max_length=300, blank=True, default="")
+    ts = models.DateTimeField(
+        help_text="Timestamp (timezone-aware) when this event was generated."
+    )
+    score = models.FloatField(
+        help_text="Similarity score for this event (0.00–1.00; higher means more similar to the enrolled embedding)."
+    )
+    crop_path = models.CharField(
+        max_length=300, blank=True, default="",
+        help_text="MEDIA-relative path of the face crop saved for this event (if any)."
+    )
 
 
 class RecognitionSettings(models.Model):
-    min_score = models.FloatField(default=0.75)
-    re_register_window_sec = models.PositiveIntegerField(default=10)
-    min_improve_delta = models.FloatField(default=0.01)
-    delete_old_cropped = models.BooleanField(default=False)
-    save_all_crops = models.BooleanField(default=False)
-    use_cosine_similarity = models.BooleanField(default=True)
+    min_score = models.FloatField(
+        default=0.75,
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+        help_text=(
+            "Minimum similarity score (0.00–1.00) required to accept a match. "
+            "Raise this to reduce false accepts; lower it to recognize faces at longer distances "
+            "or in poor lighting. Typical range: 0.50–0.85. Default 0.75."
+        ),
+    )
+    re_register_window_sec = models.PositiveIntegerField(
+        default=10,
+        help_text=(
+            "Debounce window in seconds per student. During this window, repeated detections of the "
+            "same person on the same camera/period will not create new records; we only update "
+            "last_seen/best_seen. Prevents duplicate ‘pops’ when a person stays in view."
+        ),
+    )
+    min_improve_delta = models.FloatField(
+        default=0.01,
+        validators=[MinValueValidator(0.0), MaxValueValidator(1.0)],
+        help_text=(
+            "Within the debounce window, only update best_seen if the new score improves the previous "
+            "best by at least this amount. Example: 0.02 avoids churn from tiny score fluctuations."
+        ),
+    )
+    delete_old_cropped = models.BooleanField(
+        default=False,
+        help_text=(
+            "If ON, old cropped face images will be deleted automatically to save disk space. "
+            "Turn OFF if you need to keep historical crops for audit/debug."
+        ),
+    )
+    save_all_crops = models.BooleanField(
+        default=False,
+        help_text=(
+            "If ON, save every detected face crop (matched and unmatched). Useful for tuning but "
+            "increases disk usage and I/O. If OFF, only matched/best crops are saved."
+        ),
+    )
+    use_cosine_similarity = models.BooleanField(
+        default=True,
+        help_text=(
+            "Similarity metric preference. Cosine similarity (ON) is the default and recommended. "
+            "Note: current runtime uses cosine regardless; this flag is reserved for future switching."
+        ),
+    )
     max_periods_per_day = models.PositiveSmallIntegerField(
         null=True, blank=True,
-        help_text="If set, cap how many periods can count as 'present' per student per day."
+        help_text=(
+            "Optional cap on how many periods can count as ‘present’ per student per day. "
+            "Leave blank for no limit. Example: 1 = only the first recognized period counts."
+        ),
     )
     min_face_px = models.PositiveIntegerField(
         default=40,
-        help_text="Drop faces smaller than this many pixels on the shortest bbox side. (ex. like 36px to have maximum up to 5m distance for recognitions.)"
+        help_text=(
+            "Reject faces smaller than this many pixels (shortest side of the face bounding box) "
+            "before scoring. Use this to control the ‘working distance’: higher = requires closer/bigger "
+            "faces (fewer false accepts), lower = allows farther/smaller faces (more recalls). "
+            "Guideline for 1440p streams: 36–48 px ≈ ~4–6 m with good optics/bitrate."
+        ),
     )
-    changed_at = models.DateTimeField(auto_now=True, help_text="Bumps on every save to notify runners.")
+    changed_at = models.DateTimeField(
+        auto_now=True,
+        help_text=(
+            "Auto-updated change marker. Runners poll this field and hot-reload settings within a few "
+            "seconds after you save."
+        ),
+    )
 
     @classmethod
     def get_solo(cls):
@@ -228,7 +326,6 @@ class FaceEmbedding(models.Model):
         default=0.0,
         help_text="Mean of the per-image ROI quality scores (0..1) for the images used to build the .npy."
     )
-
 
     used_images = models.JSONField(
         default=list, blank=True,

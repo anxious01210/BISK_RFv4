@@ -12,6 +12,9 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     period_end = serializers.DateTimeField(source="period.end_dt")
     camera = serializers.CharField(source="best_camera.name")
     crop_url = serializers.SerializerMethodField()
+    student_grade = serializers.SerializerMethodField()
+    student_photo_url = serializers.SerializerMethodField()
+    pass_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = AttendanceRecord
@@ -29,6 +32,9 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             "best_score",
             "camera",
             "crop_url",
+            "pass_count",
+            "student_grade",
+            "student_photo_url",
         )
 
     def get_crop_url(self, obj):
@@ -37,3 +43,11 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
 
     def get_full_name(self, obj):
         return obj.student.full_name()
+
+    def get_student_grade(self, obj):
+        return getattr(obj.student, "grade", None)
+
+    def get_student_photo_url(self, obj):
+        if hasattr(obj.student, "gallery_photo_relurl"):
+            return obj.student.gallery_photo_relurl()
+        return None
