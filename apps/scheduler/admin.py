@@ -43,9 +43,16 @@ admin.site.empty_value_display = "—"
 
 @admin.register(GlobalResourceSettings)
 class GlobalResourceSettingsAdmin(admin.ModelAdmin):
-    list_display = ("id", "is_active", "device", "hwaccel", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
-                    "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
-                    "max_fps_default", "det_set_max")
+    list_display = (
+        "id", "is_active",
+        "device", "hwaccel",
+        "cpu_nice", "cpu_affinity", "cpu_quota_percent",
+        "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
+        "max_fps_default", "det_set_max",
+        # NEW (quality/debug defaults)
+        "model_tag", "pipe_mjpeg_q", "crop_format", "crop_jpeg_quality",
+        "min_face_px_default", "quality_version", "save_debug_unmatched",
+    )
     readonly_fields = ()
     fieldsets = (
         (None, {"fields": ("is_active",)}),
@@ -53,17 +60,58 @@ class GlobalResourceSettingsAdmin(admin.ModelAdmin):
         ("CPU", {"fields": ("cpu_nice", "cpu_affinity", "cpu_quota_percent")}),
         ("GPU", {"fields": ("gpu_index", "gpu_memory_fraction", "gpu_target_util_percent")}),
         ("Caps", {"fields": ("max_fps_default", "det_set_max")}),
+        ("Quality & Model (defaults)", {
+            "fields": (
+                "model_tag",
+                "pipe_mjpeg_q",
+                "crop_format", "crop_jpeg_quality",
+                "min_face_px_default",
+                "quality_version",
+                "save_debug_unmatched",
+            ),
+            "description": (
+                "Default quality and model choices inherited by cameras unless overridden. "
+                "• model_tag: InsightFace pack (e.g., buffalo_l, antelopev2). "
+                "• pipe_mjpeg_q: FFmpeg -q:v for MJPEG snapshots/pipe (1=best, 31=worst). "
+                "• crop_format/quality: how matched/unmatched crops are saved. "
+                "• min_face_px_default: reject faces smaller than this edge size. "
+                "• quality_version: optional tuning profile switch. "
+                "• save_debug_unmatched: store below-threshold crops for diagnostics."
+            ),
+        }),
     )
 
-    def has_add_permission(self, request):  # singleton UX
+    def has_add_permission(self, request):
         return self.model.objects.count() == 0
 
 
+class CameraResourceOverrideForm(forms.ModelForm):
+    class Meta:
+        model = CameraResourceOverride
+        fields = "__all__"
+        help_texts = {
+            "model_tag": "InsightFace model pack name (e.g., buffalo_l, antelopev2). Empty = inherit.",
+            "pipe_mjpeg_q": "FFmpeg -q:v for snapshots/pipe (1=best, 31=worst). Empty = inherit.",
+            "crop_format": "How to save crops (jpg or png). Empty = inherit.",
+            "crop_jpeg_quality": "JPEG quality (1–100). Ignored when format=png.",
+            "min_face_px": "Reject faces smaller than this edge size (in pixels). Empty = inherit/global.",
+            "quality_version": "Optional tuning profile (1/2/3…). Empty = inherit.",
+            "save_debug_unmatched": "If on, save below-threshold crops for troubleshooting.",
+        }
+
 @admin.register(CameraResourceOverride)
 class CameraResourceOverrideAdmin(admin.ModelAdmin):
-    list_display = ("camera", "is_active", "device", "hwaccel", "cpu_nice", "cpu_affinity", "cpu_quota_percent",
-                    "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
-                    "max_fps", "det_set_max")
+    form = CameraResourceOverrideForm
+    list_display = (
+        "camera", "is_active",
+        "device", "hwaccel",
+        "cpu_nice", "cpu_affinity", "cpu_quota_percent",
+        "gpu_index", "gpu_memory_fraction", "gpu_target_util_percent",
+        "max_fps", "det_set_max",
+        # NEW (per-camera)
+        "model_tag", "pipe_mjpeg_q", "crop_format", "crop_jpeg_quality",
+        "min_face_px", "quality_version", "save_debug_unmatched",
+    )
     list_filter = ("is_active",)
     search_fields = ("camera__name",)
     autocomplete_fields = ("camera",)
@@ -73,7 +121,22 @@ class CameraResourceOverrideAdmin(admin.ModelAdmin):
         ("CPU", {"fields": ("cpu_nice", "cpu_affinity", "cpu_quota_percent")}),
         ("GPU", {"fields": ("gpu_index", "gpu_memory_fraction", "gpu_target_util_percent")}),
         ("Caps", {"fields": ("max_fps", "det_set_max")}),
+        ("Quality & Model (per-camera)", {
+            "fields": (
+                "model_tag",
+                "pipe_mjpeg_q",
+                "crop_format", "crop_jpeg_quality",
+                "min_face_px",
+                "quality_version",
+                "save_debug_unmatched",
+            ),
+            "description": (
+                "Overrides inherit from Global when left blank. "
+                "Use these when a specific camera needs different recognition quality or a different model."
+            ),
+        }),
     )
+
 
 
 # ----------------------------

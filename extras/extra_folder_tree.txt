@@ -1,0 +1,16 @@
+.
+├── audit_runtime.py
+├── capture_embeddings_ffmpeg.py
+├── debug_embed_single.py
+├── extra_folder_tree.txt
+├── recognize_ffmpeg_live.py
+├── recognize_ffmpeg.py
+├── recognize_opencv.py
+├── recognize_runner_all_ffmpeg_hbPillsFixed.py
+├── recognize_runner_all_ffmpeg.py
+├── recognize_runner_ffmpeg.py
+└── runner
+    ├── attendance_client.py
+    └── enroll_flow.py
+
+2 directories, 12 files

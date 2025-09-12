@@ -107,42 +107,54 @@ def _choose_resources(camera):
     gpu_memory_fraction, gpu_target_util_percent, max_fps_cap, det_set_max.
     """
     # Global defaults
-    grs = GlobalResourceSettings.get_solo() if hasattr(GlobalResourceSettings,
-                                                       "get_solo") else GlobalResourceSettings.objects.order_by(
-        "pk").first()
+    grs = GlobalResourceSettings.get_solo() if hasattr(GlobalResourceSettings, "get_solo") else GlobalResourceSettings.objects.order_by("pk").first()
     res = {
         "device": None, "hwaccel": None, "gpu_index": None,
         "cpu_affinity": None, "cpu_nice": None,
         "gpu_memory_fraction": None, "gpu_target_util_percent": None,
         "cpu_quota_percent": None,  # <--- ADD THIS
         "max_fps_cap": None, "det_set_max": None,
+        # NEW knobs (nullable = inherit)
+        "model_tag": None,
+        "pipe_mjpeg_q": None,
+        "crop_format": None,
+        "crop_jpeg_quality": None,
+        "min_face_px": None,  # per-camera
+        "min_face_px_default": None,  # global default
+        "quality_version": None,
+        "save_debug_unmatched": None,
         "use_global": False, "use_cro": False,
     }
     if grs and getattr(grs, "is_active", True):
         res["use_global"] = True
-        for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
-                  "gpu_memory_fraction", "gpu_target_util_percent", "cpu_quota_percent"):
+        for k in ("device","hwaccel","gpu_index","cpu_affinity","cpu_nice",
+                  "gpu_memory_fraction","gpu_target_util_percent","cpu_quota_percent",
+                  # NEW (global defaults)
+                  "model_tag","pipe_mjpeg_q","crop_format","crop_jpeg_quality",
+                  "quality_version"):
             v = getattr(grs, k, None)
-            if v not in (None, ""): res[k] = v
-        # caps defaults
+            if v not in (None, "", []): res[k] = v
         if getattr(grs, "max_fps_default", None) not in (None, ""):
             res["max_fps_cap"] = getattr(grs, "max_fps_default")
         if getattr(grs, "det_set_max", None) not in (None, ""):
             res["det_set_max"] = str(getattr(grs, "det_set_max"))
+        if getattr(grs, "min_face_px_default", None) not in (None, ""):
+            res["min_face_px_default"] = int(getattr(grs, "min_face_px_default"))
 
     # Camera override
     cro = CameraResourceOverride.objects.filter(camera=camera).first()
     if cro and getattr(cro, "is_active", False):
         res["use_cro"] = True
-        for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
-                  "gpu_memory_fraction", "gpu_target_util_percent", "cpu_quota_percent"):
+        for k in ("device","hwaccel","gpu_index","cpu_affinity","cpu_nice",
+                  "gpu_memory_fraction","gpu_target_util_percent","cpu_quota_percent",
+                  # NEW (per-camera overrides)
+                  "model_tag","pipe_mjpeg_q","crop_format","crop_jpeg_quality",
+                  "min_face_px","quality_version","save_debug_unmatched","max_fps","det_set_max"):
             v = getattr(cro, k, None)
-            if v not in (None, ""): res[k] = v
-        # caps overrides
-        if getattr(cro, "max_fps", None) not in (None, ""):
-            res["max_fps_cap"] = getattr(cro, "max_fps")
-        if getattr(cro, "det_set_max", None) not in (None, ""):
-            res["det_set_max"] = str(getattr(cro, "det_set_max"))
+            if v not in (None, "", []):
+                if k == "max_fps": res["max_fps_cap"] = v
+                elif k == "det_set_max": res["det_set_max"] = str(v)
+                else: res[k] = v
 
     return res
 
@@ -365,6 +377,17 @@ def _start(camera, profile):
     if res_eff.get("gpu_index") not in (None, ""):
         env["BISK_PLACE_GPU_INDEX"] = str(res_eff["gpu_index"])
 
+    # When building the child process environment (you already export BISK_CAP_* etc.)
+    env["BISK_PIPE_MJPEG_Q"] = str(res_eff.get("pipe_mjpeg_q") or "")
+    env["BISK_MIN_FACE_PX"] = str(res_eff.get("min_face_px") or res_eff.get("min_face_px_default") or "")
+    env["BISK_CROP_FMT"] = str(res_eff.get("crop_format") or "")
+    env["BISK_CROP_JPEG_Q"] = str(res_eff.get("crop_jpeg_quality") or "")
+    env["BISK_QUALITY_VERSION"] = str(res_eff.get("quality_version") or "")
+    env["BISK_SAVE_DEBUG_UNMATCHED"] = (
+        "1" if res_eff.get("save_debug_unmatched") is True
+        else ("0" if res_eff.get("save_debug_unmatched") is False else "")
+    )
+
     p = subprocess.Popen(
         cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         preexec_fn=os.setsid, close_fds=True, env=env
@@ -406,6 +429,18 @@ def _start(camera, profile):
         env_snapshot["BISK_GPU_MEMORY_FRAC"] = str(res_eff["gpu_memory_fraction"])
     if res_eff.get("gpu_index") not in (None, ""):
         env_snapshot["BISK_PLACE_GPU_INDEX"] = str(res_eff["gpu_index"])
+
+    env_snapshot.update({
+        "BISK_PIPE_MJPEG_Q": str(res_eff.get("pipe_mjpeg_q") or ""),
+        "BISK_MIN_FACE_PX": str(res_eff.get("min_face_px") or res_eff.get("min_face_px_default") or ""),
+        "BISK_CROP_FMT": str(res_eff.get("crop_format") or ""),
+        "BISK_CROP_JPEG_Q": str(res_eff.get("crop_jpeg_quality") or ""),
+        "BISK_QUALITY_VERSION": str(res_eff.get("quality_version") or ""),
+        "BISK_SAVE_DEBUG_UNMATCHED": (
+            "1" if res_eff.get("save_debug_unmatched") is True
+            else ("0" if res_eff.get("save_debug_unmatched") is False else "")
+        )
+    })
 
     # mask and return
     def _mask_url(s: str) -> str:

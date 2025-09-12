@@ -34,6 +34,26 @@ HB_COUNTS = {"detected": 0, "matched": 0}
 HB_EXTRAS = {}  # values to ship with every heartbeat (e.g., min_face_px)
 
 
+# ---------- config helpers ----------
+def _effective_min_face_px(args, rs_cfg):
+    """
+    Resolve the final min_face_px once:
+    CLI (--min_face_px) > CameraResourceOverride > GlobalResourceSettings > RecognitionSettings > fallback 40
+    """
+    # CLI flag takes top precedence
+    if getattr(args, "min_face_px", None):
+        return int(args.min_face_px)
+    # Enforcer already exports BISK_MIN_FACE_PX into env
+    env_v = os.getenv("BISK_MIN_FACE_PX")
+    if env_v not in (None, "", "None"):
+        try:
+            return int(env_v)
+        except Exception:
+            pass
+    # DB settings fallback
+    return int(getattr(rs_cfg, "min_face_px", 40) or 40)
+
+
 class FPSMeter:
     """Exponential moving average FPS meter using inter-arrival time."""
 
@@ -132,19 +152,35 @@ def get_app(det_size: Optional[int], device: str) -> FaceAnalysis:
     want_det = (det_size or _APP_DET[0], det_size or _APP_DET[1])
     if _APP is None:
         providers = _providers_for(device)
+        model_name = (getattr(globals().get("args", object()), "model", None)  # argparse value if visible
+                      or os.getenv("BISK_MODEL", "").strip()
+                      or "buffalo_l")
         try:
-            _APP = FaceAnalysis(name="buffalo_l", providers=providers)
+            _APP = FaceAnalysis(name=model_name, providers=providers)
             ctx = 0 if ("CUDAExecutionProvider" in providers) else -1
             _APP.prepare(ctx_id=ctx, det_size=want_det)
+            global HB_EXTRAS
+            HB_EXTRAS["model_pack"] = model_name
+            log(f"[insightface] model={model_name}")
             _APP_DET = want_det
         except Exception as e:
             if device == "auto":
-                log(f"[insightface] CUDA init failed: {e}; falling back to CPU")
-                _APP = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
-                _APP.prepare(ctx_id=-1, det_size=want_det)
-                _APP_DET = want_det
+                log(f"[insightface] init failed on {model_name} ({e}); CPU retry")
+                try:
+                    _APP = FaceAnalysis(name=model_name, providers=["CPUExecutionProvider"])
+                    _APP.prepare(ctx_id=-1, det_size=want_det)
+                    _APP_DET = want_det
+                except Exception as e2:
+                    if model_name != "buffalo_l":
+                        log(f"[insightface] retrying with buffalo_l on CPU due to: {e2}")
+                        _APP = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+                        _APP.prepare(ctx_id=-1, det_size=want_det)
+                        _APP_DET = want_det
+                    else:
+                        raise
             else:
                 raise
+
         # Log active providers
         try:
             provs = []
@@ -182,7 +218,10 @@ def ffmpeg_snapshot_cmd(ffmpeg_bin: str, rtsp_url: str, out_jpg: str, args) -> l
         cmd += ["-hwaccel", "cuda"]
     cmd += ["-i", rtsp_url]
     snap_every = max(1, int(getattr(args, "snapshot_every", 3)))
-    cmd += ["-vf", f"fps=1/{snap_every}", "-q:v", "2", "-f", "image2", "-update", "1", "-y", out_jpg]
+    q = getattr(args, "pipe_q", None)
+    cmd += ["-vf", f"fps=1/{snap_every}", "-q:v", str(q if q else 2),
+            "-f", "image2", "-update", "1", "-y", out_jpg]
+
     return cmd
 
 
@@ -206,8 +245,10 @@ def ffmpeg_pipe_cmd(ffmpeg_bin: str, rtsp_url: str, *, transport: str,
     if fps and float(fps) > 0:
         cmd += ["-vf", f"fps={max(0.1, float(fps))}"]
     # cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1"]
-    # High-quality JPEGs for the pipe to avoid blockiness/blur
-    cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", "2", "pipe:1"]
+    # High-quality JPEGs for the pipe to avoid blockiness/blur (tunable via --pipe_q)
+    q = getattr(globals().get("args", object()), "pipe_q", None)
+    cmd += ["-f", "image2pipe", "-vcodec", "mjpeg", "-q:v", str(q if q else 2), "pipe:1"]
+
     return cmd
 
 
@@ -347,8 +388,9 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
         getattr(rs_cfg, "min_score", 0.80) or 0.80)
     debounce_sec = int(getattr(rs_cfg, "re_register_window_sec", 10) or 10)
 
-    log(f"[cfg] init: min_score={threshold:.2f} debounce={debounce_sec}s min_face_px={getattr(rs_cfg, 'min_face_px', 40)}")
-    HB_EXTRAS["min_face_px"] = int(getattr(rs_cfg, "min_face_px", 40) or 40)  # ← add this line
+    MIN_FACE_PX = _effective_min_face_px(args, rs_cfg)
+    log(f"[cfg] init: min_score={threshold:.2f} debounce={debounce_sec}s min_face_px={MIN_FACE_PX}")
+    HB_EXTRAS["min_face_px"] = int(MIN_FACE_PX)
 
     # Track settings changes for hot-reload
     rs_changed_at = getattr(rs_cfg, "changed_at", None)
@@ -398,10 +440,9 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
                     if args.threshold is None:
                         threshold = float(getattr(rs_cfg, "min_score", 0.80) or 0.80)
                     debounce_sec = int(getattr(rs_cfg, "re_register_window_sec", 10) or 10)
-                    log(f"[cfg] reloaded: min_score={threshold:.2f}  "
-                        f"debounce={debounce_sec}s  "
-                        f"min_face_px={getattr(rs_cfg, 'min_face_px', 40)}")
-                    HB_EXTRAS["min_face_px"] = int(getattr(rs_cfg, "min_face_px", 40) or 40)
+                    MIN_FACE_PX = _effective_min_face_px(args, rs_cfg)
+                    log(f"[cfg] reloaded: min_score={threshold:.2f}  debounce={debounce_sec}s  min_face_px={MIN_FACE_PX}")
+                    HB_EXTRAS["min_face_px"] = int(MIN_FACE_PX)
             except Exception:
                 pass
         # --- end hot-reload ---
@@ -411,7 +452,6 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
             cam_meter.tick()
         except Exception:
             pass
-
 
         # -*-*- throttle: keep processed FPS at target_fps (or below) ---
         tgt = float(getattr(args, "_computed_target_fps", 0) or 0.0)
@@ -476,8 +516,10 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
 
             # NEW: size gate from RecognitionSettings (default 40px)
             min_side = min(x2 - x1, y2 - y1)
-            min_px = int(getattr(rs_cfg, "min_face_px", 40) or 40)
+            # Prefer explicit override; else use RecognitionSettings; else 40
+            min_px = int(MIN_FACE_PX)
             HB_EXTRAS["min_face_px"] = int(min_px)
+
             if min_side < min_px:
                 # (optional) keep a debug for tuning, same pattern used for unmatched crops
                 if SAVE_DEBUG_UNMATCHED:
@@ -497,8 +539,14 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
                     dbg_dir = dbg_cam_root / f"{today:%Y/%m/%d}"
                     dbg_dir.mkdir(parents=True, exist_ok=True)
                     dbg_path = dbg_dir / f"unmatched_{int(time.time() * 1000)}.jpg"
+                    fmt = (getattr(args, "crop_format", None) or "jpg").lower()
+                    q = int(getattr(args, "crop_quality", None) or 90)
                     try:
-                        Image.fromarray(crop_rgb).save(str(dbg_path), format="JPEG", quality=90)
+                        if fmt == "png":
+                            Image.fromarray(crop_rgb).save(str(dbg_path.with_suffix(".png")), format="PNG")
+                        else:
+                            Image.fromarray(crop_rgb).save(str(dbg_path.with_suffix(".jpg")), format="JPEG",
+                                                           quality=max(1, min(100, q)))
                         log(f"[UNMATCHED] score={score:.3f} saved={dbg_path}")
                     except Exception as e:
                         log(f"[UNMATCHED] score={score:.3f} save-failed: {e}")
@@ -514,10 +562,17 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
             today = timezone.localdate()
             crop_dir = attn_root / f"{today:%Y/%m/%d}"
             crop_dir.mkdir(parents=True, exist_ok=True)
-            crop_path = str(crop_dir / f"{hcode}_{int(time.time())}.jpg")
+            fmt = (getattr(args, "crop_format", None) or "jpg").lower()
+            q = int(getattr(args, "crop_quality", None) or 90)
+            ext = ".png" if fmt == "png" else ".jpg"
+            crop_path = str(crop_dir / f"{hcode}_{int(time.time())}{ext}")
             try:
-                Image.fromarray(crop_rgb).save(crop_path, format="JPEG", quality=90)
+                if fmt == "png":
+                    Image.fromarray(crop_rgb).save(crop_path, format="PNG")
+                else:
+                    Image.fromarray(crop_rgb).save(crop_path, format="JPEG", quality=max(1, min(100, q)))
                 log(f"[MATCH] {hcode} score={score:.3f} -> crop={crop_path}")
+
             except Exception as e:
                 crop_path = ""
                 log(f"[MATCH] {hcode} score={score:.3f} -> crop-save-error: {e}")
@@ -551,8 +606,27 @@ def main():
     p.add_argument("--gpu_index", type=int, default=0)
     p.add_argument("--threshold", type=float, default=None)  # default pulls from RecognitionSettings
     p.add_argument("--fps", type=float, default=6.0)
+    # Quality / model knobs (env fallbacks are provided so enforcer env works too)
+    p.add_argument("--model", default=(os.getenv("BISK_MODEL", "").strip() or None),
+                   help="InsightFace model pack (e.g., buffalo_l, antelopev2).")
+    p.add_argument("--pipe_q", type=int, default=(int(os.getenv("BISK_PIPE_MJPEG_Q") or "0") or None),
+                   help="FFmpeg MJPEG -q:v for pipe & snapshots (1=best, 31=worst).")
+    p.add_argument("--crop_format", default=((os.getenv("BISK_CROP_FMT") or "").strip() or None),
+                   choices=["jpg", "png", None], help="Format for saved face crops.")
+    p.add_argument("--crop_quality", type=int, default=(int(os.getenv("BISK_CROP_JPEG_Q") or "0") or None),
+                   help="JPEG quality for saved crops (1–100). Ignored for PNG.")
+    p.add_argument("--min_face_px", type=int, default=(int(os.getenv("BISK_MIN_FACE_PX") or "0") or None),
+                   help="Minimum face box size (pixels) to consider.")
+    p.add_argument("--quality_version", type=int, default=(int(os.getenv("BISK_QUALITY_VERSION") or "0") or None),
+                   help="Optional tuning profile switch (1/2/3…).")
+    p.add_argument("--save_debug_unmatched", action="store_true",
+                   default=(os.getenv("BISK_SAVE_DEBUG_UNMATCHED") == "1"),
+                   help="If set, save unmatched crops for diagnostics.")
 
     args, _ = p.parse_known_args()
+    # make the module-level toggle follow the resolved CLI/env default
+    global SAVE_DEBUG_UNMATCHED
+    SAVE_DEBUG_UNMATCHED = bool(getattr(args, "save_debug_unmatched", False))
 
     # ---- CPU quota (set before heavy threads start)
     from apps.scheduler.resources_cpu import apply_cpu_quota_percent, approximate_quota_with_affinity

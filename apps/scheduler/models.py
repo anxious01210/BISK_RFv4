@@ -5,6 +5,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 HWACCEL_CHOICES = [("", "(inherit)"), ("none", "none"), ("nvdec", "nvdec")]
 DEVICE_CHOICES = [("", "(inherit)"), ("cpu", "CPU"), ("cuda", "CUDA")]
 
+
 class StreamProfile(models.Model):
     FFMPEG, OPENCV = 1, 2
     SCRIPT_CHOICES = ((FFMPEG, "FFmpeg"), (OPENCV, "OpenCV"))
@@ -116,6 +117,17 @@ class RunnerHeartbeat(models.Model):
         return f"HB cam={self.camera_id} prof={self.profile_id} @ {self.ts:%Y-%m-%d %H:%M:%S}"
 
 
+MODEL_CHOICES = [
+    ("buffalo_l", "buffalo_l"),
+    ("antelopev2", "antelopev2"),
+]
+
+CROP_FMT_CHOICES = [
+    ("jpg", "JPEG"),
+    ("png", "PNG"),
+]
+
+
 class GlobalResourceSettings(models.Model):
     """
     Singleton defaults for runner processes.
@@ -158,10 +170,51 @@ class GlobalResourceSettings(models.Model):
 
     # Pipeline levers
     max_fps_default = models.PositiveSmallIntegerField(
-        null=True, blank=True, help_text="Default FPS cap if camera/profile doesn't specify."
+        null=True, blank=True,
+        help_text="Default FPS cap if camera/profile doesn't specify."
     )
     det_set_max = models.CharField(
-        max_length=16, null=True, blank=True, help_text="Upper bound like '1600' to clamp detector size."
+        max_length=16, null=True, blank=True,
+        help_text="Upper bound like '1600' to clamp detector size."
+    )
+    # NEW: model/quality defaults (nullable = inherit/unspecified)
+    model_tag = models.CharField(
+        max_length=32, choices=MODEL_CHOICES, blank=True, default="",
+        help_text="Default face model to use (e.g., 'buffalo_l' for speed or 'antelopev2' for stronger quality). "
+                  "Blank = runner default."
+    )
+    pipe_mjpeg_q = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        help_text="FFmpeg MJPEG quality for the live frame pipe (1=best, 31=worst). "
+                  "Lower gives sharper frames but higher CPU/bitrate. Typical: 2."
+    )
+    crop_format = models.CharField(
+        max_length=8, choices=CROP_FMT_CHOICES, blank=True, default="",
+        help_text="Default image format for saved face crops. Leave blank to inherit runner default."
+    )
+    crop_jpeg_quality = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="JPEG quality (1–100) for saved crops when format=JPEG. Higher = larger file. Ignored for PNG."
+    )
+    min_face_px_default = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="Global minimum face-box size in pixels required to process a detection. "
+                  "Raise to reduce false matches from tiny/far faces; lower to catch smaller faces."
+    )
+    quality_version = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(9)],
+        help_text="Optional tuning profile version for end-to-end heuristics (e.g., 1/2/3). "
+                  "Runner may use this to switch thresholds/filters. Null = runner default."
+    )
+    save_debug_unmatched = models.BooleanField(
+        null=True, blank=True,
+        help_text=(
+            "If True, save below-threshold (unmatched) face crops for diagnostics; "
+            "if False, never save; if blank, cameras inherit or fallback to script default."
+        ),
     )
     is_active = models.BooleanField(
         default=True,
@@ -188,29 +241,87 @@ class CameraResourceOverride(models.Model):
         related_name="resource_override"
     )
 
-
     # CPU
-    cpu_nice = models.IntegerField(null=True, blank=True)
-    cpu_affinity = models.CharField(max_length=64, null=True, blank=True)
-    cpu_quota_percent = models.PositiveSmallIntegerField(null=True, blank=True)
+    cpu_nice = models.IntegerField(
+        null=True, blank=True,
+        help_text="Process niceness (lower = higher priority). Example: 10 for background."
+    )
+    cpu_affinity = models.CharField(
+        max_length=64, null=True, blank=True,
+        help_text="CSV of CPU core indexes (e.g., '0,1,2'). Empty = no pinning."
+    )
+    cpu_quota_percent = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="Per-process CPU throttle target. 100 = no cap."
+    )
 
-    # GPU
-    # Placement overrides (non-null wins)
+    # GPU placement
     device = models.CharField(
         max_length=8, choices=DEVICE_CHOICES, null=True, blank=True,
-        help_text="Override compute device for this camera only."
+        help_text="Override compute device for this camera (cpu/cuda)."
     )
     hwaccel = models.CharField(
         max_length=8, choices=HWACCEL_CHOICES, null=True, blank=True,
-        help_text="Override decode accel for this camera only."
+        help_text="Override video decode accel for this camera (nvdec/none)."
     )
-    gpu_index = models.CharField(max_length=32, null=True, blank=True)
-    gpu_memory_fraction = models.FloatField(null=True, blank=True)
-    gpu_target_util_percent = models.PositiveSmallIntegerField(null=True, blank=True)
+    gpu_index = models.CharField(
+        max_length=32, null=True, blank=True,
+        help_text="Single or CSV for multi-GPU; e.g. '0' or '0,1'."
+    )
+    gpu_memory_fraction = models.FloatField(
+        null=True, blank=True,
+        validators=[MinValueValidator(0.05), MaxValueValidator(1.0)],
+        help_text="Torch-only per-process memory fraction (0.05–1.0)."
+    )
+    gpu_target_util_percent = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(5), MaxValueValidator(100)],
+        help_text="Runner attempts to keep GPU util near this via FPS throttling."
+    )
 
     # Pipeline levers
-    max_fps = models.PositiveSmallIntegerField(null=True, blank=True)
-    det_set_max = models.CharField(max_length=16, null=True, blank=True)
+    max_fps = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="Hard cap for this camera’s effective FPS (after downsampling). Blank = inherit."
+    )
+    det_set_max = models.CharField(
+        max_length=16, null=True, blank=True,
+        help_text="Upper bound to clamp detector size for this camera (e.g., '1024'). Blank = inherit."
+    )
+    min_face_px = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        help_text="Minimum face-box size (pixels) for this camera. Overrides global/default."
+    )
+    model_tag = models.CharField(
+        max_length=32, choices=MODEL_CHOICES, blank=True, default="",
+        help_text="Override ArcFace model just for this camera (e.g., 'antelopev2' for stronger recognition)."
+    )
+    pipe_mjpeg_q = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        help_text="FFmpeg MJPEG quality for the frame pipe (1=best, 31=worst) for this camera only."
+    )
+    crop_format = models.CharField(
+        max_length=8, choices=CROP_FMT_CHOICES, blank=True, default="",
+        help_text="Image format for saved face crops from this camera."
+    )
+    crop_jpeg_quality = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text="JPEG quality (1–100) for this camera’s saved crops (ignored for PNG)."
+    )
+    quality_version = models.PositiveSmallIntegerField(
+        null=True, blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(9)],
+        help_text="Optional camera-specific tuning profile (1/2/3…). Blank = inherit."
+    )
+    save_debug_unmatched = models.BooleanField(
+        null=True, blank=True,
+        help_text="If True, save unmatched crops for tuning/debug for this camera only; "
+                  "if False, never save; if blank, inherit."
+    )
+
     is_active = models.BooleanField(
         default=False,
         help_text="Master toggle for considering any per-camera resource overrides."
@@ -218,3 +329,14 @@ class CameraResourceOverride(models.Model):
 
     def __str__(self):
         return f"Overrides for {self.camera.name if self.camera_id else 'unknown'}"
+
+# model_tag lets you opt into a stronger ArcFace model (e.g., antelopev2) where you can afford it, while
+# keeping buffalo_l elsewhere. We will plumb this so enforcer passes --model when set; it already supports a
+# model_tag knob in policy logic, so we’ll extend the resource path as a fallback too
+# pipe_mjpeg_q controls JPEG quality for FFmpeg’s image pipe to Python. Lower = sharper frames
+# (better detection/landmarks) at the cost of CPU/bandwidth.
+# min_face_px(_default) and per-camera min_face_px gate small faces that tend to be noisy; raising this improves
+# precision; lowering helps recall at distance. Runner already emits min_face_px with heartbeats for observability
+# crop_format / crop_jpeg_quality control saved-crop fidelity & size so you can tune storage vs inspection quality.
+# quality_version gives you a single switch we can use in runner logic (and later in embedding/live scripts) to adjust
+# multi-knob heuristics in concert (e.g., bbox expand, det NMS thresholds, top-K filtering) without changing many fields.

@@ -324,7 +324,7 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 class AttendanceRecordAdmin(admin.ModelAdmin):
     date_hierarchy = "best_seen"
     list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
-    list_filter = ("period__template", "best_camera")
+    list_filter = ("period__template", "best_camera", )
     search_fields = ("student__h_code", "student__full_name")
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")

@@ -32,8 +32,8 @@ def _clamp01(x: float) -> float:
 # ---- InsightFace singleton (GPU-first) ----
 _APP: Optional[FaceAnalysis] = None
 _PROVIDERS = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-_DET_SIZE = (640, 640)  # default square
-# _DET_SIZE = (800, 800)  # start higher (still auto-tunes per image)
+# _DET_SIZE = (640, 640)  # default square
+_DET_SIZE = (800, 800)  # start higher (still auto-tunes per image)
 
 def set_det_size(w: int, h: int | None = None):
     """Set global detector size; next _get_app(det_size=...) call will prepare with it."""
