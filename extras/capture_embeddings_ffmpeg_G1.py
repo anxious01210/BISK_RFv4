@@ -191,11 +191,6 @@ def main():
                    help="Quality weights: sharp,bright,face_size")
     p.add_argument("--preview", action="store_true", help="Show live preview with detections (press q/ESC to quit)")
     p.add_argument("--save_all_crops", action="store_true", help="Save every detected face crop to debug folder")
-    p.add_argument("--save_top_crops", action="store_true",
-                   help="Save the final selected top-K crops under face_gallery/<HCODE>/<live_YYYYmmdd_HHMMSS>/")
-    p.add_argument("--gallery_root", default="face_gallery",
-                   help="MEDIA subdir where per-student images live (default: face_gallery)")
-
     args = p.parse_args()
 
     w_sharp, w_bright, w_size = [float(x) for x in args.weights.split(",")]
@@ -288,11 +283,7 @@ def main():
                 continue
             v = l2norm(np.asarray(emb, dtype=np.float32))
 
-            # keep the crop only if we might save top crops (to avoid keeping all of them in memory)
-            entry = {"emb": v, "qual": float(qual)}
-            if args.save_top_crops:
-                entry["crop"] = crop  # RGB uint8
-            samples.append(entry)
+            samples.append({"emb": v, "qual": float(qual)})
 
             if args.save_all_crops:
                 tdir = dbg_root / f"{timezone.localdate():%Y/%m/%d}"
@@ -317,25 +308,6 @@ def main():
     out_path = Path(DIRS.get("EMBEDDINGS", media_root / "embeddings")) / f"{args.hcode}.npy"
     np.save(str(out_path), avg)
     print(f"[OK] wrote embedding: {out_path}  (topK={len(chosen)}/{len(samples)} faces used)")
-
-    # Optionally save ONLY the final selected crops into the student's gallery
-    if args.save_top_crops:
-        ts = timezone.localtime().strftime("live_%Y%m%d_%H%M%S")
-        out_dir = media_root / args.gallery_root / args.hcode / ts
-        out_dir.mkdir(parents=True, exist_ok=True)
-        saved = 0
-        for i, c in enumerate(chosen, 1):
-            if "crop" not in c:
-                continue
-            try:
-                fname = f"{args.hcode}_{i:02d}.jpg"
-                Image.fromarray(c["crop"]).save(out_dir / fname, quality=92)
-                saved += 1
-            except Exception:
-                pass
-        # Print a machine-friendly, MEDIA-relative path so callers can show a link/toast
-        rel_dir = str(out_dir.relative_to(media_root)).replace("\\", "/")
-        print(f"[TOP_CROPS] saved={saved} dir={rel_dir}")
 
 if __name__ == "__main__":
     main()

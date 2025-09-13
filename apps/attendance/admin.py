@@ -47,6 +47,35 @@ _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) a
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
 
+def _score_to_color_and_text(raw_score: float):
+    s = float(raw_score or 0.0)
+    s_txt = f"{s:.2f}"
+
+    bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
+    b = float(bands.get("blue_min",   0.90))
+    g = float(bands.get("green_min",  0.80))
+    y = float(bands.get("yellow_min", 0.65))
+    o = float(bands.get("orange_min", 0.50))
+
+    c_blue   = getattr(settings, "ATTENDANCE_COLOR_BLUE",   "#2196F3")
+    c_green  = getattr(settings, "ATTENDANCE_COLOR_GREEN",  "lime")
+    c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
+    c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
+    c_red    = getattr(settings, "ATTENDANCE_COLOR_RED",    "red")
+
+    if s >= b:
+        color = c_blue
+    elif s >= g:
+        color = c_green
+    elif s >= y:
+        color = c_yellow
+    elif s >= o:
+        color = c_orange
+    else:
+        color = c_red
+
+    return color, s_txt
+
 
 def _safe_media_path(rel: str) -> Path:
     base = Path(settings.MEDIA_ROOT).resolve()
@@ -464,32 +493,37 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
     best_crop_preview.short_description = "Best crop"
 
     def score_col(self, obj):
-        # 1) Coerce to float and pre-format to text to avoid SafeString :f errors
-        s = float(obj.best_score or 0.0)
-        s_txt = f"{s:.2f}"
-
-        # 2) Read bands & colors from settings (with safe defaults)
-        bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
-        g = float(bands.get("green_min", 0.80))
-        y = float(bands.get("yellow_min", 0.65))
-        o = float(bands.get("orange_min", 0.50))
-
-        c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
-        c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
-        c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
-        c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
-
-        # 3) Decide color by band
-        if s >= g:
-            color = c_green
-        elif s >= y:
-            color = c_yellow
-        elif s >= o:
-            color = c_orange
-        else:
-            color = c_red
-
+        color, s_txt = _score_to_color_and_text(getattr(obj, "best_score", None))  # for AttendanceRecordAdmin
         return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
+
+    # def score_col(self, obj):
+    #     s = float(obj.score or 0.0)
+    #     s_txt = f"{s:.2f}"
+    #
+    #     bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
+    #     b = float(bands.get("blue_min", 0.90))
+    #     g = float(bands.get("green_min", 0.80))
+    #     y = float(bands.get("yellow_min", 0.65))
+    #     o = float(bands.get("orange_min", 0.50))
+    #
+    #     c_blue = getattr(settings, "ATTENDANCE_COLOR_BLUE", "#2196F3")
+    #     c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
+    #     c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
+    #     c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
+    #     c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
+    #
+    #     if s >= b:
+    #         color = c_blue
+    #     elif s >= g:
+    #         color = c_green
+    #     elif s >= y:
+    #         color = c_yellow
+    #     elif s >= o:
+    #         color = c_orange
+    #     else:
+    #         color = c_red
+    #
+    #     return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
 
     def student_col(self, obj):
         return format_html("<b>{} – {}</b>", obj.student.h_code, obj.student.full_name())
@@ -564,18 +598,22 @@ class AttendanceEventAdmin(admin.ModelAdmin):
         return format_html("<b>{} — {}</b>", obj.student.h_code, obj.student.full_name())
 
     def score_col(self, obj):
-        s = float(obj.score or 0.0);
-        s_txt = f"{s:.2f}"
-        bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
-        g = float(bands.get("green_min", 0.80));
-        y = float(bands.get("yellow_min", 0.65));
-        o = float(bands.get("orange_min", 0.50))
-        c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
-        c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
-        c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
-        c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
-        color = c_green if s >= g else c_yellow if s >= y else c_orange if s >= o else c_red
+        color, s_txt = _score_to_color_and_text(getattr(obj, "score", None))  # for AttendanceEventAdmin
         return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
+
+    # def score_col(self, obj):
+    #     s = float(obj.score or 0.0);
+    #     s_txt = f"{s:.2f}"
+    #     bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
+    #     g = float(bands.get("green_min", 0.80));
+    #     y = float(bands.get("yellow_min", 0.65));
+    #     o = float(bands.get("orange_min", 0.50))
+    #     c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
+    #     c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
+    #     c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
+    #     c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
+    #     color = c_green if s >= g else c_yellow if s >= y else c_orange if s >= o else c_red
+    #     return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
 
     def period_col(self, obj):
         if not obj.period:
@@ -1095,9 +1133,17 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         ctx["delete_url"] = delete_url
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
 
+    # +more Live Capture (New Style)
     @transaction.atomic
     @method_decorator(require_POST)
     def re_enroll_capture_run(self, request, pk: int):
+        import sys, re, hashlib, subprocess
+        from pathlib import Path
+        import numpy as np
+        from django.utils import timezone
+        from django.http import HttpResponse, QueryDict
+        from urllib.parse import urlparse, parse_qsl
+
         fe = get_object_or_404(FaceEmbedding, pk=pk)
         student = fe.student
         hcode = getattr(student, "h_code", None)
@@ -1105,8 +1151,22 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             messages.error(request, "Student H-code missing.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
+        # If called from HTMX, preserve the current folder querystring so we can re-render the same grid
+        is_htmx = (request.headers.get("HX-Request") == "true")
+        if is_htmx and not request.GET:
+            hx_url = request.headers.get("HX-Current-URL") or ""
+            if hx_url:
+                parsed = urlparse(hx_url)
+                qd = QueryDict(mutable=True)
+                qd.update(dict(parse_qsl(parsed.query or "")))
+                request.GET = qd
+
         form = self._CaptureForm(request.POST)
         if not form.is_valid():
+            if is_htmx:
+                resp = HttpResponse('<div class="error">Invalid capture inputs.</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Live capture: invalid inputs"}})
+                return resp
             messages.error(request, "Invalid capture inputs.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
@@ -1114,20 +1174,18 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         k = int(form.cleaned_data["k"])
         det_size = int(form.cleaned_data["det_size"])
 
-        # Resolve RTSP/URL field (be tolerant to different field names)
         rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
         if not rtsp:
             messages.error(request, "Selected camera has no RTSP/URL configured.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # Build script path
-        proj_root = Path(settings.BASE_DIR)  # your Django base
+        proj_root = Path(settings.BASE_DIR)
         script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
         if not script.exists():
             messages.error(request, f"Capture script not found: {script}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # Run capture (synchronously; keep it simple for now)
+        # Run capture
         cmd = [
             sys.executable, str(script),
             "--rtsp", str(rtsp),
@@ -1138,33 +1196,55 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             "--fps", "4",
             "--duration", "30",
             "--rtsp_transport", "tcp",
+            "--save_top_crops",
+            # If you changed the gallery subdir name in settings, pass it:
+            # "--gallery_root", getattr(settings, "FACE_GALLERY_DIR", "face_gallery"),
         ]
         try:
             run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
         except subprocess.TimeoutExpired:
+            if is_htmx:
+                resp = HttpResponse('<div class="error">Capture timed out.</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture timed out"}})
+                return resp
             messages.error(request, "Capture timed out.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
         if run.returncode != 0:
-            messages.error(request, f"Capture failed:\n{run.stderr or run.stdout}")
+            msg = (run.stderr or run.stdout or "").strip()
+            if is_htmx:
+                resp = HttpResponse(f'<div class="error">Capture failed:<br><pre>{msg}</pre></div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture failed"}})
+                return resp
+            messages.error(request, f"Capture failed:\n{msg}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # Expect the script to have written media/embeddings/<HCODE>.npy
+        # Expect media/embeddings/<HCODE>.npy
         emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
         npy_path = emb_dir / f"{hcode}.npy"
         if not npy_path.exists():
+            if is_htmx:
+                resp = HttpResponse(f'<div class="error">Capture finished but .npy not found: {npy_path}</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": ".npy not found"}})
+                return resp
             messages.error(request, f"Capture finished but .npy not found: {npy_path}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # Ingest into FaceEmbedding (active singleton per student)
+        # How many top crops were saved? (affects images_used and message)
+        saved_cnt = None
+        saved_dir_rel = None
+        m = re.search(r"\[TOP_CROPS\]\s+saved=(\d+)\s+dir=([^\r\n]+)", run.stdout or "")
+        if m:
+            saved_cnt = int(m.group(1))
+            saved_dir_rel = m.group(2).strip()
+
+        # Build new FaceEmbedding from the .npy
         try:
             vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
-            # L2 norm should be ~1.0; store as raw bytes
             norm = float(np.linalg.norm(vec)) if vec.size else 0.0
             raw = vec.tobytes()
             sha = hashlib.sha256(raw).hexdigest()
 
-            # Deactivate existing active rows for this student
             FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
 
             fe2 = FaceEmbedding.objects.create(
@@ -1178,24 +1258,171 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                 last_used_k=k,
                 last_used_det_size=det_size,
                 images_considered=0,
-                images_used=k,
+                images_used=int(saved_cnt) if saved_cnt is not None else k,
                 embedding_norm=norm,
                 embedding_sha256=sha,
                 arcface_model="buffalo_l",
-                provider="CUDAExecutionProvider" if "CUDA" in (run.stdout or "") else "CPUExecutionProvider",
+                provider=("CUDAExecutionProvider" if "CUDA" in (run.stdout or "") or "CUDA" in (
+                            run.stderr or "") else "CPUExecutionProvider"),
                 enroll_runtime_ms=0,
                 enroll_notes=(
                     f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
                     f"vec_dim={vec.size}; norm={norm:.4f}"
                 ),
             )
-            messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
+
+            # (Optional) populate used_images_detail from the saved crops so chips render immediately
+            if saved_dir_rel:
+                from pathlib import PurePosixPath
+                crops_dir = Path(settings.MEDIA_ROOT) / saved_dir_rel
+                if crops_dir.exists():
+                    detail = []
+                    # stable ordering
+                    for f in sorted(crops_dir.glob("*.jpg")):
+                        rel = str(PurePosixPath(saved_dir_rel) / f.name)
+                        detail.append({"name": f.name, "path": rel})
+                    if detail:
+                        fe2.used_images_detail = detail
+                        fe2.images_used = len(detail)
+                        fe2.save(update_fields=["used_images_detail", "images_used"])
+
         except Exception as e:
+            if is_htmx:
+                resp = HttpResponse(f'<div class="error">Failed to save embedding from .npy: {e}</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Failed to save embedding (.npy)"}})
+                return resp
             messages.error(request, f"Failed to save embedding from .npy: {e}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # persist last_used_min_score=None, we didn’t threshold here
+        # HTMX: inline summary + refresh current grid; else redirect to changelist
+        if is_htmx:
+            bits = [f"Live capture OK → new embedding for <b>{hcode}</b>"]
+            bits.append(f"k={k}")
+            bits.append(f"det_size={det_size}")
+            if saved_cnt is not None:
+                bits.append(f"saved={saved_cnt} crop(s)")
+            summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
+
+            grid_resp = self.re_enroll_captures(request, pk)
+            grid_html = grid_resp.content.decode("utf-8")
+            oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
+
+            resp = HttpResponse(summary_html + oob)
+            toast_text = f"Live capture OK. {'Saved ' + str(saved_cnt) + ' crop(s) → ' + saved_dir_rel if saved_cnt is not None else ''}"
+            resp["HX-Trigger"] = json.dumps({"toast": {"text": toast_text}})
+            return resp
+
+        messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
+        if saved_cnt is not None:
+            messages.success(request, f"Saved {saved_cnt} live-capture crop(s) → {saved_dir_rel}")
         return redirect("../../")
+
+    ## it goes to the main FaceEmbedding list_display
+    # def re_enroll_capture_run(self, request, pk: int):
+    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #     student = fe.student
+    #     hcode = getattr(student, "h_code", None)
+    #     if not hcode:
+    #         messages.error(request, "Student H-code missing.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     form = self._CaptureForm(request.POST)
+    #     if not form.is_valid():
+    #         messages.error(request, "Invalid capture inputs.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     cam = form.cleaned_data["camera"]
+    #     k = int(form.cleaned_data["k"])
+    #     det_size = int(form.cleaned_data["det_size"])
+    #
+    #     # Resolve RTSP/URL field (be tolerant to different field names)
+    #     rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
+    #     if not rtsp:
+    #         messages.error(request, "Selected camera has no RTSP/URL configured.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # Build script path
+    #     proj_root = Path(settings.BASE_DIR)  # your Django base
+    #     script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
+    #     if not script.exists():
+    #         messages.error(request, f"Capture script not found: {script}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # Run capture (synchronously; keep it simple for now)
+    #     cmd = [
+    #         sys.executable, str(script),
+    #         "--rtsp", str(rtsp),
+    #         "--hcode", hcode,
+    #         "--k", str(k),
+    #         "--det_size", str(det_size),
+    #         "--device", "auto",
+    #         "--fps", "4",
+    #         "--duration", "30",
+    #         "--rtsp_transport", "tcp",
+    #         "--save_top_crops",
+    #     ]
+    #     try:
+    #         run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    #     except subprocess.TimeoutExpired:
+    #         messages.error(request, "Capture timed out.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     if run.returncode != 0:
+    #         messages.error(request, f"Capture failed:\n{run.stderr or run.stdout}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # Expect the script to have written media/embeddings/<HCODE>.npy
+    #     emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
+    #     npy_path = emb_dir / f"{hcode}.npy"
+    #     if not npy_path.exists():
+    #         messages.error(request, f"Capture finished but .npy not found: {npy_path}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # Ingest into FaceEmbedding (active singleton per student)
+    #     try:
+    #         vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
+    #         # L2 norm should be ~1.0; store as raw bytes
+    #         norm = float(np.linalg.norm(vec)) if vec.size else 0.0
+    #         raw = vec.tobytes()
+    #         sha = hashlib.sha256(raw).hexdigest()
+    #
+    #         # Deactivate existing active rows for this student
+    #         FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
+    #
+    #         fe2 = FaceEmbedding.objects.create(
+    #             student=student,
+    #             dim=int(vec.size),
+    #             vector=raw,
+    #             source_path=str(npy_path.relative_to(Path(settings.MEDIA_ROOT))).replace("\\", "/"),
+    #             camera=cam,
+    #             is_active=True,
+    #             last_enrolled_at=timezone.now(),
+    #             last_used_k=k,
+    #             last_used_det_size=det_size,
+    #             images_considered=0,
+    #             images_used=k,
+    #             embedding_norm=norm,
+    #             embedding_sha256=sha,
+    #             arcface_model="buffalo_l",
+    #             provider="CUDAExecutionProvider" if "CUDA" in (run.stdout or "") else "CPUExecutionProvider",
+    #             enroll_runtime_ms=0,
+    #             enroll_notes=(
+    #                 f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
+    #                 f"vec_dim={vec.size}; norm={norm:.4f}"
+    #             ),
+    #         )
+    #         messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
+    #     except Exception as e:
+    #         messages.error(request, f"Failed to save embedding from .npy: {e}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     m = re.search(r"\[TOP_CROPS\]\s+saved=(\d+)\s+dir=([^\r\n]+)", run.stdout or "")
+    #     if m:
+    #         saved_cnt, rel_dir = int(m.group(1)), m.group(2).strip()
+    #         messages.success(request, f"Saved {saved_cnt} live-capture crop(s) → {rel_dir}")
+    #
+    #     # persist last_used_min_score=None, we didn’t threshold here
+    #     return redirect("../../")
 
     # ---- POST: run enrollment with overrides (force) ----
     @transaction.atomic
