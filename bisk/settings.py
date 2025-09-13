@@ -341,3 +341,15 @@ ATTENDANCE_COLOR_RED = "#ef4444"  # red-500
 
 # For lunch Periods
 PASS_GAP_SECONDS = 45  # between 30–60s as you prefer
+
+# --- Face crop archiving (for runner) ---
+TOP_CROPS = {
+    "ENABLED": False,          # turn off to disable writes
+    "SUBDIR": "captures",     # under each student's gallery
+    "N": 5,                   # save top-N images per confirmation
+    "PADDING": 16,            # px around detected box (before crop)
+    "MARGIN": 8,              # optional black frame in the saved image
+    "FORMAT": "png",          # 'png' or 'jpg'
+    "QUALITY": 100,           # if jpg
+    "SAVE_THRESHOLD": 0.65,   # only save if raw01 >= this (Gate meaning: archive if score ≥ TOP_CROPS.SAVE_THRESHOLD, regardless of your recognition min-score.)
+}

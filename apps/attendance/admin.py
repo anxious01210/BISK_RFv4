@@ -1,7 +1,5 @@
 # apps/attendance/admin.py
-import hashlib
-import subprocess
-import sys
+import hashlib, subprocess, sys, csv, os, re, json, shutil
 from pathlib import Path
 import numpy as np
 from django.views.decorators.http import require_POST
@@ -28,8 +26,7 @@ from .models import (
 )
 from .services import roll_periods
 
-import csv, os, re
-from django.http import HttpResponse
+from django.http import HttpResponse, HttpResponseBadRequest, QueryDict
 from apps.attendance.models import Student
 from apps.attendance.utils.media_paths import DIRS, student_gallery_dir, ensure_media_tree
 from apps.attendance.utils.embeddings import enroll_student_from_folder, set_det_size
@@ -40,10 +37,18 @@ from import_export import resources, fields
 from import_export.widgets import BooleanWidget
 from import_export.admin import ImportExportMixin
 from import_export.formats import base_formats
+from urllib.parse import urlparse
+
+
+
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
 _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) and _THUMBS_N > 0 else "K Used images")
+
+
+def _rel_media(p: Path) -> str:
+    return os.path.relpath(str(p), settings.MEDIA_ROOT).replace(os.sep, "/")
 
 
 def _coerce_raw01(value):
@@ -69,10 +74,32 @@ def _first_image_rel(h_code: str) -> str | None:
     folder = student_gallery_dir(h_code)
     if not os.path.isdir(folder):
         return None
-    for name in sorted(os.listdir(folder)):
-        if os.path.splitext(name)[1].lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
-            # Return MEDIA-relative path
-            return os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
+
+    # default subdir used by student_capture_dir(...)
+    subdir = "captures"
+    root = os.path.join(folder, subdir)
+    if not os.path.isdir(root):
+        return None
+
+    IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+
+    # Walk date / period / camera, return first existing image
+    for date in sorted(os.listdir(root)):
+        p_date = os.path.join(root, date)
+        if not os.path.isdir(p_date):
+            continue
+        for period in sorted(os.listdir(p_date)):
+            p_per = os.path.join(p_date, period)
+            if not os.path.isdir(p_per):
+                continue
+            for cam in sorted(os.listdir(p_per)):
+                p_cam = os.path.join(p_per, cam)
+                if not os.path.isdir(p_cam):
+                    continue
+                for name in sorted(os.listdir(p_cam)):
+                    if os.path.splitext(name)[1].lower() in IMG_EXTS:
+                        rel = os.path.relpath(os.path.join(p_cam, name), settings.MEDIA_ROOT)
+                        return rel.replace(os.sep, "/")
     return None
 
 
@@ -188,7 +215,8 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
 
 @admin.register(Student)
 class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
-    list_display = ("h_code", "is_active", "full_name", "grade", "gallery_count", "gallery_thumb", "has_lunch", "has_bus")
+    list_display = ("h_code", "is_active", "full_name", "grade", "gallery_count", "gallery_thumb", "has_lunch",
+                    "has_bus")
     search_fields = ("h_code", "first_name", "middle_name", "last_name")
     list_filter = ("is_active",)
     actions = [
@@ -324,7 +352,7 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 class AttendanceRecordAdmin(admin.ModelAdmin):
     date_hierarchy = "best_seen"
     list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
-    list_filter = ("period__template", "best_camera", )
+    list_filter = ("period__template", "best_camera",)
     search_fields = ("student__h_code", "student__full_name")
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
@@ -618,8 +646,9 @@ def reenroll_embeddings_action(modeladmin, request, queryset):
 
 @admin.register(FaceEmbedding)
 class FaceEmbeddingAdmin(admin.ModelAdmin):
+    change_list_template = "admin/attendance/faceembedding/change_list.html"  # <-- add this
     list_display = (
-        "id", "student_link", "is_active", "dim",
+        "student_link", "crops_opt_in", "is_active", "dim",
         "last_enrolled_at", "last_used_k", "last_used_det_size",
         "images_used", "avg_used_score", "thumbs_with_chips",
         "provider_short", "arcface_model",
@@ -629,6 +658,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     ordering = ("-last_enrolled_at", "-created_at",)
     list_filter = ("is_active", "dim", "provider", "arcface_model", "last_used_det_size",)
     search_fields = ("student__h_code", "embedding_sha256",)
+    list_editable = ["crops_opt_in", ]
     actions = [reenroll_embeddings_action, activate_embeddings, deactivate_embeddings, export_embeddings_csv]
 
     readonly_fields = (
@@ -662,6 +692,92 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         }),
     )
 
+
+    def _row_card(self, name: str, meta, *, rel: str | None = None,
+                  thumb_url: str | None = None, is_folder: bool = False,
+                  open_href: str | None = None) -> str:
+        """
+        meta can be either a dict with {score, sharp, bright} OR a string ("date"/"period"/"camera"/"image").
+        Renders:
+          - selection corner,
+          - optional thumb (or folder icon),
+          - single-line filename with ellipsis,
+          - optional stats (3 lines),
+          - tooltip with all info.
+        """
+        # unpack stats if provided
+        score = sharp = bright = None
+        if isinstance(meta, dict):
+            score = meta.get("score")
+            sharp = meta.get("sharp")
+            bright = meta.get("bright")
+
+        # tooltip text
+        title_parts = [name]
+        stat_parts = []
+        if score is not None: stat_parts.append(f"score: {float(score):.2f}")
+        if sharp is not None: stat_parts.append(f"sharp: {float(sharp):.2f}")
+        if bright is not None: stat_parts.append(f"bright: {float(bright):.2f}")
+        if stat_parts:
+            title_parts.append(" | ".join(stat_parts))
+        card_title = " — ".join(title_parts)
+
+        # outer attrs (title for hover)
+        sel_attrs = (f' class="card sel" data-rel="{rel}" title="{escape(card_title)}"'
+                     if rel else f' class="card" title="{escape(card_title)}"')
+
+        # tick box
+        selbox = ''
+        if rel:
+            selbox = (
+                '<div class="sel-box" title="Select">'
+                '  <svg viewBox="0 0 24 24" class="tick"><path d="M20 6L9 17l-5-5"/></svg>'
+                '</div>'
+            )
+
+        # thumb or folder icon
+        if is_folder and not thumb_url:
+            thumb = (
+                '<div class="thumb" style="display:flex;align-items:center;justify-content:center;background:#111">'
+                '  <svg width="48" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" style="opacity:.8">'
+                '    <path d="M10 4l2 2h8v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h4z" stroke="currentColor" stroke-width="1.2"/>'
+                '  </svg>'
+                '</div>'
+            )
+        else:
+            thumb = (f'<img class="thumb" src="{thumb_url}" onerror="this.style.display=\'none\'">'
+                     if thumb_url else "")
+
+        # filename + stats block
+        if isinstance(meta, dict):
+            stat_rows = []
+            if score is not None: stat_rows.append(f'<div>score: {float(score):.2f}</div>')
+            if sharp is not None: stat_rows.append(f'<div>sharp: {float(sharp):.2f}</div>')
+            if bright is not None: stat_rows.append(f'<div>bright: {float(bright):.2f}</div>')
+            stats_html = f'<div class="stats">{"".join(stat_rows)}</div>' if stat_rows else ''
+            meta_html = (f'<div class="meta">'
+                         f'  <div class="fname" title="{escape(card_title)}">{escape(name)}</div>'
+                         f'  {stats_html}'
+                         f'</div>')
+        else:
+            meta_html = (f'<div class="meta">'
+                         f'  <div class="fname" title="{escape(card_title)}">{escape(name)}</div>'
+                         f'  <div class="stats">{escape(str(meta))}</div>'
+                         f'</div>')
+
+        # optional "Open" for folders
+        open_btn = ''
+        if open_href:
+            open_btn = (
+                f'<div style="margin-top:4px">'
+                f'  <a class="button button-small" '
+                f'     hx-get="{open_href}" hx-target="#captures-browser" hx-swap="innerHTML">Open</a>'
+                f'</div>'
+            )
+
+        return f'<div{sel_attrs}>{selbox}{thumb}{meta_html}{open_btn}</div>'
+
+
     def enroll_notes_full(self, obj):
         txt = obj.enroll_notes or ""
         # preserve newlines, don’t truncate, keep it readable
@@ -670,74 +786,11 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
     enroll_notes_full.short_description = "Enroll notes"
 
-    # def enroll_notes_full(self, obj):
-    #     txt = obj.enroll_notes or ""
-    #     # textarea cannot be truncated by container CSS; preserves newlines and allows scrolling
-    #     return format_html(
-    #         "<textarea readonly rows='8' style='width:100%;white-space:pre-wrap;"
-    #         "font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;'>"
-    #         "{}</textarea>",
-    #         conditional_escape(txt),
-    #     )
-    #
-    # enroll_notes_full.short_description = "Enroll notes"
-
-    # def enroll_notes_full(self, obj):
-    #     txt = obj.enroll_notes or ""
-    #     safe = conditional_escape(txt)
-    #
-    #     # Heuristic: fit initial height to content lines, within sensible bounds
-    #     # (so it opens 'just right' most of the time).
-    #     lines = txt.count("\n") + 1
-    #     rows = max(4, min(lines, 24))  # min 4 rows, max 24 rows
-    #
-    #     return format_html(
-    #         "<textarea readonly rows='{rows}' wrap='soft' "
-    #         "style='display:block;width:200%;max-width:100%;box-sizing:border-box;"
-    #         "white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;"
-    #         "overflow-x:hidden;resize:vertical;"
-    #         "font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "
-    #         "Liberation Mono, monospace;'>"
-    #         "{content}</textarea>",
-    #         rows=rows,
-    #         content=safe,
-    #     )
-    #
-    # enroll_notes_full.short_description = "Enroll notes"
-
     def student_link(self, obj):
         return format_html("<b>{}</b>", getattr(obj.student, "h_code", "-"))
 
     student_link.short_description = "Student"
 
-    # def top3_preview(self, obj):
-    #     """
-    #     Render up to 3 small thumbnails with their scores from used_images_detail.
-    #     Falls back to filenames if the images are missing.
-    #     """
-    #     det = getattr(obj, "used_images_detail", None) or []
-    #     if not det:
-    #         return "-"
-    #     # Build media-relative URLs
-    #     h = getattr(obj.student, "h_code", "")
-    #     folder = student_gallery_dir(h)
-    #     items = []
-    #     for rec in det[:6]:
-    #         name = rec.get("name", "")
-    #         score = rec.get("score", 0.0)
-    #         rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
-    #         url = f"{settings.MEDIA_URL}{rel}"
-    #         items.append(
-    #             f'<div style="display:inline-block;margin-right:6px;text-align:center;">'
-    #             f'  <img src="{url}" onerror="this.style.display=\'none\'" '
-    #             f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;" />'
-    #             f'  <div style="font-size:11px; color:blue;">{score:.2f}</div>'
-    #             f'</div>'
-    #         )
-    #     return format_html("".join(items))
-    #
-    # top3_preview.short_description = "Top‑K (score)"
-    #
     def avg_used_score(self, obj):
         det = getattr(obj, "used_images_detail", None) or []
         if isinstance(det, str):
@@ -863,10 +916,12 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         )
 
         more = format_html(
-            '<a class="button bisk-more js-reenroll-pop" data-id="{}" target="_blank" rel="noopener noreferrer" href="{}" '
-            'style="">+more</a>',
+            '<a class="button bisk-more js-reenroll-pop" data-id="{}" href="{}">+more</a>',
+            # '<a class="button bisk-more js-reenroll-pop" data-id="{}" '
+            # 'target="_blank" rel="noopener noreferrer" href="{}">+more</a>',
             obj.id, self._re_enroll_modal_url(obj.id)
         )
+
         return format_html('<div class="bisk-cell">{more}{thumbs}</div><div style="font-size: 20px;">{chips}</div>',
                            thumbs=format_html("{}", thumbs), chips=chips, more=more)
 
@@ -883,6 +938,11 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             # NEW:
             path("<int:pk>/capture/", self.admin_site.admin_view(self.re_enroll_capture_run),
                  name="attendance_faceembedding_capture_run"),
+            path("<int:pk>/captures/", self.admin_site.admin_view(self.re_enroll_captures),
+                 name="attendance_faceembedding_captures"),
+            path("<int:pk>/captures/delete/", self.admin_site.admin_view(self.re_enroll_captures_delete),
+                 name="attendance_faceembedding_captures_delete"),
+
         ]
         return extra + urls
 
@@ -912,12 +972,13 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         fe = get_object_or_404(FaceEmbedding, pk=pk)
         student = fe.student
         h = getattr(student, "h_code", "")
-        folder = student_gallery_dir(h)
+        # folder = student_gallery_dir(h)
         rows = []
-        if os.path.isdir(folder):
-            # Score ALL images (ROI + cascade). Uses settings defaults.
-            paths = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
-            rows = [r for r in score_images(paths) if r]
+
+        # if os.path.isdir(folder):
+        #     # Score ALL images (ROI + cascade). Uses settings defaults.
+        #     paths = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
+        #     rows = [r for r in score_images(paths) if r]
 
         # Convert filesystem paths to MEDIA urls for the template
         def _fs_to_media_url(fs_path: str) -> str:
@@ -954,7 +1015,13 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             "capture_form": capture_form,
             "capture_url": capture_url,
         }
+        browser_url = reverse("admin:attendance_faceembedding_captures", args=[fe.pk])
+        delete_url = reverse("admin:attendance_faceembedding_captures_delete", args=[fe.pk])
+        ctx["browser_url"] = browser_url
+        ctx["delete_url"] = delete_url
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
+
+
 
     @transaction.atomic
     @method_decorator(require_POST)
@@ -1073,6 +1140,76 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         min_score = form.cleaned_data.get("min_score")
         strict_top = bool(form.cleaned_data.get("strict_top"))
 
+        # NEW: optional selection (MEDIA-relative list)
+        import json, tempfile, shutil
+        sel = []
+        try:
+            sel = json.loads(request.POST.get("selected") or "[]")
+        except Exception:
+            sel = []
+
+        if det:
+            try:
+                set_det_size(int(det))
+            except Exception:
+                pass
+
+        # If selection present: stage into a temp folder under MEDIA_ROOT/tmp_enroll/<hcode>/...
+        stage_dir = None
+        base = Path(settings.MEDIA_ROOT)
+        try:
+            if sel:
+                stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base))
+                for rel in sel:
+                    p = (base / rel).resolve()
+                    if base not in p.parents and p != base:
+                        continue  # safety
+                    if p.is_file():
+                        shutil.copy2(p, stage_dir / p.name)
+                    elif p.is_dir():
+                        # copy only images from folder
+                        for q in p.rglob("*"):
+                            if q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+                                shutil.copy2(q, stage_dir / q.name)
+        except Exception as e:
+            if stage_dir and stage_dir.exists():
+                shutil.rmtree(stage_dir, ignore_errors=True)
+            messages.error(request, f"Preparing selection failed: {e}")
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+        try:
+            # choose source folder
+            source_hcode = fe.student.h_code
+            if stage_dir and any(stage_dir.iterdir()):
+                # enroll only from staged files
+                res = enroll_student_from_folder(
+                    source_hcode, k=int(k) if k else (fe.last_used_k or 3),
+                    force=True,
+                    min_score=float(min_score) if min_score is not None else 0.0,
+                    strict_top=bool(strict_top),
+                    folder_override=str(stage_dir)
+                    # <-- your helper can accept this kw if you added it; else it ignores
+                )
+            else:
+                res = enroll_student_from_folder(
+                    source_hcode, k=int(k) if k else (fe.last_used_k or 3),
+                    force=True,
+                    min_score=float(min_score) if min_score is not None else 0.0,
+                    strict_top=bool(strict_top)
+                )
+        except Exception as e:
+            messages.error(request, f"Enroll failed: {e}")
+            if stage_dir and stage_dir.exists():
+                shutil.rmtree(stage_dir, ignore_errors=True)
+            return redirect(request.META.get("HTTP_REFERER") or "../../")
+        finally:
+            if stage_dir and stage_dir.exists():
+                shutil.rmtree(stage_dir, ignore_errors=True)
+
+        if not res or not res.get("ok"):
+            messages.warning(request, f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}")
+            return redirect("../../")
+
         # Apply detector size override to your embedding singleton
         if det:
             try:
@@ -1080,19 +1217,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             except Exception:
                 pass
 
-        try:
-            res = enroll_student_from_folder(fe.student.h_code,
-                                             k=int(k) if k else (fe.last_used_k or 3),
-                                             force=True,
-                                             min_score=float(min_score) if min_score is not None else 0.0,
-                                             strict_top=bool(strict_top))
-        except Exception as e:
-            messages.error(request, f"Enroll failed: {e}")
-            return redirect(request.META.get("HTTP_REFERER") or "../../")
-
-        if not res or not res.get("ok"):
-            messages.warning(request, f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}")
-            return redirect("../../")
 
         # Persist min-score to the *active* FaceEmbedding row (id provided by your enroll function)
         new_id = res.get("face_embedding_id")
@@ -1110,7 +1234,193 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             pass
 
         messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
+
+        if request.headers.get("HX-Request") == "true":
+            # Don’t send HTML here; just ask the client to re-GET the listing URL
+            resp = HttpResponse("")
+            resp["HX-Trigger"] = json.dumps({"bisk:refresh-captures": True})
+            return resp
+        # Non-HTMX fallback (normal page submit): keep your existing redirect
         return redirect("../../")  # back to changelist (refreshes row)
+
+    def re_enroll_captures(self, request, pk: int):
+
+        def _media_url(p: Path) -> str:
+            base = (settings.MEDIA_URL or "/media/").rstrip("/") + "/"
+            rel = os.path.relpath(str(p), settings.MEDIA_ROOT).replace(os.sep, "/")
+            return base + rel
+
+        def _rel_media(p: Path) -> str:
+            return os.path.relpath(str(p), settings.MEDIA_ROOT).replace(os.sep, "/")
+
+        def _is_img(p: Path) -> bool:
+            return p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+        fe = get_object_or_404(FaceEmbedding, pk=pk)
+        student = fe.student
+        h = getattr(student, "h_code", "")
+        if not h:
+            return HttpResponse("<p>Missing student H-code.</p>")
+
+
+        root = Path(student_gallery_dir(h))
+
+        # navigation state
+        q_date = ((request.GET.get("date") or request.POST.get("date") or "")).strip()
+        q_period = ((request.GET.get("period") or request.POST.get("period") or "")).strip()
+        q_cam = ((request.GET.get("camera") or request.POST.get("camera") or "")).strip()
+
+        cur = root
+        if q_date:
+            cur = cur / q_date
+        if q_period:
+            cur = cur / q_period
+        if q_cam:
+            cur = cur / q_cam
+
+        cards_html = []
+        if not cur.exists():
+            html = "<p>Nothing captured yet.</p>"
+        else:
+            # Folders first (date/period/camera levels)
+            entries = sorted(cur.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower()))
+
+            # 1) batch-score only the images in this folder once
+            imgs = [p for p in entries if p.is_file() and _is_img(p)]
+            stats_map = {}
+            if imgs:
+                try:
+                    rows = score_images([str(p) for p in imgs]) or []
+                    # index by absolute filesystem path (normalized)
+                    import os as _os
+                    stats_map = {_os.path.normpath(r.get("path", "")): r for r in rows if r}
+                except Exception:
+                    stats_map = {}
+
+            # 2) render folders first, then images with stats
+            for p in entries:
+                if p.is_dir():
+                    rel = _rel_media(p)
+                    href = reverse("admin:attendance_faceembedding_captures", args=[fe.pk])
+                    qs = []
+                    if not q_date:
+                        qs.append(f"date={p.name}")
+                    elif not q_period:
+                        qs.append(f"date={q_date}&period={p.name}")
+                    elif not q_cam:
+                        qs.append(f"date={q_date}&period={q_period}&camera={p.name}")
+                    open_href = href + ("?" + "&".join(qs) if qs else "")
+                    cards_html.append(
+                        self._row_card(p.name,
+                                  "date" if not q_date else ("period" if not q_period else "camera"),
+                                  rel=rel, thumb_url=None, is_folder=True, open_href=open_href)
+                    )
+                elif _is_img(p):
+                    rel = _rel_media(p)
+                    url = _media_url(p)
+                    key = __import__("os").path.normpath(str(p))
+                    rec = stats_map.get(key) or {}
+
+                    def _to_float(v):
+                        try:
+                            return float(v)
+                        except Exception:
+                            return None
+
+                    meta = {
+                        "score": _to_float(rec.get("score")),
+                        "sharp": _to_float(rec.get("sharp")),
+                        "bright": _to_float(rec.get("bright")),
+                    }
+                    cards_html.append(
+                        self._row_card(p.name, meta, rel=rel, thumb_url=url, is_folder=False, open_href=None)
+                    )
+
+            # --- Breadcrumbs ---
+            base_href = reverse("admin:attendance_faceembedding_captures", args=[fe.pk])
+
+            def _hxlink(text: str, href: str) -> str:
+                return (f'<a class="crumb" hx-get="{href}" '
+                        f'hx-target="#captures-browser" hx-swap="innerHTML">{text}</a>')
+
+            trail = [_hxlink(student.h_code, base_href)]
+            if q_date:
+                trail.append('<span class="sep">/</span>' + _hxlink(q_date, f'{base_href}?date={q_date}'))
+            if q_period:
+                trail.append(
+                    '<span class="sep">/</span>' + _hxlink(q_period, f'{base_href}?date={q_date}&period={q_period}'))
+            if q_cam:
+                trail.append('<span class="sep">/</span>' + _hxlink(q_cam,
+                                                                    f'{base_href}?date={q_date}&period={q_period}&camera={q_cam}'))
+
+            parent_href = None
+            if q_cam:
+                parent_href = f'{base_href}?date={q_date}&period={q_period}'
+            elif q_period:
+                parent_href = f'{base_href}?date={q_date}'
+            elif q_date:
+                parent_href = base_href
+
+            up_html = (f'<a class="up" hx-get="{parent_href}" '
+                       f'hx-target="#captures-browser" hx-swap="innerHTML">← Up</a>') if parent_href else ''
+
+            crumbs_html = f'<div class="crumbs">{up_html}<span class="trail">{" ".join(trail)}</span></div>'
+
+            html = crumbs_html + '<div class="grid">' + "".join(cards_html) + "</div>"
+
+        return HttpResponse(html)
+
+        return HttpResponse(html)
+
+    @method_decorator(require_POST)
+    def re_enroll_captures_delete(self, request, pk: int):
+        """
+        Delete selected files/folders under MEDIA_ROOT safely, then re-render current listing.
+        Expects POST 'selected' = JSON array of MEDIA-relative paths.
+        """
+        # preserve current query params when coming from HTMX
+        hx_url = request.headers.get("HX-Current-URL") or ""
+        if hx_url and not request.GET:
+            from urllib.parse import urlparse, parse_qsl
+            parsed = urlparse(hx_url)
+            qd = QueryDict(mutable=True)
+            qd.update(dict(parse_qsl(parsed.query or "")))
+            request.GET = qd
+
+
+
+        try:
+            fe = get_object_or_404(FaceEmbedding, pk=pk)
+            sel = json.loads(request.POST.get("delete_selected") or "[]")
+            if not isinstance(sel, list):
+                return HttpResponseBadRequest("bad payload")
+        except Exception:
+            return HttpResponseBadRequest("bad payload")
+
+        base = Path(settings.MEDIA_ROOT)
+        removed = 0
+
+        for rel in sel:
+            try:
+                p = (base / rel).resolve()
+                # safety: keep within MEDIA_ROOT
+                if base not in p.parents and p != base:
+                    continue
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                    removed += 1
+                elif p.exists():
+                    p.unlink(missing_ok=True)
+                    removed += 1
+            except Exception:
+                # swallow; continue best-effort
+                pass
+
+        messages.info(request, f"Removed {removed} item(s).")
+
+        # Re-render the current level after delete (same query params)
+        return self.re_enroll_captures(request, pk)
 
     # class Media:
     #     css = {"all": ("attendance/admin_chips.css",)}
@@ -1118,5 +1428,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     class Media:
         # Only defines a single CSS variable (--bisk-chip-fg) that flips in dark mode.
         css = {"all": ("attendance/admin_chips.css",)}
-        # JS to open “+more” in a popup window (new window)
-        js = ("attendance/re_enroll_popup.js",)
+        js = (
+            "attendance/re_enroll_popup.js",  # opens +more in a popup window
+            "attendance/crop_modal.js",  # your image preview overlay (unchanged)
+        )

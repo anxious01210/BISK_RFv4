@@ -251,11 +251,17 @@ def save_npy_for_student(h_code: str, vec: np.ndarray) -> str:
 
 
 # ---- Enrollment (writes bytes to FaceEmbedding + npy file + metadata) ----
-def enroll_student_from_folder(h_code: str, k: int = 3, force: bool = False, min_score: float = 0.0,
-                               strict_top: bool = False) -> dict:
+def enroll_student_from_folder(
+    h_code: str,
+    k: int = 3,
+    force: bool = False,
+    min_score: float = 0.0,
+    strict_top: bool = False,
+    folder_override: str | None = None,     # NEW
+) -> dict:
     t0 = time.time()
 
-    folder = student_gallery_dir(h_code)
+    folder = folder_override or student_gallery_dir(h_code)   # <-- NEW: respect override
     if not os.path.isdir(folder):
         return {"ok": False, "reason": f"Folder not found: {folder}"}
 
