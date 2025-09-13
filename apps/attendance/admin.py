@@ -38,13 +38,36 @@ from import_export.widgets import BooleanWidget
 from import_export.admin import ImportExportMixin
 from import_export.formats import base_formats
 from urllib.parse import urlparse
-
-
-
+from django.template.loader import render_to_string
+from django.utils.http import url_has_allowed_host_and_scheme  # if you need
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
 _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) and _THUMBS_N > 0 else "K Used images")
+IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
+ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
+
+
+def _safe_media_path(rel: str) -> Path:
+    base = Path(settings.MEDIA_ROOT).resolve()
+    p = (base / rel).resolve()
+    if base not in p.parents and p != base:
+        raise ValueError("path outside MEDIA_ROOT")
+    return p
+
+
+def _expand_selected(rel_list):
+    """Expand files & folders recursively; return list[Path] of files only."""
+    files = []
+    for rel in rel_list or []:
+        p = _safe_media_path(rel)
+        if p.is_dir():
+            for f in p.rglob("*"):
+                if f.is_file() and f.suffix.lower() in ALLOWED_EXTS:
+                    files.append(f)
+        elif p.is_file() and p.suffix.lower() in ALLOWED_EXTS:
+            files.append(p)
+    return files
 
 
 def _rel_media(p: Path) -> str:
@@ -80,8 +103,6 @@ def _first_image_rel(h_code: str) -> str | None:
     root = os.path.join(folder, subdir)
     if not os.path.isdir(root):
         return None
-
-    IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 
     # Walk date / period / camera, return first existing image
     for date in sorted(os.listdir(root)):
@@ -652,7 +673,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         "last_enrolled_at", "last_used_k", "last_used_det_size",
         "images_used", "avg_used_score", "thumbs_with_chips",
         "provider_short", "arcface_model",
-        "enroll_runtime_ms", "created_at",
+        "enroll_runtime_ms", "created_at", "id",
     )
     list_display_links = ("student_link",)
     ordering = ("-last_enrolled_at", "-created_at",)
@@ -662,7 +683,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     actions = [reenroll_embeddings_action, activate_embeddings, deactivate_embeddings, export_embeddings_csv]
 
     readonly_fields = (
-        "student", "dim", "created_at",
+        "id", "student", "dim", "created_at",
         "last_enrolled_at", "last_used_k", "last_used_det_size",
         "images_considered", "images_used",
         "avg_sharpness", "avg_brightness",
@@ -676,7 +697,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
     fieldsets = (
         (None, {
-            "fields": ("student", "is_active", "dim", "created_at", "source_path")
+            "fields": ("id", "student", "is_active", "dim", "created_at", "source_path")
         }),
         ("Enrollment metadata", {
             "fields": (
@@ -691,7 +712,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             )
         }),
     )
-
 
     def _row_card(self, name: str, meta, *, rel: str | None = None,
                   thumb_url: str | None = None, is_folder: bool = False,
@@ -777,7 +797,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
         return f'<div{sel_attrs}>{selbox}{thumb}{meta_html}{open_btn}</div>'
 
-
     def enroll_notes_full(self, obj):
         txt = obj.enroll_notes or ""
         # preserve newlines, don’t truncate, keep it readable
@@ -837,52 +856,107 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         cap = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
         n = min(k, len(det), cap if isinstance(cap, int) and cap > 0 else k)
 
+        # ... inside thumbs_preview() ...
         h = getattr(obj.student, "h_code", "")
-        folder = student_gallery_dir(h)
+        media_root = Path(settings.MEDIA_ROOT).resolve()
+        gallery_root = media_root / "face_gallery" / h
 
         items = []
         for rec in det[:n]:
-            name = rec.get("name") or rec.get("path") or ""
-            # prefer normalized raw01; fall back to legacy score
-            raw01 = _coerce_raw01(rec.get("raw01", rec.get("score", None)))
-            rank = rec.get("rank", None)
-            sharp = rec.get("sharp", None)
-            bright = rec.get("bright", None)
-            det_conf = rec.get("det_conf", None)
-            det_size = rec.get("det_size", None)
+            raw_path = (rec.get("path") or "").strip()
+            name = (rec.get("name") or "").strip()
 
-            # build MEDIA url safely
-            try:
-                rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
-                url = f"{settings.MEDIA_URL}{rel}"
-            except Exception:
-                url = "#"
+            rel = None
+            if raw_path:
+                try:
+                    p = Path(raw_path)
+                    # normalize to an absolute filesystem path
+                    p_abs = p if p.is_absolute() else (media_root / raw_path).resolve()
+                    # try to compute MEDIA-relative path
+                    rel_candidate = str(p_abs.relative_to(media_root)).replace("\\", "/")
+                    # accept only if it's inside face_gallery/<HCODE>/
+                    if rel_candidate.startswith(f"face_gallery/{h}/"):
+                        rel = rel_candidate
+                except Exception:
+                    rel = None
 
-            score_txt = f"{raw01:.2f}" if isinstance(raw01, float) else ""
-            title = f"{name}"
-            if raw01 is not None:
-                title += f" | raw01={raw01:.3f}"
-            if isinstance(rank, int):
-                title += f" | rank={rank}"
-            if det_size:
-                title += f" | det={det_size}"
-            if det_conf is not None:
-                title += f" | conf={float(det_conf):.2f}"
-            if sharp is not None:
-                title += f" | sharp={float(sharp):.2f}"
-            if bright is not None:
-                title += f" | bright={float(bright):.2f}"
+            if not rel:
+                # fall back to <MEDIA_ROOT>/face_gallery/<HCODE>/<name>
+                rel = str((gallery_root / name).relative_to(media_root)).replace("\\", "/")
+
+            url = f"{settings.MEDIA_URL}{rel}"
+
+            raw01 = _coerce_raw01(rec.get("raw01", rec.get("score")))
+            rank = rec.get("rank")
+            sharp = rec.get("sharp");
+            bright = rec.get("bright")
+            det_conf = rec.get("det_conf");
+            det_size = rec.get("det_size")
+
+            title_name = Path(raw_path).name if raw_path else name
+            title = f"{title_name}"
+            if raw01 is not None: title += f" | raw01={float(raw01):.3f}"
+            if isinstance(rank, int): title += f" | rank={rank}"
+            if det_conf is not None: title += f" | conf={float(det_conf):.2f}"
+            if det_size is not None: title += f" | det={det_size}"
+            if sharp is not None: title += f" | sharp={float(sharp):.2f}"
+            if bright is not None: title += f" | bright={float(bright):.2f}"
 
             items.append(
-                f'<a href="{url}" target="_blank" rel="noopener" '
-                f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;" '
-                f'title="{title}">'
-                f'  <img src="{url}" '
-                f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;'
-                f'              box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
-                f'  <div style="font-size:11px;color:#555;">{score_txt}</div>'
+                f'<a href="{url}" target="_blank" rel="noopener" title="{title}" '
+                f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;">'
+                f'  <img src="{url}" style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;'
+                f'          box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
+                f'  <div style="font-size:11px;color:#555;">{"" if raw01 is None else f"{raw01:.2f}"}</div>'
                 f'</a>'
             )
+
+        # h = getattr(obj.student, "h_code", "")
+        # folder = student_gallery_dir(h)
+        #
+        # items = []
+        # for rec in det[:n]:
+        #     name = rec.get("name") or rec.get("path") or ""
+        #     # prefer normalized raw01; fall back to legacy score
+        #     raw01 = _coerce_raw01(rec.get("raw01", rec.get("score", None)))
+        #     rank = rec.get("rank", None)
+        #     sharp = rec.get("sharp", None)
+        #     bright = rec.get("bright", None)
+        #     det_conf = rec.get("det_conf", None)
+        #     det_size = rec.get("det_size", None)
+        #
+        #     # build MEDIA url safely
+        #     try:
+        #         rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
+        #         url = f"{settings.MEDIA_URL}{rel}"
+        #     except Exception:
+        #         url = "#"
+        #
+        #     score_txt = f"{raw01:.2f}" if isinstance(raw01, float) else ""
+        #     title = f"{name}"
+        #     if raw01 is not None:
+        #         title += f" | raw01={raw01:.3f}"
+        #     if isinstance(rank, int):
+        #         title += f" | rank={rank}"
+        #     if det_size:
+        #         title += f" | det={det_size}"
+        #     if det_conf is not None:
+        #         title += f" | conf={float(det_conf):.2f}"
+        #     if sharp is not None:
+        #         title += f" | sharp={float(sharp):.2f}"
+        #     if bright is not None:
+        #         title += f" | bright={float(bright):.2f}"
+        #
+        #     items.append(
+        #         f'<a href="{url}" target="_blank" rel="noopener" '
+        #         f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;" '
+        #         f'title="{title}">'
+        #         f'  <img src="{url}" '
+        #         f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;'
+        #         f'              box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
+        #         f'  <div style="font-size:11px;color:#555;">{score_txt}</div>'
+        #         f'</a>'
+        #     )
 
         more = len(det) - n
         if more > 0:
@@ -1021,8 +1095,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         ctx["delete_url"] = delete_url
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
 
-
-
     @transaction.atomic
     @method_decorator(require_POST)
     def re_enroll_capture_run(self, request, pk: int):
@@ -1129,9 +1201,30 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     @transaction.atomic
     @method_decorator(require_POST)
     def re_enroll_run(self, request, pk: int):
+        from pathlib import Path
+        import os, json, tempfile, shutil
+        from django.conf import settings
+        from django.http import HttpResponse, QueryDict
+        from urllib.parse import urlparse, parse_qsl
+
         fe = get_object_or_404(FaceEmbedding, pk=pk)
+
+        # Keep the same folder (querystring) when called via HTMX
+        is_htmx = (request.headers.get("HX-Request") == "true")
+        if is_htmx and not request.GET:
+            hx_url = request.headers.get("HX-Current-URL") or ""
+            if hx_url:
+                parsed = urlparse(hx_url)
+                qd = QueryDict(mutable=True)
+                qd.update(dict(parse_qsl(parsed.query or "")))
+                request.GET = qd
+
         form = self._ReEnrollForm(request.POST)
         if not form.is_valid():
+            if is_htmx:
+                resp = HttpResponse('<div class="error">Invalid inputs.</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Re-enroll: invalid inputs"}})
+                return resp
             messages.error(request, "Invalid inputs.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
@@ -1140,108 +1233,616 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         min_score = form.cleaned_data.get("min_score")
         strict_top = bool(form.cleaned_data.get("strict_top"))
 
-        # NEW: optional selection (MEDIA-relative list)
-        import json, tempfile, shutil
-        sel = []
+        # Optional selection from the client (MEDIA-relative list)
         try:
             sel = json.loads(request.POST.get("selected") or "[]")
+            if not isinstance(sel, list):
+                sel = []
         except Exception:
             sel = []
 
+        # If your detector size lives globally, apply override up front
         if det:
             try:
                 set_det_size(int(det))
             except Exception:
                 pass
 
-        # If selection present: stage into a temp folder under MEDIA_ROOT/tmp_enroll/<hcode>/...
-        stage_dir = None
-        base = Path(settings.MEDIA_ROOT)
+        # Stage files and build a robust mapping: basename(lowercased) -> MEDIA-relative path
+        stage_dir: Path | None = None
+        staged_count = 0
+        name_to_rel: dict[str, str] = {}
+        media_root = Path(settings.MEDIA_ROOT)
+
+        def _is_img(p: Path) -> bool:
+            return p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
         try:
             if sel:
-                stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base))
+                stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=media_root))
                 for rel in sel:
-                    p = (base / rel).resolve()
-                    if base not in p.parents and p != base:
-                        continue  # safety
-                    if p.is_file():
+                    p = (media_root / rel).resolve()
+                    if media_root not in p.parents and p != media_root:  # safety
+                        continue
+                    if p.is_file() and _is_img(p):
                         shutil.copy2(p, stage_dir / p.name)
+                        staged_count += 1
+                        name_to_rel[p.name.lower()] = str(p.relative_to(media_root)).replace(os.sep, "/")
                     elif p.is_dir():
-                        # copy only images from folder
                         for q in p.rglob("*"):
-                            if q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+                            if q.is_file() and _is_img(q):
                                 shutil.copy2(q, stage_dir / q.name)
+                                staged_count += 1
+                                name_to_rel[q.name.lower()] = str(q.relative_to(media_root)).replace(os.sep, "/")
         except Exception as e:
             if stage_dir and stage_dir.exists():
                 shutil.rmtree(stage_dir, ignore_errors=True)
+            if is_htmx:
+                resp = HttpResponse(f'<div class="error">Preparing selection failed: {e}</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Selection failed: {e}"}})
+                return resp
             messages.error(request, f"Preparing selection failed: {e}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
+        # Run your pipeline; support a few API variants
         try:
-            # choose source folder
             source_hcode = fe.student.h_code
+            common = dict(
+                k=int(k) if k else (fe.last_used_k or 3),
+                force=True,
+                min_score=float(min_score) if min_score is not None else 0.0,
+                strict_top=bool(strict_top),
+            )
             if stage_dir and any(stage_dir.iterdir()):
-                # enroll only from staged files
-                res = enroll_student_from_folder(
-                    source_hcode, k=int(k) if k else (fe.last_used_k or 3),
-                    force=True,
-                    min_score=float(min_score) if min_score is not None else 0.0,
-                    strict_top=bool(strict_top),
-                    folder_override=str(stage_dir)
-                    # <-- your helper can accept this kw if you added it; else it ignores
-                )
+                sd = str(stage_dir)
+                try:
+                    res = enroll_student_from_folder(source_hcode, folder_override=sd, **common)
+                except TypeError:
+                    try:
+                        res = enroll_student_from_folder(source_hcode, path=sd, **common)
+                    except TypeError:
+                        res = enroll_student_from_folder(source_hcode, sd, **common)
             else:
-                res = enroll_student_from_folder(
-                    source_hcode, k=int(k) if k else (fe.last_used_k or 3),
-                    force=True,
-                    min_score=float(min_score) if min_score is not None else 0.0,
-                    strict_top=bool(strict_top)
-                )
+                res = enroll_student_from_folder(source_hcode, **common)
         except Exception as e:
-            messages.error(request, f"Enroll failed: {e}")
             if stage_dir and stage_dir.exists():
                 shutil.rmtree(stage_dir, ignore_errors=True)
+            if is_htmx:
+                resp = HttpResponse(f'<div class="error">Enroll failed: {e}</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Enroll failed: {e}"}})
+                return resp
+            messages.error(request, f"Enroll failed: {e}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
         finally:
             if stage_dir and stage_dir.exists():
                 shutil.rmtree(stage_dir, ignore_errors=True)
 
         if not res or not res.get("ok"):
-            messages.warning(request, f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}")
+            msg = res.get("reason") if res else "Unknown error"
+            if is_htmx:
+                resp = HttpResponse(f'<div class="error">Enroll did not succeed: {msg}</div>')
+                resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Enroll failed: {msg}"}})
+                return resp
+            messages.warning(request, f"Enroll did not succeed: {msg}")
             return redirect("../../")
 
-        # Apply detector size override to your embedding singleton
-        if det:
-            try:
-                set_det_size(int(det))
-            except Exception:
-                pass
-
-
-        # Persist min-score to the *active* FaceEmbedding row (id provided by your enroll function)
+        # Persist min-score to the active row
         new_id = res.get("face_embedding_id")
         meta = (res or {}).get("meta", {}) or {}
         used_min = meta.get("min_score", min_score)
         try:
-            if new_id:
-                fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
-            else:
-                fe2 = fe  # fallback to the same row
+            fe_active = FaceEmbedding.objects.select_for_update().get(pk=new_id) if new_id else fe
             if used_min is not None:
-                fe2.last_used_min_score = float(used_min)
-                fe2.save(update_fields=["last_used_min_score"])
+                fe_active.last_used_min_score = float(used_min)
+                fe_active.save(update_fields=["last_used_min_score"])
+        except Exception:
+            fe_active = fe  # safe fallback
+
+        # >>> CRITICAL FIX: ensure every used_images_detail has a good MEDIA-relative 'path'
+        try:
+            if getattr(fe_active, "used_images_detail", None):
+                detail = list(fe_active.used_images_detail or [])
+                changed = False
+                for rec in detail:
+                    # normalize a key we can match against our staging map
+                    nm_raw = rec.get("name") or rec.get("file") or rec.get("path") or ""
+                    nm = os.path.basename(str(nm_raw)).lower()
+                    rel = name_to_rel.get(nm)
+                    if rel:
+                        # Always overwrite; previous value may point to tmp_enroll or be missing
+                        rec["path"] = rel
+                        changed = True
+                if changed:
+                    fe_active.used_images_detail = detail
+                    fe_active.save(update_fields=["used_images_detail"])
         except Exception:
             pass
+        # <<< END FIX
+
+        if is_htmx:
+            used = meta.get("used") or meta.get("files_used") or meta.get("images_used") or staged_count
+            accepted = meta.get("accepted") or meta.get("n_accepted")
+            avg_score = meta.get("avg_score") or meta.get("mean_score")
+
+            bits = [f"Re-enrolled with <b>{used}</b> image(s)"]
+            if k:                     bits.append(f"k={k}")
+            if det:                   bits.append(f"det_size={det}")
+            if min_score is not None: bits.append(f"min_score={min_score}")
+            if strict_top:            bits.append("strict-top")
+            if accepted is not None:  bits.append(f"accepted={accepted}")
+            if avg_score is not None: bits.append(f"avg={avg_score}")
+
+            summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
+
+            # Refresh the same folder view
+            grid_resp = self.re_enroll_captures(request, pk)
+            grid_html = grid_resp.content.decode("utf-8")
+            oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
+
+            resp = HttpResponse(summary_html + oob)
+            resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Re-enrolled {used} image(s)."}})
+            return resp
 
         messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
+        return redirect("../../")
 
-        if request.headers.get("HX-Request") == "true":
-            # Don’t send HTML here; just ask the client to re-GET the listing URL
-            resp = HttpResponse("")
-            resp["HX-Trigger"] = json.dumps({"bisk:refresh-captures": True})
-            return resp
-        # Non-HTMX fallback (normal page submit): keep your existing redirect
-        return redirect("../../")  # back to changelist (refreshes row)
+    # def re_enroll_run(self, request, pk: int):
+    #     from pathlib import Path
+    #     import json, tempfile, shutil
+    #     from django.conf import settings
+    #     from django.http import HttpResponse
+    #     from django.utils.http import urlencode
+    #     from django.http import QueryDict
+    #     from urllib.parse import urlparse, parse_qsl
+    #
+    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #
+    #     # Preserve current query params when called from HTMX (so we refresh same folder)
+    #     is_htmx = (request.headers.get("HX-Request") == "true")
+    #     if is_htmx and not request.GET:
+    #         hx_url = request.headers.get("HX-Current-URL") or ""
+    #         if hx_url:
+    #             parsed = urlparse(hx_url)
+    #             qd = QueryDict(mutable=True)
+    #             qd.update(dict(parse_qsl(parsed.query or "")))
+    #             request.GET = qd  # downstream re_enroll_captures will honor this
+    #
+    #     form = self._ReEnrollForm(request.POST)
+    #     if not form.is_valid():
+    #         if is_htmx:
+    #             resp = HttpResponse('<div class="error">Invalid inputs.</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Re-enroll: invalid inputs"}})
+    #             return resp
+    #         messages.error(request, "Invalid inputs.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     k = form.cleaned_data.get("k")
+    #     det = form.cleaned_data.get("det_size")
+    #     min_score = form.cleaned_data.get("min_score")
+    #     strict_top = bool(form.cleaned_data.get("strict_top"))
+    #
+    #     # Optional selection (MEDIA-relative list)
+    #     try:
+    #         sel = json.loads(request.POST.get("selected") or "[]")
+    #         if not isinstance(sel, list):
+    #             sel = []
+    #     except Exception:
+    #         sel = []
+    #
+    #     # Apply detector size override (before run)
+    #     if det:
+    #         try:
+    #             set_det_size(int(det))
+    #         except Exception:
+    #             pass
+    #
+    #     # Stage selection into MEDIA_ROOT/tmp_enroll_<hcode>_... (recursive; images only)
+    #     stage_dir = None
+    #     staged_count = 0
+    #     base = Path(settings.MEDIA_ROOT)
+    #     try:
+    #         if sel:
+    #             stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base))
+    #             for rel in sel:
+    #                 p = (base / rel).resolve()
+    #                 if base not in p.parents and p != base:  # safety
+    #                     continue
+    #                 if p.is_file():
+    #                     shutil.copy2(p, stage_dir / p.name);
+    #                     staged_count += 1
+    #                 elif p.is_dir():
+    #                     for q in p.rglob("*"):
+    #                         if q.is_file() and q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+    #                             shutil.copy2(q, stage_dir / q.name);
+    #                             staged_count += 1
+    #     except Exception as e:
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #         if is_htmx:
+    #             resp = HttpResponse(f'<div class="error">Preparing selection failed: {e}</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Selection failed: {e}"}})
+    #             return resp
+    #         messages.error(request, f"Preparing selection failed: {e}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # ---- run enrollment ----
+    #     try:
+    #         source_hcode = fe.student.h_code
+    #
+    #         # Common kwargs we always pass
+    #         _kwargs_common = dict(
+    #             k=int(k) if k else (fe.last_used_k or 3),
+    #             force=True,
+    #             min_score=float(min_score) if min_score is not None else 0.0,
+    #             strict_top=bool(strict_top),
+    #         )
+    #
+    #         if stage_dir and any(stage_dir.iterdir()):
+    #             sd = str(stage_dir)
+    #
+    #             # Try several API variants of enroll_student_from_folder
+    #             try:
+    #                 # 1) Some versions expect folder_override=<dir>
+    #                 res = enroll_student_from_folder(source_hcode, folder_override=sd, **_kwargs_common)
+    #             except TypeError:
+    #                 try:
+    #                     # 2) Others expect path=<dir>
+    #                     res = enroll_student_from_folder(source_hcode, path=sd, **_kwargs_common)
+    #                 except TypeError:
+    #                     # 3) Some expect the folder as the 2nd positional argument
+    #                     res = enroll_student_from_folder(source_hcode, sd, **_kwargs_common)
+    #         else:
+    #             res = enroll_student_from_folder(source_hcode, **_kwargs_common)
+    #
+    #     except Exception as e:
+    #         messages.error(request, f"Enroll failed: {e}")
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #     finally:
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #
+    #
+    #     if not res or not res.get("ok"):
+    #         msg = res.get("reason") if res else "Unknown error"
+    #         if is_htmx:
+    #             resp = HttpResponse(f'<div class="error">Enroll did not succeed: {msg}</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Enroll did not succeed: {msg}"}})
+    #             return resp
+    #         messages.warning(request, f"Enroll did not succeed: {msg}")
+    #         return redirect("../../")
+    #
+    #     # Persist min-score to the active FaceEmbedding row (if present)
+    #     new_id = res.get("face_embedding_id")
+    #     meta = (res or {}).get("meta", {}) or {}
+    #     used_min = meta.get("min_score", min_score)
+    #     try:
+    #         if new_id:
+    #             fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
+    #         else:
+    #             fe2 = fe
+    #         if used_min is not None:
+    #             fe2.last_used_min_score = float(used_min)
+    #             fe2.save(update_fields=["last_used_min_score"])
+    #     except Exception:
+    #         pass
+    #
+    #     if is_htmx:
+    #         # Compose a compact inline summary
+    #         used = meta.get("used") or meta.get("files_used") or meta.get("images_used") or staged_count
+    #         accepted = meta.get("accepted") or meta.get("n_accepted")
+    #         avg_score = meta.get("avg_score") or meta.get("mean_score")
+    #
+    #         bits = [f"Re-enrolled with <b>{used}</b> image(s)"]
+    #         if k: bits.append(f"k={k}")
+    #         if det: bits.append(f"det_size={det}")
+    #         if min_score is not None: bits.append(f"min_score={min_score}")
+    #         if strict_top: bits.append("strict-top")
+    #         if accepted is not None: bits.append(f"accepted={accepted}")
+    #         if avg_score is not None: bits.append(f"avg={avg_score}")
+    #
+    #         summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
+    #
+    #         # Refresh the current folder view (respecting request.GET we set above)
+    #         grid_resp = self.re_enroll_captures(request, pk)  # uses current GET (folder, score, etc.)
+    #         grid_html = grid_resp.content.decode("utf-8")
+    #         oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
+    #
+    #         resp = HttpResponse(summary_html + oob)
+    #         resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Re-enrolled {used} image(s)."}})
+    #         return resp
+    #
+    #     # Non-HTMX fallback
+    #     messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
+    #     return redirect("../../")
+
+    # def re_enroll_run(self, request, pk: int):
+    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #     form = self._ReEnrollForm(request.POST)
+    #     if not form.is_valid():
+    #         messages.error(request, "Invalid inputs.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     k = form.cleaned_data.get("k")
+    #     det = form.cleaned_data.get("det_size")
+    #     min_score = form.cleaned_data.get("min_score")
+    #     strict_top = bool(form.cleaned_data.get("strict_top"))
+    #
+    #     # --- optional selection (MEDIA-relative list) ---
+    #     import json, tempfile, shutil
+    #     from pathlib import Path
+    #     from django.conf import settings
+    #     from django.http import HttpResponse
+    #
+    #     try:
+    #         sel = json.loads(request.POST.get("selected") or "[]")
+    #         if not isinstance(sel, list):
+    #             sel = []
+    #     except Exception:
+    #         sel = []
+    #
+    #     # Apply detector size override (before run)
+    #     if det:
+    #         try:
+    #             set_det_size(int(det))
+    #         except Exception:
+    #             pass
+    #
+    #     # If selection present: stage into a temp folder under MEDIA_ROOT
+    #     stage_dir = None
+    #     staged_count = 0
+    #     base = Path(settings.MEDIA_ROOT)
+    #     try:
+    #         if sel:
+    #             stage_dir = Path(
+    #                 tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base)
+    #             )
+    #             for rel in sel:
+    #                 p = (base / rel).resolve()
+    #                 # safety: keep within MEDIA_ROOT
+    #                 if base not in p.parents and p != base:
+    #                     continue
+    #                 if p.is_file():
+    #                     shutil.copy2(p, stage_dir / p.name)
+    #                     staged_count += 1
+    #                 elif p.is_dir():
+    #                     # copy only images from folder (recursive)
+    #                     for q in p.rglob("*"):
+    #                         if q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"} and q.is_file():
+    #                             shutil.copy2(q, stage_dir / q.name)
+    #                             staged_count += 1
+    #     except Exception as e:
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #         messages.error(request, f"Preparing selection failed: {e}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # ---- run enrollment ----
+    #     try:
+    #         # choose source folder
+    #         source_hcode = fe.student.h_code
+    #         if stage_dir and any(stage_dir.iterdir()):
+    #             # enroll only from staged files
+    #             try:
+    #                 res = enroll_student_from_folder(
+    #                     source_hcode,
+    #                     k=int(k) if k else (fe.last_used_k or 3),
+    #                     force=True,
+    #                     min_score=float(min_score) if min_score is not None else 0.0,
+    #                     strict_top=bool(strict_top),
+    #                     path=str(stage_dir),  # your helper will ignore if unsupported
+    #                 )
+    #             except TypeError:
+    #                 res = enroll_student_from_folder(
+    #                     source_hcode,
+    #                     k=int(k) if k else (fe.last_used_k or 3),
+    #                     force=True,
+    #                     min_score=float(min_score) if min_score is not None else 0.0,
+    #                     strict_top=bool(strict_top),
+    #                     folder_override=str(stage_dir),  # your helper will ignore if unsupported
+    #                 )
+    #         else:
+    #             res = enroll_student_from_folder(
+    #                 source_hcode,
+    #                 k=int(k) if k else (fe.last_used_k or 3),
+    #                 force=True,
+    #                 min_score=float(min_score) if min_score is not None else 0.0,
+    #                 strict_top=bool(strict_top),
+    #             )
+    #     except Exception as e:
+    #         messages.error(request, f"Enroll failed: {e}")
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #     finally:
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #
+    #     if not res or not res.get("ok"):
+    #         messages.warning(
+    #             request,
+    #             f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}",
+    #         )
+    #         return redirect("../../")
+    #
+    #     # Apply detector size override again (persist)
+    #     if det:
+    #         try:
+    #             set_det_size(int(det))
+    #         except Exception:
+    #             pass
+    #
+    #     # Persist min-score to the *active* FaceEmbedding row
+    #     new_id = res.get("face_embedding_id")
+    #     meta = (res or {}).get("meta", {}) or {}
+    #     used_min = meta.get("min_score", min_score)
+    #     try:
+    #         if new_id:
+    #             fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
+    #         else:
+    #             fe2 = fe  # fallback to the same row
+    #         if used_min is not None:
+    #             fe2.last_used_min_score = float(used_min)
+    #             fe2.save(update_fields=["last_used_min_score"])
+    #     except Exception:
+    #         pass
+    #
+    #     # ---- HTMX vs non-HTMX response ----
+    #     if request.headers.get("HX-Request") == "true":
+    #         # Build a compact inline summary
+    #         used = (
+    #                 meta.get("used")
+    #                 or meta.get("files_used")
+    #                 or meta.get("images_used")
+    #                 or staged_count
+    #         )
+    #         # Optional extra stats if your pipeline returns them:
+    #         accepted = meta.get("accepted") or meta.get("n_accepted")
+    #         avg_score = meta.get("avg_score") or meta.get("mean_score")
+    #
+    #         summary_bits = [f"Re-enrolled with <b>{used}</b> image(s)"]
+    #         if k: summary_bits.append(f"k={k}")
+    #         if det: summary_bits.append(f"det_size={det}")
+    #         if min_score is not None: summary_bits.append(f"min_score={min_score}")
+    #         if strict_top: summary_bits.append("strict-top")
+    #         if accepted is not None: summary_bits.append(f"accepted={accepted}")
+    #         if avg_score is not None: summary_bits.append(f"avg={avg_score}")
+    #
+    #         summary_html = (
+    #                 '<div class="success" style="margin-top:8px">'
+    #                 + ", ".join(summary_bits)
+    #                 + ".</div>"
+    #         )
+    #
+    #         # Re-render the captures grid and send it as an OOB swap
+    #         grid_resp = self.re_enroll_captures(request, pk)  # HttpResponse
+    #         grid_html = grid_resp.content.decode("utf-8")
+    #         oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
+    #
+    #         resp = HttpResponse(summary_html + oob)
+    #         resp["HX-Trigger"] = json.dumps(
+    #             {"toast": {"text": f"Re-enrolled {used} image(s)."}}
+    #         )
+    #         return resp
+    #
+    #     # Non-HTMX fallback
+    #     messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
+    #     return redirect("../../")  # back to changelist (refreshes row)
+
+    # def re_enroll_run(self, request, pk: int):
+    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #     form = self._ReEnrollForm(request.POST)
+    #     if not form.is_valid():
+    #         messages.error(request, "Invalid inputs.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     k = form.cleaned_data.get("k")
+    #     det = form.cleaned_data.get("det_size")
+    #     min_score = form.cleaned_data.get("min_score")
+    #     strict_top = bool(form.cleaned_data.get("strict_top"))
+    #
+    #     # NEW: optional selection (MEDIA-relative list)
+    #     import json, tempfile, shutil
+    #     sel = []
+    #     try:
+    #         sel = json.loads(request.POST.get("selected") or "[]")
+    #     except Exception:
+    #         sel = []
+    #
+    #     if det:
+    #         try:
+    #             set_det_size(int(det))
+    #         except Exception:
+    #             pass
+    #
+    #     # If selection present: stage into a temp folder under MEDIA_ROOT/tmp_enroll/<hcode>/...
+    #     stage_dir = None
+    #     base = Path(settings.MEDIA_ROOT)
+    #     try:
+    #         if sel:
+    #             stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base))
+    #             for rel in sel:
+    #                 p = (base / rel).resolve()
+    #                 if base not in p.parents and p != base:
+    #                     continue  # safety
+    #                 if p.is_file():
+    #                     shutil.copy2(p, stage_dir / p.name)
+    #                 elif p.is_dir():
+    #                     # copy only images from folder
+    #                     for q in p.rglob("*"):
+    #                         if q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
+    #                             shutil.copy2(q, stage_dir / q.name)
+    #     except Exception as e:
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #         messages.error(request, f"Preparing selection failed: {e}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     try:
+    #         # choose source folder
+    #         source_hcode = fe.student.h_code
+    #         if stage_dir and any(stage_dir.iterdir()):
+    #             # enroll only from staged files
+    #             res = enroll_student_from_folder(
+    #                 source_hcode, k=int(k) if k else (fe.last_used_k or 3),
+    #                 force=True,
+    #                 min_score=float(min_score) if min_score is not None else 0.0,
+    #                 strict_top=bool(strict_top),
+    #                 folder_override=str(stage_dir)
+    #                 # <-- your helper can accept this kw if you added it; else it ignores
+    #             )
+    #         else:
+    #             res = enroll_student_from_folder(
+    #                 source_hcode, k=int(k) if k else (fe.last_used_k or 3),
+    #                 force=True,
+    #                 min_score=float(min_score) if min_score is not None else 0.0,
+    #                 strict_top=bool(strict_top)
+    #             )
+    #     except Exception as e:
+    #         messages.error(request, f"Enroll failed: {e}")
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #     finally:
+    #         if stage_dir and stage_dir.exists():
+    #             shutil.rmtree(stage_dir, ignore_errors=True)
+    #
+    #     if not res or not res.get("ok"):
+    #         messages.warning(request, f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}")
+    #         return redirect("../../")
+    #
+    #     # Apply detector size override to your embedding singleton
+    #     if det:
+    #         try:
+    #             set_det_size(int(det))
+    #         except Exception:
+    #             pass
+    #
+    #     # Persist min-score to the *active* FaceEmbedding row (id provided by your enroll function)
+    #     new_id = res.get("face_embedding_id")
+    #     meta = (res or {}).get("meta", {}) or {}
+    #     used_min = meta.get("min_score", min_score)
+    #     try:
+    #         if new_id:
+    #             fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
+    #         else:
+    #             fe2 = fe  # fallback to the same row
+    #         if used_min is not None:
+    #             fe2.last_used_min_score = float(used_min)
+    #             fe2.save(update_fields=["last_used_min_score"])
+    #     except Exception:
+    #         pass
+    #
+    #     messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
+    #
+    #     if request.headers.get("HX-Request") == "true":
+    #         # Don’t send HTML here; just ask the client to re-GET the listing URL
+    #         resp = HttpResponse("")
+    #         resp["HX-Trigger"] = json.dumps({"bisk:refresh-captures": True})
+    #         return resp
+    #     # Non-HTMX fallback (normal page submit): keep your existing redirect
+    #     return redirect("../../")  # back to changelist (refreshes row)
 
     def re_enroll_captures(self, request, pk: int):
 
@@ -1256,13 +1857,11 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         def _is_img(p: Path) -> bool:
             return p.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
-
         fe = get_object_or_404(FaceEmbedding, pk=pk)
         student = fe.student
         h = getattr(student, "h_code", "")
         if not h:
             return HttpResponse("<p>Missing student H-code.</p>")
-
 
         root = Path(student_gallery_dir(h))
 
@@ -1313,8 +1912,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                     open_href = href + ("?" + "&".join(qs) if qs else "")
                     cards_html.append(
                         self._row_card(p.name,
-                                  "date" if not q_date else ("period" if not q_period else "camera"),
-                                  rel=rel, thumb_url=None, is_folder=True, open_href=open_href)
+                                       "date" if not q_date else ("period" if not q_period else "camera"),
+                                       rel=rel, thumb_url=None, is_folder=True, open_href=open_href)
                     )
                 elif _is_img(p):
                     rel = _rel_media(p)
@@ -1377,7 +1976,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     def re_enroll_captures_delete(self, request, pk: int):
         """
         Delete selected files/folders under MEDIA_ROOT safely, then re-render current listing.
-        Expects POST 'selected' = JSON array of MEDIA-relative paths.
+        Expects POST 'delete_selected' = JSON array of MEDIA-relative paths.
         """
         # preserve current query params when coming from HTMX
         hx_url = request.headers.get("HX-Current-URL") or ""
@@ -1388,8 +1987,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             qd.update(dict(parse_qsl(parsed.query or "")))
             request.GET = qd
 
-
-
         try:
             fe = get_object_or_404(FaceEmbedding, pk=pk)
             sel = json.loads(request.POST.get("delete_selected") or "[]")
@@ -1398,8 +1995,9 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         except Exception:
             return HttpResponseBadRequest("bad payload")
 
-        base = Path(settings.MEDIA_ROOT)
+        base = Path(settings.MEDIA_ROOT).resolve()
         removed = 0
+        deleted_names: list[str] = []  # NEW
 
         for rel in sel:
             try:
@@ -1410,17 +2008,73 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                 if p.is_dir():
                     shutil.rmtree(p, ignore_errors=True)
                     removed += 1
+                    deleted_names.append(Path(rel).name)  # preview folder name
                 elif p.exists():
                     p.unlink(missing_ok=True)
                     removed += 1
+                    deleted_names.append(Path(rel).name)  # preview file name
             except Exception:
                 # swallow; continue best-effort
                 pass
 
+        # optional Django message (won't show in the modal, toast will)
         messages.info(request, f"Removed {removed} item(s).")
 
-        # Re-render the current level after delete (same query params)
-        return self.re_enroll_captures(request, pk)
+        # Re-render the grid and attach a toast
+        resp = self.re_enroll_captures(request, pk)  # returns updated grid HTML
+
+        preview = ", ".join(deleted_names[:4]) + ("…" if len(deleted_names) > 4 else "")
+        resp["HX-Trigger"] = json.dumps({
+            "toast": {"text": f"Deleted {removed} item(s){(': ' + preview) if preview else ''}"}
+        })
+        return resp
+
+    # @method_decorator(require_POST)
+    # def re_enroll_captures_delete(self, request, pk: int):
+    #     """
+    #     Delete selected files/folders under MEDIA_ROOT safely, then re-render current listing.
+    #     Expects POST 'selected' = JSON array of MEDIA-relative paths.
+    #     """
+    #     # preserve current query params when coming from HTMX
+    #     hx_url = request.headers.get("HX-Current-URL") or ""
+    #     if hx_url and not request.GET:
+    #         from urllib.parse import urlparse, parse_qsl
+    #         parsed = urlparse(hx_url)
+    #         qd = QueryDict(mutable=True)
+    #         qd.update(dict(parse_qsl(parsed.query or "")))
+    #         request.GET = qd
+    #
+    #     try:
+    #         fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #         sel = json.loads(request.POST.get("delete_selected") or "[]")
+    #         if not isinstance(sel, list):
+    #             return HttpResponseBadRequest("bad payload")
+    #     except Exception:
+    #         return HttpResponseBadRequest("bad payload")
+    #
+    #     base = Path(settings.MEDIA_ROOT)
+    #     removed = 0
+    #
+    #     for rel in sel:
+    #         try:
+    #             p = (base / rel).resolve()
+    #             # safety: keep within MEDIA_ROOT
+    #             if base not in p.parents and p != base:
+    #                 continue
+    #             if p.is_dir():
+    #                 shutil.rmtree(p, ignore_errors=True)
+    #                 removed += 1
+    #             elif p.exists():
+    #                 p.unlink(missing_ok=True)
+    #                 removed += 1
+    #         except Exception:
+    #             # swallow; continue best-effort
+    #             pass
+    #
+    #     messages.info(request, f"Removed {removed} item(s).")
+    #
+    #     # Re-render the current level after delete (same query params)
+    #     return self.re_enroll_captures(request, pk)
 
     # class Media:
     #     css = {"all": ("attendance/admin_chips.css",)}

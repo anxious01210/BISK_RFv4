@@ -252,7 +252,19 @@
             box-shadow: 0 0 0 2px #3b82f6 inset;
         }
 
+        .success {
+            background: #0f5132;
+            color: #d1fae5;
+            padding: 8px 10px;
+            border-radius: 8px;
+        }
 
+        .error {
+            background: #842029;
+            color: #ffe2e6;
+            padding: 8px 10px;
+            border-radius: 8px;
+        }
     </style>
 {% endblock %}
 
@@ -269,7 +281,7 @@
         <h3 style="margin:16px 0 8px;font-size:18px;">Captured crops (date / period / camera)</h3>
         <div id="captures-browser"
              hx-get="{{ browser_url }}?score=0"
-             hx-trigger="load"
+             hx-trigger="load, bisk:refresh-captures from:body"
              hx-target="#captures-browser"
              hx-swap="innerHTML">
             <div style="opacity:.6">Loading…</div>
@@ -281,6 +293,8 @@
                 {% for r in rows %}
                     <div class="card"
                          title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+
+
 
                                  {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}"
                     >
@@ -299,7 +313,7 @@
         {% endif %}
 
         <div style="display:flex; gap:8px; align-items:center; margin:8px 0 14px;">
-{#            <input type="hidden" id="csrf_token" name="csrfmiddlewaretoken" value="{{ csrf_token }}">#}
+            {#            <input type="hidden" id="csrf_token" name="csrfmiddlewaretoken" value="{{ csrf_token }}">#}
             <button id="btn-clear" type="button" class="button">Clear selection (Esc)</button>
             <button id="btn-delete" type="button" class="button button-danger"
                     hx-post="{{ delete_url }}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
@@ -483,6 +497,58 @@
                 window.__REENROLL_WIRED__ = true;
             });
         })();
+
+
+        /***Start*** --- helpers for feedback / busy state --- ***/
+        (function () {
+            const FORM = document.getElementById('reenroll-form');
+            const BTN_RUN = FORM?.querySelector('button[type="submit"]');
+            const BTN_DELETE = document.getElementById('btn-delete');
+
+            // Simple toast
+            function showToast(detail) {
+                const msg = typeof detail === 'string' ? detail : (detail?.text || JSON.stringify(detail));
+                const el = document.createElement('div');
+                el.textContent = msg;
+                el.style.position = 'fixed';
+                el.style.right = '16px';
+                el.style.bottom = '16px';
+                el.style.padding = '10px 12px';
+                el.style.background = '#1f2937';
+                el.style.color = '#fff';
+                el.style.borderRadius = '10px';
+                el.style.boxShadow = '0 6px 30px rgba(0,0,0,.35)';
+                el.style.zIndex = '9999';
+                document.body.appendChild(el);
+                setTimeout(() => el.remove(), 7000);
+            }
+
+            function setBusy(btn, on, labelBusy) {
+                if (!btn) return;
+                if (on) {
+                    btn.dataset._label = btn.textContent;
+                    btn.textContent = labelBusy || 'Working…';
+                    btn.setAttribute('disabled', 'disabled');
+                } else {
+                    if (btn.dataset._label) btn.textContent = btn.dataset._label;
+                    btn.removeAttribute('disabled');
+                }
+            }
+
+            // Accept server "toast" events
+            document.body.addEventListener('toast', (e) => showToast(e.detail));
+
+            // Busy states during HTMX requests
+            document.body.addEventListener('htmx:beforeRequest', (e) => {
+                if (e.target === FORM) setBusy(BTN_RUN, true, 'Re-enrolling…');
+                if (e.target === BTN_DELETE) setBusy(BTN_DELETE, true, 'Deleting…');
+            });
+            document.body.addEventListener('htmx:afterRequest', (e) => {
+                if (e.target === FORM) setBusy(BTN_RUN, false);
+                if (e.target === BTN_DELETE) setBusy(BTN_DELETE, false);
+            });
+        })();
+        /***End *** --- helpers for feedback / busy state --- ***/
     </script>
 
 
