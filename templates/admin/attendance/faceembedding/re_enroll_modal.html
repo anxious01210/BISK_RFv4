@@ -2,21 +2,19 @@
 {% load static %}
 
 {% block extrahead %}{{ block.super }}
-    <!-- HTMX is required for the grid to load -->
     <script defer src="https://unpkg.com/htmx.org@1.9.12"></script>
-
-    <!-- CSRF for all HTMX requests -->
     <meta name="csrf-token" content="{{ csrf_token }}">
     <script>
-        document.body.addEventListener('htmx:configRequest', function (e) {
-            const t = document.querySelector('meta[name="csrf-token"]')?.content;
-            if (t) e.detail.headers['X-CSRFToken'] = t;
+        document.addEventListener('DOMContentLoaded', function () {
+            document.body.addEventListener('htmx:configRequest', function (e) {
+                const t = document.querySelector('meta[name="csrf-token"]')?.content;
+                if (t) e.detail.headers['X-CSRFToken'] = t;
+            });
         });
     </script>
-
-    <!-- selection toggle (works after DOM/HTMX) -->
-    <script defer src="{% static 'attendance/reenroll_toggle.js' %}"></script>
 {% endblock %}
+
+
 
 
 {% block extrastyle %}
@@ -142,7 +140,7 @@
             align-items: center;
             justify-content: center;
             z-index: 2;
-            pointer-events: none; /* so clicks reach the card */
+            pointer-events: auto; /* so clicks reach the card */
         }
 
         .card.sel .tick {
@@ -250,6 +248,10 @@
             color: #9aa4b2;
         }
 
+        .card.sel.is-selected {
+            box-shadow: 0 0 0 2px #3b82f6 inset;
+        }
+
 
     </style>
 {% endblock %}
@@ -280,10 +282,6 @@
                     <div class="card"
                          title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
 
-
-
-
-
                                  {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}"
                     >
                         <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
@@ -301,13 +299,11 @@
         {% endif %}
 
         <div style="display:flex; gap:8px; align-items:center; margin:8px 0 14px;">
-            <input type="hidden" id="csrf_token" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
-            {#            <input type="hidden" id="cwd" name="cwd" value="{{ cwd }}">#}
+{#            <input type="hidden" id="csrf_token" name="csrfmiddlewaretoken" value="{{ csrf_token }}">#}
             <button id="btn-clear" type="button" class="button">Clear selection (Esc)</button>
             <button id="btn-delete" type="button" class="button button-danger"
                     hx-post="{{ delete_url }}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
-                    {#                    hx-include="#selected_paths,#csrf_token,#cwd"#}
-                    hx-include="#selected_paths,#csrf_token"
+                    hx-include="#selected_paths"
                     hx-target="#captures-browser"
                     hx-swap="innerHTML"
                     hx-confirm="Delete the selected items?">
@@ -321,7 +317,6 @@
 
 
         {# RE-ENROLL form with its own hidden 'selected' #}
-        {#        <form id="reenroll-form" method="post" action="{% url 'admin:attendance_faceembedding_re_enroll_run' fe.pk %}">#}
         <form id="reenroll-form" method="post"
               hx-post="{% url 'admin:attendance_faceembedding_re_enroll_run' fe.pk %}"
               hx-target="#reenroll-output" hx-swap="innerHTML">
@@ -416,7 +411,80 @@
         </form>
 
     </div>
+
+    <script>
+        /* Re-enroll modal — selection + HTMX glue (single-click, capture phase) */
+        (function () {
+            const onReady = (fn) =>
+                (document.readyState === 'loading')
+                    ? document.addEventListener('DOMContentLoaded', fn)
+                    : fn();
+
+            onReady(() => {
+                const CONTAINER_ID = 'captures-browser';
+                const ROOT = document.getElementById(CONTAINER_ID);
+                const H_DELETE = document.getElementById('selected_paths');  // used by Delete
+                const H_RUN = document.getElementById('selected-input');  // used by Re-enroll
+                const BTN_CLEAR = document.getElementById('btn-clear');
+                const FORM = document.getElementById('reenroll-form');
+
+                if (!ROOT) return;
+
+                const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+                const selectedCards = () => $$('.card.sel.is-selected', ROOT);
+                const selectedRels = () => selectedCards().map(c => c.dataset.rel).filter(Boolean);
+
+                function syncHidden() {
+                    const payload = JSON.stringify(selectedRels());
+                    if (H_DELETE) H_DELETE.value = payload;
+                    if (H_RUN) H_RUN.value = payload;
+                }
+
+                function clearSelection() {
+                    selectedCards().forEach(c => c.classList.remove('is-selected'));
+                    syncHidden();
+                }
+
+                // Toggle once on CLICK (capture phase so other handlers can’t swallow it)
+                function clickToggle(e) {
+                    const container = document.getElementById(CONTAINER_ID);
+                    if (!container || !container.contains(e.target)) return;
+                    const card = e.target.closest('.card.sel');
+                    if (!card) return;
+                    card.classList.toggle('is-selected');
+                    syncHidden();
+                }
+
+                document.addEventListener('click', clickToggle, true); // capture = true
+
+                // Esc clears
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'Escape') clearSelection();
+                });
+
+                // Clear button
+                BTN_CLEAR?.addEventListener('click', clearSelection);
+
+                // Keep hidden fields coherent after HTMX replaces the grid
+                document.body.addEventListener('htmx:afterSwap', (evt) => {
+                    if (evt.target && evt.target.id === CONTAINER_ID) syncHidden();
+                });
+
+                // Ensure selection is serialized right before Re-enroll POST
+                FORM?.addEventListener('submit', syncHidden);
+                document.body.addEventListener('htmx:beforeRequest', (evt) => {
+                    if (evt.target === FORM) syncHidden();
+                });
+
+                // Initial sync
+                syncHidden();
+
+                // (Optional) expose a tiny flag so you can confirm it ran:
+                window.__REENROLL_WIRED__ = true;
+            });
+        })();
+    </script>
+
+
 {% endblock %}
-
-
 
