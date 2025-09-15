@@ -235,31 +235,6 @@ def expand_bbox(bbox, W, H, expand: float):
     return (nx1, ny1, nx2, ny2)
 
 
-def _screen_size_fallback() -> Tuple[int, int]:
-    # Try to get real screen size; fallback to 1280x720
-    try:
-        import tkinter as tk
-        root = tk.Tk();
-        root.withdraw()
-        w = root.winfo_screenwidth();
-        h = root.winfo_screenheight()
-        root.destroy()
-        return int(w), int(h)
-    except Exception:
-        return 1280, 720
-
-
-def _scale_for_preview(w: int, h: int, max_w: int, max_h: int, allow_upscale: bool) -> float:
-    if max_w <= 0 or max_h <= 0:
-        return 1.0
-    sw = max_w / float(w);
-    sh = max_h / float(h)
-    s = min(sw, sh)
-    if not allow_upscale:
-        s = min(1.0, s)
-    return max(1e-6, s)
-
-
 def main():
     p = argparse.ArgumentParser(
         description="Live-capture FaceEmbeddings to a .npy and/or save crops; designed for Django admin modal usage.")
@@ -287,14 +262,6 @@ def main():
     p.add_argument("--crop_jpeg_quality", type=int, default=92)
     p.add_argument("--pipe_mjpeg_q", type=int, default=None)
     p.add_argument("--preview", action="store_true")
-    # New preview controls
-    p.add_argument("--preview_fullscreen", action="store_true", help="Start the preview window in fullscreen.")
-    p.add_argument("--preview_max_w", type=int, default=0,
-                   help="Max preview width (0 uses screen width or 1280 fallback).")
-    p.add_argument("--preview_max_h", type=int, default=0,
-                   help="Max preview height (0 uses screen height or 720 fallback).")
-    p.add_argument("--preview_allow_upscale", action="store_true",
-                   help="Allow scaling up smaller sources to fill preview.")
 
     args = p.parse_args()
     w_sharp, w_bright, w_size = [float(x) for x in str(args.weights).split(",")]
@@ -320,25 +287,6 @@ def main():
             pass
         else:
             has_preview = True
-
-    # Screen size defaults for auto-fit
-    if args.preview_max_w <= 0 or args.preview_max_h <= 0:
-        sw, sh = _screen_size_fallback()
-        max_w = args.preview_max_w or sw
-        max_h = args.preview_max_h or sh
-    else:
-        max_w, max_h = args.preview_max_w, args.preview_max_h
-
-    fullscreen = bool(args.preview_fullscreen)
-
-    # Prepare window if preview
-    if has_preview:
-        import cv2
-        cv2.namedWindow("capture_preview", cv2.WINDOW_NORMAL)
-        if fullscreen:
-            cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-        else:
-            cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_NORMAL)
 
     for rgb in iter_frames(src, fps=args.fps, transport=args.rtsp_transport,
                            hwaccel=args.hwaccel, pipe_mjpeg_q=args.pipe_mjpeg_q,
@@ -383,31 +331,10 @@ def main():
 
         if disp is not None:
             import cv2
-            # Down/up-scale to fit preview bounds
-            scale = _scale_for_preview(W, H, max_w, max_h, bool(args.preview_allow_upscale))
-            if scale != 1.0:
-                new_w = max(1, int(W * scale))
-                new_h = max(1, int(H * scale))
-                interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-                disp_scaled = cv2.resize(disp, (new_w, new_h), interpolation=interp)
-            else:
-                disp_scaled = disp
-
-            # Overlay hint
-            hint = "[F]ullscreen  [Q]/ESC to quit"
-            cv2.putText(disp_scaled, hint, (10, max(20, disp_scaled.shape[0] - 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-
-            bgr = disp_scaled[..., ::-1].copy()
+            bgr = disp[..., ::-1].copy()
             cv2.imshow("capture_preview", bgr)
-
             key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord('q')):
-                break
-            if key in (ord('f'), ord('F')):
-                fullscreen = not fullscreen
-                cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN,
-                                      cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
+            if key in (27, ord('q')): break
 
     if has_preview:
         try:
@@ -450,31 +377,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# New: press F to toggle fullscreen (works for any source).
-# New flags so the window auto-fits instead of overflowing:
-# --preview_max_w and --preview_max_h (default: your screen size, or 1280×720 fallback).
-# --preview_allow_upscale (off by default, so small webcams won’t be pixel-stretched unless you want them to).
-# --preview_fullscreen to start in fullscreen directly.
-# The overlay shows a little hint: “[F]ullscreen [Q]/ESC to quit”.
-# For camera (RTSP), the preview is now scaled down to fit by default.
-# For webcam, you can maximize with F, or allow upscaling with --preview_allow_upscale.
-
-# Camera (fit-to-screen by default)
-# python extras/capture_embeddings_ffmpeg.py \
-#   --rtsp 'rtsp://admin:B!sk2025@192.168.137.95:554/Streaming/Channels/101/' \
-#   --hcode H123456 --k 10 --duration 30 --fps 6 --det_size 1024 \
-#   --model buffalo_l --device cuda0 --rtsp_transport auto --hwaccel nvdec \
-#   --min_face_px 80 --weights 0.6,0.3,0.1 --gallery_root face_gallery \
-#   --save_top_crops --preview \
-#   --preview_max_w 1920 --preview_max_h 1080 \
-#   --crop_fmt png --pipe_mjpeg_q 2 --bbox_expand 0.0
-
-# Webcam (maximize available)
-# python extras/capture_embeddings_ffmpeg.py \
-#   --webcam /dev/video0 --webcam_input_format mjpeg --webcam_size 1280x720 \
-#   --hcode H123456 --k 10 --duration 30 --fps 6 --det_size 1024 \
-#   --model buffalo_l --device auto \
-#   --min_face_px 80 --weights 0.6,0.3,0.1 --gallery_root face_gallery \
-#   --save_top_crops --preview --preview_allow_upscale \
-#   --crop_fmt jpg --crop_jpeg_quality 92 --pipe_mjpeg_q 2 --bbox_expand 0.0

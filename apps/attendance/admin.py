@@ -1086,6 +1086,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         h = getattr(student, "h_code", "")
         # folder = student_gallery_dir(h)
         rows = []
+        # active cameras for dropdown
+        cameras = Camera.objects.filter(is_active=True).order_by("name")
 
         # if os.path.isdir(folder):
         #     # Score ALL images (ROI + cascade). Uses settings defaults.
@@ -1126,196 +1128,522 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             # NEW:
             "capture_form": capture_form,
             "capture_url": capture_url,
+            "cameras": cameras,
         }
         browser_url = reverse("admin:attendance_faceembedding_captures", args=[fe.pk])
         delete_url = reverse("admin:attendance_faceembedding_captures_delete", args=[fe.pk])
         ctx["browser_url"] = browser_url
         ctx["delete_url"] = delete_url
+        # fe = get_object_or_404(FaceEmbedding, pk=pk)
+
+        selected_top_k = str(request.GET.get("k") or (fe.last_used_k or 3))
+        selected_det_set = str(request.GET.get("det_size") or "1024")
+
+        ctx.update({
+            "top_k_options": [1, 2, 3, 4, 5, 6, 8, 10],
+            "det_set_options": [640, 800, 1024, 1600, 2048],
+            "selected_top_k": selected_top_k,
+            "selected_det_set": selected_det_set,
+        })
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
 
-    # +more Live Capture (New Style)
-    @transaction.atomic
+    # ---- POST: live capture (FFmpeg) with extra tunables ----
+    # ---- POST: live capture (FFmpeg) with extra tunables ----
     @method_decorator(require_POST)
     def re_enroll_capture_run(self, request, pk: int):
-        import sys, re, hashlib, subprocess
-        from pathlib import Path
-        import numpy as np
-        from django.utils import timezone
-        from django.http import HttpResponse, QueryDict
-        from urllib.parse import urlparse, parse_qsl
+        """
+        Kick off extras/capture_embeddings_ffmpeg.py and, optionally, save top crops
+        under face_gallery/<HCODE>/live_YYYYmmdd_HHMMSS/.
 
+        Always returns an HX-Trigger so the UI refreshes the captures grid
+        without swapping it out (pair this with hx-swap="none" in the form).
+        """
+
+        def push_flag(cmd_list, key, value):
+            # append "--key value" only if value is not None/blank and not already present
+            if value is None:
+                return
+            sv = str(value).strip()
+            if not sv:
+                return
+            if f"--{key}" in cmd_list:
+                return
+            cmd_list += [f"--{key}", sv]
         fe = get_object_or_404(FaceEmbedding, pk=pk)
-        student = fe.student
-        hcode = getattr(student, "h_code", None)
-        if not hcode:
-            messages.error(request, "Student H-code missing.")
-            return redirect(request.META.get("HTTP_REFERER") or "../../")
+        hcode = fe.student.h_code
 
-        # If called from HTMX, preserve the current folder querystring so we can re-render the same grid
-        is_htmx = (request.headers.get("HX-Request") == "true")
-        if is_htmx and not request.GET:
-            hx_url = request.headers.get("HX-Current-URL") or ""
-            if hx_url:
-                parsed = urlparse(hx_url)
-                qd = QueryDict(mutable=True)
-                qd.update(dict(parse_qsl(parsed.query or "")))
-                request.GET = qd
+        # keep current query in scope so the listing stays at the same level after refresh
+        hx_url = request.headers.get("HX-Current-URL") or ""
+        if hx_url and not request.GET:
+            from urllib.parse import urlparse, parse_qsl
+            parsed = urlparse(hx_url)
+            qd = QueryDict(mutable=True)
+            qd.update(dict(parse_qsl(parsed.query or "")))
+            request.GET = qd
 
-        form = self._CaptureForm(request.POST)
-        if not form.is_valid():
-            if is_htmx:
-                resp = HttpResponse('<div class="error">Invalid capture inputs.</div>')
-                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Live capture: invalid inputs"}})
-                return resp
-            messages.error(request, "Invalid capture inputs.")
-            return redirect(request.META.get("HTTP_REFERER") or "../../")
+        # posted knobs (all optional; keep your names exactly)
+        k = int(request.POST.get("k") or 3)
+        det_set = int(request.POST.get("det_set") or 1024)
+        duration = int(request.POST.get("duration") or 30)
+        fps = int(float(request.POST.get("fps") or 4))  # script expects int
+        min_face = request.POST.get("min_face_px")
+        min_face = int(min_face) if (min_face and str(min_face).isdigit()) else None
+        model = (request.POST.get("model") or "").strip()  # blank = inherit
+        pipe_q = (request.POST.get("pipe_mjpeg_q") or "").strip()  # blank = inherit
+        crop_fmt = (request.POST.get("crop_fmt") or "").strip()  # blank = inherit
+        crop_jq = (request.POST.get("crop_jpeg_quality") or "").strip()
+        bbox_exp = (request.POST.get("bbox_expand") or "").strip()
+        rtsp_tr = (request.POST.get("rtsp_transport") or "auto").strip()
+        device_raw = (request.POST.get("device") or "auto").strip()
+        device = device_raw
+        # normalize 'cuda:0' / 'cuda 0' / 'CUDA:1' → 'cuda0'
+        m = re.match(r"^\s*cuda[:\s]?(\d+)\s*$", device_raw, flags=re.I)
+        if m:
+            device = f"cuda{m.group(1)}"
+        else:
+            device = device_raw.lower()
+        hwaccel = (request.POST.get("hwaccel") or "none").strip()
+        save_crops = bool(request.POST.get("save_top_crops") or "1")
+        weights = (request.POST.get("qual_weights") or "").strip()
 
-        cam = form.cleaned_data["camera"]
-        k = int(form.cleaned_data["k"])
-        det_size = int(form.cleaned_data["det_size"])
+        # Source (camera RTSP). Keep name you already use.
+        cam_rtsp = (request.POST.get("camera_rtsp") or "").strip()
 
-        rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
-        if not rtsp:
-            messages.error(request, "Selected camera has no RTSP/URL configured.")
-            return redirect(request.META.get("HTTP_REFERER") or "../../")
+        # NEW: preview controls (all optional; safe to omit)
+        preview = bool(request.POST.get("preview") or "")
+        preview_fullscreen = bool(request.POST.get("preview_fullscreen") or "")
+        preview_max_w = (request.POST.get("preview_max_w") or "").strip()
+        preview_max_h = (request.POST.get("preview_max_h") or "").strip()
+        preview_allow_upscale = bool(request.POST.get("preview_allow_upscale") or "")
 
-        proj_root = Path(settings.BASE_DIR)
-        script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
+        # Script path
+        script = Path(settings.BASE_DIR) / "extras" / "capture_embeddings_ffmpeg.py"
         if not script.exists():
-            messages.error(request, f"Capture script not found: {script}")
+            # For HTMX: small body + HX-Trigger (no grid swap)
+            if request.headers.get("HX-Request") == "true":
+                resp = HttpResponse("<!-- script missing -->")
+                resp["HX-Trigger"] = json.dumps({
+                    "toast": {"text": f"Capture script not found: {script}"}
+                })
+                return resp
+            messages.error(request, "Capture script not found.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # Run capture
+        # Build command (keep your flags 1:1 with the script)
         cmd = [
             sys.executable, str(script),
-            "--rtsp", str(rtsp),
             "--hcode", hcode,
             "--k", str(k),
-            "--det_size", str(det_size),
-            "--device", "auto",
-            "--fps", "4",
-            "--duration", "30",
-            "--rtsp_transport", "tcp",
-            "--save_top_crops",
-            # If you changed the gallery subdir name in settings, pass it:
-            # "--gallery_root", getattr(settings, "FACE_GALLERY_DIR", "face_gallery"),
+            "--duration", str(duration),
+            "--fps", str(fps),
+            "--det_size", str(det_set),
+            "--device", device,
+            "--rtsp_transport", rtsp_tr,
+            "--hwaccel", hwaccel,
         ]
+        if save_crops:
+            cmd += ["--save_top_crops"]
+
+        # optional overrides (inherit when blank)
+        if cam_rtsp:
+            push_flag(cmd, "rtsp", cam_rtsp)
+        if model:
+            push_flag(cmd, "model", model)
+        if pipe_q.isdigit():
+            push_flag(cmd, "pipe_mjpeg_q", pipe_q)
+        if crop_fmt:
+            push_flag(cmd, "crop_fmt", crop_fmt)
+        if crop_jq.isdigit():
+            push_flag(cmd, "crop_jpeg_quality", crop_jq)
         try:
-            run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+            if bbox_exp and float(bbox_exp) == float(bbox_exp):
+                push_flag(cmd, "bbox_expand", bbox_exp)
+        except ValueError:
+            pass
+        if min_face is not None:
+            push_flag(cmd, "min_face_px", min_face)
+        if weights:
+            push_flag(cmd, "weights", weights)
+
+        # preview flags
+        if preview:
+            cmd += ["--preview"]
+        if preview_fullscreen:
+            cmd += ["--preview_fullscreen"]
+        if preview_max_w.isdigit() and int(preview_max_w) > 0:
+            push_flag(cmd, "preview_max_w", preview_max_w)
+        if preview_max_h.isdigit() and int(preview_max_h) > 0:
+            push_flag(cmd, "preview_max_h", preview_max_h)
+        if preview_allow_upscale:
+            cmd += ["--preview_allow_upscale"]
+
+        # # Only pass numeric flags when they’re actually numeric
+        # if pipe_q.isdigit():
+        #     cmd += ["--pipe_mjpeg_q", pipe_q]
+        #
+        # if crop_jq.isdigit():
+        #     cmd += ["--crop_jpeg_quality", crop_jq]
+        #
+        # if min_face is not None:
+        #     cmd += ["--min_face_px", str(min_face)]
+        #
+        # # bbox_expand may be float; allow e.g. "0.1", "0", "1"
+        # try:
+        #     if bbox_exp and float(bbox_exp) == float(bbox_exp):  # benign parse check
+        #         cmd += ["--bbox_expand", bbox_exp]
+        # except ValueError:
+        #     pass
+
+        print("CAPTURE CMD:", " ".join(cmd))
+
+        # Run (capture output for parsing; allow enough time for a real capture)
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=60 * 15)
         except subprocess.TimeoutExpired:
-            if is_htmx:
-                resp = HttpResponse('<div class="error">Capture timed out.</div>')
-                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture timed out"}})
+            if request.headers.get("HX-Request") == "true":
+                resp = HttpResponse("<!-- timeout -->")
+                resp["HX-Trigger"] = json.dumps({
+                    "toast": {"text": "Live capture timed out."},
+                    "bisk:refresh-captures": True
+                })
                 return resp
-            messages.error(request, "Capture timed out.")
+            messages.error(request, "Live capture timed out.")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
-
-        if run.returncode != 0:
-            msg = (run.stderr or run.stdout or "").strip()
-            if is_htmx:
-                resp = HttpResponse(f'<div class="error">Capture failed:<br><pre>{msg}</pre></div>')
-                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture failed"}})
-                return resp
-            messages.error(request, f"Capture failed:\n{msg}")
-            return redirect(request.META.get("HTTP_REFERER") or "../../")
-
-        # Expect media/embeddings/<HCODE>.npy
-        emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
-        npy_path = emb_dir / f"{hcode}.npy"
-        if not npy_path.exists():
-            if is_htmx:
-                resp = HttpResponse(f'<div class="error">Capture finished but .npy not found: {npy_path}</div>')
-                resp["HX-Trigger"] = json.dumps({"toast": {"text": ".npy not found"}})
-                return resp
-            messages.error(request, f"Capture finished but .npy not found: {npy_path}")
-            return redirect(request.META.get("HTTP_REFERER") or "../../")
-
-        # How many top crops were saved? (affects images_used and message)
-        saved_cnt = None
-        saved_dir_rel = None
-        m = re.search(r"\[TOP_CROPS\]\s+saved=(\d+)\s+dir=([^\r\n]+)", run.stdout or "")
-        if m:
-            saved_cnt = int(m.group(1))
-            saved_dir_rel = m.group(2).strip()
-
-        # Build new FaceEmbedding from the .npy
-        try:
-            vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
-            norm = float(np.linalg.norm(vec)) if vec.size else 0.0
-            raw = vec.tobytes()
-            sha = hashlib.sha256(raw).hexdigest()
-
-            FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
-
-            fe2 = FaceEmbedding.objects.create(
-                student=student,
-                dim=int(vec.size),
-                vector=raw,
-                source_path=str(npy_path.relative_to(Path(settings.MEDIA_ROOT))).replace("\\", "/"),
-                camera=cam,
-                is_active=True,
-                last_enrolled_at=timezone.now(),
-                last_used_k=k,
-                last_used_det_size=det_size,
-                images_considered=0,
-                images_used=int(saved_cnt) if saved_cnt is not None else k,
-                embedding_norm=norm,
-                embedding_sha256=sha,
-                arcface_model="buffalo_l",
-                provider=("CUDAExecutionProvider" if "CUDA" in (run.stdout or "") or "CUDA" in (
-                            run.stderr or "") else "CPUExecutionProvider"),
-                enroll_runtime_ms=0,
-                enroll_notes=(
-                    f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
-                    f"vec_dim={vec.size}; norm={norm:.4f}"
-                ),
-            )
-
-            # (Optional) populate used_images_detail from the saved crops so chips render immediately
-            if saved_dir_rel:
-                from pathlib import PurePosixPath
-                crops_dir = Path(settings.MEDIA_ROOT) / saved_dir_rel
-                if crops_dir.exists():
-                    detail = []
-                    # stable ordering
-                    for f in sorted(crops_dir.glob("*.jpg")):
-                        rel = str(PurePosixPath(saved_dir_rel) / f.name)
-                        detail.append({"name": f.name, "path": rel})
-                    if detail:
-                        fe2.used_images_detail = detail
-                        fe2.images_used = len(detail)
-                        fe2.save(update_fields=["used_images_detail", "images_used"])
-
         except Exception as e:
-            if is_htmx:
-                resp = HttpResponse(f'<div class="error">Failed to save embedding from .npy: {e}</div>')
-                resp["HX-Trigger"] = json.dumps({"toast": {"text": "Failed to save embedding (.npy)"}})
+            if request.headers.get("HX-Request") == "true":
+                resp = HttpResponse("<!-- error -->")
+                resp["HX-Trigger"] = json.dumps({
+                    "toast": {"text": f"Capture failed: {e}"},
+                    "bisk:refresh-captures": True
+                })
                 return resp
-            messages.error(request, f"Failed to save embedding from .npy: {e}")
+            messages.error(request, f"Capture failed: {e}")
             return redirect(request.META.get("HTTP_REFERER") or "../../")
 
-        # HTMX: inline summary + refresh current grid; else redirect to changelist
-        if is_htmx:
-            bits = [f"Live capture OK → new embedding for <b>{hcode}</b>"]
-            bits.append(f"k={k}")
-            bits.append(f"det_size={det_size}")
-            if saved_cnt is not None:
-                bits.append(f"saved={saved_cnt} crop(s)")
-            summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
+        # Parse results
+        saved_dir = ""
+        stdout = out.stdout or ""
+        stderr = out.stderr or ""
+        for line in stdout.splitlines():
+            if line.startswith("[TOP_CROPS]"):
+                # "[TOP_CROPS] saved=3 dir=face_gallery/H123456/live_YYYYmmdd_HHMMSS"
+                try:
+                    saved_dir = line.split("dir=", 1)[1].strip()
+                except Exception:
+                    pass
 
-            grid_resp = self.re_enroll_captures(request, pk)
-            grid_html = grid_resp.content.decode("utf-8")
-            oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
+        ok = ("[OK] wrote embedding:" in stdout) or (out.returncode == 0)
 
-            resp = HttpResponse(summary_html + oob)
-            toast_text = f"Live capture OK. {'Saved ' + str(saved_cnt) + ' crop(s) → ' + saved_dir_rel if saved_cnt is not None else ''}"
-            resp["HX-Trigger"] = json.dumps({"toast": {"text": toast_text}})
+        # HTMX branch: tiny body + HX-Trigger (DON'T swap the grid)
+        if request.headers.get("HX-Request") == "true":
+            msg = f"Live capture {'OK' if ok else 'error'} (k={k}, det={det_set})"
+            if saved_dir:
+                msg += f" · {saved_dir}"
+            resp = HttpResponse("<!-- ok -->" if ok else "<!-- error -->")
+            resp["HX-Trigger"] = json.dumps({
+                "toast": {"text": msg if ok else f"Capture error: {(stderr or stdout).strip()[:300]}"},
+                "bisk:refresh-captures": True
+            })
             return resp
 
-        messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
-        if saved_cnt is not None:
-            messages.success(request, f"Saved {saved_cnt} live-capture crop(s) → {saved_dir_rel}")
-        return redirect("../../")
+        # Non-HTMX (full page)
+        if ok:
+            messages.success(request, f"Live capture OK (k={k}, det={det_set}).")
+            if saved_dir:
+                messages.info(request, f"Saved crops: {saved_dir}")
+        else:
+            messages.error(request, f"Capture error: {stderr or stdout or 'unknown'}")
+
+        return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+    # @method_decorator(require_POST)
+    # def re_enroll_capture_run(self, request, pk: int):
+    #     """
+    #     Kick off extras/capture_embeddings_ffmpeg.py and, optionally, save top crops
+    #     under face_gallery/<HCODE>/live_YYYYmmdd_HHMMSS/. Returns HTMX toast + refresh.
+    #     """
+    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #     hcode = fe.student.h_code
+    #
+    #     # keep current query in scope so the listing stays at the same level after refresh
+    #     hx_url = request.headers.get("HX-Current-URL") or ""
+    #     if hx_url and not request.GET:
+    #         from urllib.parse import urlparse, parse_qsl
+    #         parsed = urlparse(hx_url);
+    #         qd = QueryDict(mutable=True)
+    #         qd.update(dict(parse_qsl(parsed.query or "")));
+    #         request.GET = qd
+    #
+    #     # posted knobs (all optional)
+    #     k = int(request.POST.get("k") or 3)
+    #     det_set = int(request.POST.get("det_set") or 1024)
+    #     duration = int(request.POST.get("duration") or 30)
+    #     fps = float(request.POST.get("fps") or 4.0)
+    #     min_face = request.POST.get("min_face_px")  # may be blank
+    #     min_face = int(min_face) if (min_face and str(min_face).isdigit()) else None
+    #     model = request.POST.get("model") or ""  # blank = inherit
+    #     pipe_q = request.POST.get("pipe_mjpeg_q") or ""  # blank = inherit
+    #     crop_fmt = request.POST.get("crop_fmt") or ""  # blank = inherit
+    #     crop_jq = request.POST.get("crop_jpeg_quality") or ""
+    #     bbox_exp = request.POST.get("bbox_expand") or ""
+    #     rtsp_tr = request.POST.get("rtsp_transport") or "tcp"
+    #     device = request.POST.get("device") or "auto"
+    #     hwaccel = request.POST.get("hwaccel") or "none"
+    #     save_crops = bool(request.POST.get("save_top_crops") or "1")
+    #
+    #     # We’ll prefer a camera RTSP from your cameras app when provided.
+    #     cam_rtsp = request.POST.get("camera_rtsp") or ""
+    #
+    #     # Build command
+    #     script = Path(settings.BASE_DIR) / "extras" / "capture_embeddings_ffmpeg.py"
+    #     if not script.exists():
+    #         messages.error(request, "Capture script not found.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     cmd = [sys.executable, str(script),
+    #            "--hcode", hcode,
+    #            "--k", str(k),
+    #            "--duration", str(duration),
+    #            "--fps", str(fps),
+    #            "--det_size", str(det_set),
+    #            "--device", device,
+    #            "--rtsp_transport", rtsp_tr,
+    #            "--hwaccel", hwaccel,
+    #            "--save_top_crops"]
+    #
+    #     # optional overrides (inherit when blank)
+    #     if cam_rtsp:            cmd += ["--rtsp", cam_rtsp]
+    #     if model:               cmd += ["--model", model]
+    #     if pipe_q:              cmd += ["--pipe_mjpeg_q", str(pipe_q)]
+    #     if crop_fmt:            cmd += ["--crop_fmt", crop_fmt]
+    #     if crop_jq:             cmd += ["--crop_jpeg_quality", str(crop_jq)]
+    #     if bbox_exp:            cmd += ["--bbox_expand", str(bbox_exp)]
+    #     if min_face is not None: cmd += ["--min_face_px", str(min_face)]
+    #
+    #     # quality weights (optional “w_sharp,w_bright,w_size”)
+    #     weights = (request.POST.get("qual_weights") or "").strip()
+    #     if weights:
+    #         cmd += ["--weights", weights]
+    #
+    #     # Run
+    #     try:
+    #         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60 * 5)
+    #     except Exception as e:
+    #         messages.error(request, f"Capture failed: {e}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     ok = ("[OK] wrote embedding:" in (out.stdout or "")) or out.returncode == 0
+    #     # Try to find the crops folder message
+    #     saved_dir = ""
+    #     for line in (out.stdout or "").splitlines():
+    #         if line.startswith("[TOP_CROPS]"):
+    #             # "[TOP_CROPS] saved=3 dir=face_gallery/H123456/live_YYYYmmdd_HHMMSS"
+    #             try:
+    #                 saved_dir = line.split("dir=", 1)[1].strip()
+    #             except Exception:
+    #                 pass
+    #
+    #     if out.returncode != 0 and not ok:
+    #         messages.error(request, f"Capture error: {out.stderr or out.stdout or 'unknown'}")
+    #     else:
+    #         messages.success(request, f"Live capture OK (k={k}, det={det_set}).")
+    #         if saved_dir:
+    #             messages.info(request, f"Saved crops: {saved_dir}")
+    #
+    #     # Ask the client to refresh the same listing level
+    #     if request.headers.get("HX-Request") == "true":
+    #         resp = HttpResponse("")  # content unused
+    #         resp["HX-Trigger"] = json.dumps({
+    #             "bisk:refresh-captures": True,
+    #             "toast": {"text": f"Live capture complete{f' · {saved_dir}' if saved_dir else ''}"}
+    #         })
+    #         return resp
+    #
+    #     return redirect(request.META.get("HTTP_REFERER") or "../../")
+
+    # # +more Live Capture (New Style)
+    # @transaction.atomic
+    # @method_decorator(require_POST)
+    # def re_enroll_capture_run(self, request, pk: int):
+    #     import sys, re, hashlib, subprocess
+    #     from pathlib import Path
+    #     import numpy as np
+    #     from django.utils import timezone
+    #     from django.http import HttpResponse, QueryDict
+    #     from urllib.parse import urlparse, parse_qsl
+    #
+    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
+    #     student = fe.student
+    #     hcode = getattr(student, "h_code", None)
+    #     if not hcode:
+    #         messages.error(request, "Student H-code missing.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # If called from HTMX, preserve the current folder querystring so we can re-render the same grid
+    #     is_htmx = (request.headers.get("HX-Request") == "true")
+    #     if is_htmx and not request.GET:
+    #         hx_url = request.headers.get("HX-Current-URL") or ""
+    #         if hx_url:
+    #             parsed = urlparse(hx_url)
+    #             qd = QueryDict(mutable=True)
+    #             qd.update(dict(parse_qsl(parsed.query or "")))
+    #             request.GET = qd
+    #
+    #     form = self._CaptureForm(request.POST)
+    #     if not form.is_valid():
+    #         if is_htmx:
+    #             resp = HttpResponse('<div class="error">Invalid capture inputs.</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Live capture: invalid inputs"}})
+    #             return resp
+    #         messages.error(request, "Invalid capture inputs.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     cam = form.cleaned_data["camera"]
+    #     k = int(form.cleaned_data["k"])
+    #     det_size = int(form.cleaned_data["det_size"])
+    #
+    #     rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
+    #     if not rtsp:
+    #         messages.error(request, "Selected camera has no RTSP/URL configured.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     proj_root = Path(settings.BASE_DIR)
+    #     script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
+    #     if not script.exists():
+    #         messages.error(request, f"Capture script not found: {script}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # Run capture
+    #     cmd = [
+    #         sys.executable, str(script),
+    #         "--rtsp", str(rtsp),
+    #         "--hcode", hcode,
+    #         "--k", str(k),
+    #         "--det_size", str(det_size),
+    #         "--device", "auto",
+    #         "--fps", "4",
+    #         "--duration", "30",
+    #         "--rtsp_transport", "tcp",
+    #         "--save_top_crops",
+    #         # If you changed the gallery subdir name in settings, pass it:
+    #         # "--gallery_root", getattr(settings, "FACE_GALLERY_DIR", "face_gallery"),
+    #     ]
+    #     try:
+    #         run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
+    #     except subprocess.TimeoutExpired:
+    #         if is_htmx:
+    #             resp = HttpResponse('<div class="error">Capture timed out.</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture timed out"}})
+    #             return resp
+    #         messages.error(request, "Capture timed out.")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     if run.returncode != 0:
+    #         msg = (run.stderr or run.stdout or "").strip()
+    #         if is_htmx:
+    #             resp = HttpResponse(f'<div class="error">Capture failed:<br><pre>{msg}</pre></div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture failed"}})
+    #             return resp
+    #         messages.error(request, f"Capture failed:\n{msg}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # Expect media/embeddings/<HCODE>.npy
+    #     emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
+    #     npy_path = emb_dir / f"{hcode}.npy"
+    #     if not npy_path.exists():
+    #         if is_htmx:
+    #             resp = HttpResponse(f'<div class="error">Capture finished but .npy not found: {npy_path}</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": ".npy not found"}})
+    #             return resp
+    #         messages.error(request, f"Capture finished but .npy not found: {npy_path}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # How many top crops were saved? (affects images_used and message)
+    #     saved_cnt = None
+    #     saved_dir_rel = None
+    #     m = re.search(r"\[TOP_CROPS\]\s+saved=(\d+)\s+dir=([^\r\n]+)", run.stdout or "")
+    #     if m:
+    #         saved_cnt = int(m.group(1))
+    #         saved_dir_rel = m.group(2).strip()
+    #
+    #     # Build new FaceEmbedding from the .npy
+    #     try:
+    #         vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
+    #         norm = float(np.linalg.norm(vec)) if vec.size else 0.0
+    #         raw = vec.tobytes()
+    #         sha = hashlib.sha256(raw).hexdigest()
+    #
+    #         FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
+    #
+    #         fe2 = FaceEmbedding.objects.create(
+    #             student=student,
+    #             dim=int(vec.size),
+    #             vector=raw,
+    #             source_path=str(npy_path.relative_to(Path(settings.MEDIA_ROOT))).replace("\\", "/"),
+    #             camera=cam,
+    #             is_active=True,
+    #             last_enrolled_at=timezone.now(),
+    #             last_used_k=k,
+    #             last_used_det_size=det_size,
+    #             images_considered=0,
+    #             images_used=int(saved_cnt) if saved_cnt is not None else k,
+    #             embedding_norm=norm,
+    #             embedding_sha256=sha,
+    #             arcface_model="buffalo_l",
+    #             provider=("CUDAExecutionProvider" if "CUDA" in (run.stdout or "") or "CUDA" in (
+    #                         run.stderr or "") else "CPUExecutionProvider"),
+    #             enroll_runtime_ms=0,
+    #             enroll_notes=(
+    #                 f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
+    #                 f"vec_dim={vec.size}; norm={norm:.4f}"
+    #             ),
+    #         )
+    #
+    #         # (Optional) populate used_images_detail from the saved crops so chips render immediately
+    #         if saved_dir_rel:
+    #             from pathlib import PurePosixPath
+    #             crops_dir = Path(settings.MEDIA_ROOT) / saved_dir_rel
+    #             if crops_dir.exists():
+    #                 detail = []
+    #                 # stable ordering
+    #                 for f in sorted(crops_dir.glob("*.jpg")):
+    #                     rel = str(PurePosixPath(saved_dir_rel) / f.name)
+    #                     detail.append({"name": f.name, "path": rel})
+    #                 if detail:
+    #                     fe2.used_images_detail = detail
+    #                     fe2.images_used = len(detail)
+    #                     fe2.save(update_fields=["used_images_detail", "images_used"])
+    #
+    #     except Exception as e:
+    #         if is_htmx:
+    #             resp = HttpResponse(f'<div class="error">Failed to save embedding from .npy: {e}</div>')
+    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Failed to save embedding (.npy)"}})
+    #             return resp
+    #         messages.error(request, f"Failed to save embedding from .npy: {e}")
+    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
+    #
+    #     # HTMX: inline summary + refresh current grid; else redirect to changelist
+    #     if is_htmx:
+    #         bits = [f"Live capture OK → new embedding for <b>{hcode}</b>"]
+    #         bits.append(f"k={k}")
+    #         bits.append(f"det_size={det_size}")
+    #         if saved_cnt is not None:
+    #             bits.append(f"saved={saved_cnt} crop(s)")
+    #         summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
+    #
+    #         grid_resp = self.re_enroll_captures(request, pk)
+    #         grid_html = grid_resp.content.decode("utf-8")
+    #         oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
+    #
+    #         resp = HttpResponse(summary_html + oob)
+    #         toast_text = f"Live capture OK. {'Saved ' + str(saved_cnt) + ' crop(s) → ' + saved_dir_rel if saved_cnt is not None else ''}"
+    #         resp["HX-Trigger"] = json.dumps({"toast": {"text": toast_text}})
+    #         return resp
+    #
+    #     messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
+    #     if saved_cnt is not None:
+    #         messages.success(request, f"Saved {saved_cnt} live-capture crop(s) → {saved_dir_rel}")
+    #     return redirect("../../")
 
     ## it goes to the main FaceEmbedding list_display
     # def re_enroll_capture_run(self, request, pk: int):
@@ -2197,7 +2525,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
         return HttpResponse(html)
 
-        return HttpResponse(html)
+        # return HttpResponse(html)
 
     @method_decorator(require_POST)
     def re_enroll_captures_delete(self, request, pk: int):

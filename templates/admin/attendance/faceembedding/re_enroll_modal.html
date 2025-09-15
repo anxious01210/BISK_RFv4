@@ -265,6 +265,58 @@
             padding: 8px 10px;
             border-radius: 8px;
         }
+
+        .lc-card {
+            border: 1px solid rgba(255, 255, 255, .08);
+            border-radius: 8px;
+            padding: 14px;
+            margin: 10px 0 18px;
+            background: #0f0f10;
+        }
+
+        .lc-row {
+            display: grid;
+            grid-template-columns:repeat(5, minmax(160px, 1fr));
+            gap: 14px;
+            margin-bottom: 10px;
+        }
+
+        .lc-col {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .lc-input {
+            height: 32px;
+            padding: 4px 8px;
+            border-radius: 6px;
+            border: 1px solid rgba(255, 255, 255, .12);
+            background: #161617;
+            color: #eaeaea;
+        }
+
+        .lc-help {
+            font-size: 11px;
+            opacity: .75;
+            margin-top: 4px;
+        }
+
+        .lc-check {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .lc-spacer {
+            flex: 1
+        }
+
+        @media (max-width: 1200px) {
+            .lc-row {
+                grid-template-columns:repeat(2, minmax(160px, 1fr));
+            }
+        }
+
     </style>
 {% endblock %}
 
@@ -293,6 +345,13 @@
                 {% for r in rows %}
                     <div class="card"
                          title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+
+
+
+
+
+
+
 
 
 
@@ -395,34 +454,300 @@
         </details>
         <hr style="margin:24px 0;opacity:.25">
 
-        <h3 style="margin:0 0 12px;font-size:18px;">Live capture (FFmpeg)</h3>
-        <form method="post" action="{{ capture_url }}" style="display:block;margin-bottom:16px;">
+        <h3 style="margin:0 0 12px;">Live capture (FFmpeg)</h3>
+
+        <form id="livecap-form"
+              hx-post="{{ capture_url }}"
+              hx-target="#captures-browser"
+{#              hx-swap="innerHTML">#}
+              hx-swap="none">
+              hx-on::after-request="document.body.dispatchEvent(new CustomEvent('bisk:refresh-captures'));">
             {% csrf_token %}
-            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-                <div>
-                    <label style="display:block;font-size:12px;opacity:.8">Camera</label>
-                    {{ capture_form.camera }}
-                </div>
-                <div>
-                    <label style="display:block;font-size:12px;opacity:.8">Top-K images</label>
-                    {{ capture_form.k }}
-                </div>
-                <div>
-                    <label style="display:block;font-size:12px;opacity:.8">det_set</label>
-                    {{ capture_form.det_size }}
+            <div class="lc-card">
+
+                <div class="lc-row">
+                    <div class="lc-col">
+                        <label>Camera</label>
+                        <select name="camera_rtsp" id="lc-camera" class="lc-input">
+                            <option value="">— use script default —</option>
+                            {% for cam in cameras %}
+                                <option value="{{ cam.rtsp_url }}" data-tr="{{ cam.rtsp_transport|default:'auto' }}">
+                                    {{ cam.name }}{% if cam.location %} — {{ cam.location }}{% endif %}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <div class="lc-help">Leave blank to use the script’s default RTSP.</div>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>Top-K images</label>
+                        <select id="id_k" name="k">
+                            {% for n in top_k_options %}
+                                <option value="{{ n }}"{% if n|stringformat:"s" == selected_top_k %}
+                                        selected{% endif %}>{{ n }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>det_set</label>
+                        <select id="id_det_set" name="det_size">
+                            {% for d in det_set_options %}
+                                <option value="{{ d }}"{% if d|stringformat:"s" == selected_det_set %}
+                                        selected{% endif %}>{{ d }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>Duration (s)</label>
+                        <input class="lc-input" type="number" name="duration" min="5" step="1" value="30">
+                    </div>
+
+                    <div class="lc-col">
+                        <label>FPS</label>
+                        <input class="lc-input" type="number" name="fps" min="1" max="30" step="0.5" value="4">
+                    </div>
                 </div>
 
-                <div>
-                    <button type="submit" class="button" style="margin-top:18px;">Run live capture</button>
+                <div class="lc-row">
+                    <div class="lc-col">
+                        <label>Crop format</label>
+                        <select name="crop_fmt" class="lc-input">
+                            <option value="">inherit</option>
+                            <option value="jpg" selected>jpg</option>
+                            <option value="png">png</option>
+                        </select>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>JPEG quality</label>
+                        <input class="lc-input" type="number" name="crop_jpeg_quality" min="50" max="100" step="1"
+                               value="92">
+                    </div>
+
+                    <div class="lc-col">
+                        <label>min_face_px</label>
+                        <input class="lc-input" type="number" name="min_face_px" placeholder="inherit">
+                    </div>
+
+                    <div class="lc-col">
+                        <label>BBox expand</label>
+                        <input class="lc-input" type="number" name="bbox_expand" step="0.05" min="0.0" max="0.8"
+                               value="0.0">
+                        <div class="lc-help">Extra margin around faces (fraction).</div>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>Model</label>
+                        <select name="model" class="lc-input">
+                            <option value="">inherit</option>
+                            <option value="buffalo_l" selected>buffalo_l</option>
+                            <option value="antelopev2">antelopev2</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="lc-row">
+                    <div class="lc-col">
+                        <label>Qual weights</label>
+                        <input class="lc-input" name="qual_weights" placeholder="e.g. 0.6,0.3,0.1">
+                        <div class="lc-help">sharp,bright,size (optional)</div>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>Pipe MJPEG q</label>
+                        <input class="lc-input" name="pipe_mjpeg_q" placeholder="inherit">
+                    </div>
+
+                    <div class="lc-col">
+                        <label>Transport</label>
+                        <select name="rtsp_transport" id="lc-transport" class="lc-input">
+                            <option value="auto">auto</option>
+                            <option value="tcp" selected>tcp</option>
+                            <option value="udp">udp</option>
+                        </select>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>Device</label>
+                        <select name="device" class="lc-input">
+                            <option value="auto" selected>auto</option>
+                            <option value="cpu">cpu</option>
+                            <option value="cuda:0">cuda:0</option>
+                        </select>
+                    </div>
+
+                    <div class="lc-col">
+                        <label>HW accel</label>
+                        <select name="hwaccel" class="lc-input">
+                            <option value="none" selected>none</option>
+                            <option value="nvdec">nvdec</option>
+                            <option value="vaapi">vaapi</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="lc-row" style="align-items:center;">
+                    <label class="lc-check">
+                        <input type="checkbox" name="save_top_crops" value="1" checked> Save top crops
+                    </label>
+
+                    <div class="lc-spacer"></div>
+
+                    <button type="submit" class="button" style="margin-top:8px;">Run live capture</button>
                 </div>
             </div>
-
-            <p style="margin-top:8px;color:#9aa">
-                Captures a short burst from the selected camera, clusters faces, picks the dominant
-                person, ranks by quality (sharpness/brightness/size), and averages the top-K into
-                <code>media/embeddings/{{ fe.student.h_code }}.npy</code>, then activates a new embedding.
-            </p>
         </form>
+
+        {#        <h3 style="margin:0 0 12px;font-size:18px;">Live capture (FFmpeg)</h3>#}
+        {#        <form id="livecap-form"#}
+        {#              hx-post="{% url 'admin:attendance_faceembedding_re_enroll_capture_run' fe.pk %}"#}
+        {#              hx-post="{{ capture_url }}"#}
+        {#              hx-target="#captures-browser"#}
+        {#              hx-swap="outerHTML">#}
+        {#            {% csrf_token %}#}
+        {#            <div class="form-row" style="gap:12px; align-items:flex-end; flex-wrap:wrap">#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Camera</label>#}
+        {#                    <input type="text" name="camera_rtsp" placeholder="rtsp://… (optional)" style="width:280px">#}
+        {#                    <div class="help">Leave blank to use script defaults.</div>#}
+        {#                </div>#}
+        {##}
+        {#                <label>Top-K images</label>#}
+        {#                <select id="id_k" name="k">#}
+        {#                    {% for n in top_k_options %}#}
+        {#                        <option value="{{ n }}"{% if n|stringformat:"s" == selected_top_k %}#}
+        {#                                selected{% endif %}>{{ n }}</option>#}
+        {#                    {% endfor %}#}
+        {#                </select>#}
+        {##}
+        {#                <label>det_set</label>#}
+        {#                <select id="id_det_set" name="det_size">#}
+        {#                    {% for d in det_set_options %}#}
+        {#                        <option value="{{ d }}"{% if d|stringformat:"s" == selected_det_set %}#}
+        {#                                selected{% endif %}>{{ d }}</option>#}
+        {#                    {% endfor %}#}
+        {#                </select>#}
+        {##}
+        {##}
+        {#                <div>#}
+        {#                    <label>Duration (s)</label>#}
+        {#                    <input type="number" name="duration" value="30" min="5" step="5">#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>FPS</label>#}
+        {#                    <input type="number" name="fps" value="4" min="0.5" step="0.5">#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>min_face_px</label>#}
+        {#                    <input type="number" name="min_face_px" placeholder="inherit" min="20" step="5">#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Model</label>#}
+        {#                    <select name="model">#}
+        {#                        <option value="">(inherit)</option>#}
+        {#                        <option value="buffalo_l" selected>buffalo_l</option>#}
+        {#                        <option value="antelopev2">antelopev2</option>#}
+        {#                    </select>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Pipe MJPEG q</label>#}
+        {#                    <input type="number" name="pipe_mjpeg_q" placeholder="inherit" min="1" max="31">#}
+        {#                    <div class="help">1 best … 31 worst</div>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Crop format</label>#}
+        {#                    <select name="crop_fmt">#}
+        {#                        <option value="">(inherit)</option>#}
+        {#                        <option value="jpg" selected>jpg</option>#}
+        {#                        <option value="png">png</option>#}
+        {#                    </select>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>JPEG quality</label>#}
+        {#                    <input type="number" name="crop_jpeg_quality" value="92" min="1" max="100">#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>BBox expand</label>#}
+        {#                    <input type="number" name="bbox_expand" value="0.0" step="0.05" min="0" max="0.5">#}
+        {#                    <div class="help">Add margin around faces (fraction)</div>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Qual weights</label>#}
+        {#                    <input type="text" name="qual_weights" placeholder="0.6,0.3,0.1">#}
+        {#                    <div class="help">sharp,bright,size</div>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Transport</label>#}
+        {#                    <select name="rtsp_transport">#}
+        {#                        <option value="tcp" selected>tcp</option>#}
+        {#                        <option value="udp">udp</option>#}
+        {#                        <option value="auto">auto</option>#}
+        {#                    </select>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>Device</label>#}
+        {#                    <select name="device">#}
+        {#                        <option value="auto" selected>auto</option>#}
+        {#                        <option value="cuda">cuda</option>#}
+        {#                        <option value="cpu">cpu</option>#}
+        {#                    </select>#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <label>HW accel</label>#}
+        {#                    <select name="hwaccel">#}
+        {#                        <option value="none" selected>none</option>#}
+        {#                        <option value="nvdec">nvdec</option>#}
+        {#                    </select>#}
+        {#                </div>#}
+        {##}
+        {#                <div style="display:flex; align-items:center; gap:8px; margin-top:4px">#}
+        {#                    <label><input type="checkbox" name="save_top_crops" value="1" checked> Save top crops</label>#}
+        {#                    <button type="submit" class="button button-primary">Run live capture</button>#}
+        {#                </div>#}
+        {#            </div>#}
+        {#        </form>#}
+
+        {#        <form method="post" action="{{ capture_url }}" style="display:block;margin-bottom:16px;">#}
+        {#            {% csrf_token %}#}
+        {#            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">#}
+        {#                <div>#}
+        {#                    <label style="display:block;font-size:12px;opacity:.8">Camera</label>#}
+        {#                    {{ capture_form.camera }}#}
+        {#                </div>#}
+        {#                <div>#}
+        {#                    <label style="display:block;font-size:12px;opacity:.8">Top-K images</label>#}
+        {#                    {{ capture_form.k }}#}
+        {#                </div>#}
+        {#                <div>#}
+        {#                    <label style="display:block;font-size:12px;opacity:.8">det_set</label>#}
+        {#                    {{ capture_form.det_size }}#}
+        {#                </div>#}
+        {##}
+        {#                <div>#}
+        {#                    <button type="submit" class="button" style="margin-top:18px;">Run live capture</button>#}
+        {#                </div>#}
+        {#            </div>#}
+        {##}
+        {#            <p style="margin-top:8px;color:#9aa">#}
+        {#                Captures a short burst from the selected camera, clusters faces, picks the dominant#}
+        {#                person, ranks by quality (sharpness/brightness/size), and averages the top-K into#}
+        {#                <code>media/embeddings/{{ fe.student.h_code }}.npy</code>, then activates a new embedding.#}
+        {#            </p>#}
+        {#        </form>#}
 
     </div>
 
@@ -549,6 +874,18 @@
             });
         })();
         /***End *** --- helpers for feedback / busy state --- ***/
+        // When camera changes, copy its preferred transport into the transport select (if present)
+        (function () {
+            const camSel = document.getElementById('lc-camera');
+            const trSel = document.getElementById('lc-transport');
+            if (camSel && trSel) {
+                camSel.addEventListener('change', function () {
+                    const opt = this.options[this.selectedIndex];
+                    const tr = opt ? (opt.dataset.tr || '') : '';
+                    if (tr) trSel.value = tr;
+                });
+            }
+        })();
     </script>
 
 
