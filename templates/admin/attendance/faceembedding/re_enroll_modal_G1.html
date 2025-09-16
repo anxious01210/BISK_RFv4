@@ -28,6 +28,7 @@
           --bisk-badge-k: #e0e7ff;
           --bisk-badge-min: #dcfce7;
           --bisk-badge-det: #fef9c3;
+          --hairline: #444;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -50,6 +51,14 @@
           --bisk-badge-k: #111827;
           --bisk-badge-min: #0b2b1f;
           --bisk-badge-det: #1a1710;
+      }
+
+      @media (prefers-color-scheme: light) {
+          :root {
+              --hairline: #e5e7eb;
+          }
+
+          /* lighter hairline in light mode (optional) */
       }
 
       .bisk-wrap {
@@ -345,12 +354,7 @@
         {% for r in rows %}
           <div class="card"
                title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
-
-
-
-
-                 {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}"
-          >
+                 {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}">
             <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
             <div class="meta">
               <div class="fname" title="{{ r.name }}">{{ r.name }}</div>
@@ -449,220 +453,13 @@
     <hr style="margin:24px 0;opacity:.25">
 
     <h3 style="margin:0 0 12px;">Live capture (FFmpeg)</h3>
-    <!-- === Live Preview (MJPEG) — inline section inside the same modal === -->
-    <div id="live-preview-mjpeg" class="card"
-         style="margin-top:1rem; border:1px solid var(--hairline,#444); border-radius:12px;">
-      <div class="card-header" style="padding:0.75rem 1rem; display:flex; align-items:center; gap:0.75rem;">
-        <strong>Live Preview (MJPEG)</strong>
-        <span id="lp-status"
-              style="margin-left:auto; font-size:12px; padding:2px 8px; border-radius:999px; background:#555; color:#eee;">idle</span>
-      </div>
 
-      <div class="card-body" style="padding:1rem;">
-        <!-- Source controls -->
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.75rem;">
-          <div>
-            <label class="label">Source</label>
-            <select id="lp-source" class="input" style="width:100%;">
-              <option value="rtsp">RTSP Camera</option>
-              <option value="webcam">Server Webcam</option>
-            </select>
-          </div>
-
-          <div id="lp-rtsp-wrap">
-            <label class="label">RTSP URL</label>
-            <input id="lp-rtsp" class="input" type="text"
-                   placeholder="rtsp://user:pass@host:554/Streaming/Channels/101/">
-          </div>
-
-          <div id="lp-webcam-wrap" style="display:none;">
-            <label class="label">Webcam device</label>
-            <input id="lp-device" class="input" type="text" value="/dev/video0">
-          </div>
-
-          <div>
-            <label class="label">FPS</label>
-            <input id="lp-fps" class="input" type="number" min="1" max="30" value="8">
-          </div>
-
-          <div>
-            <label class="label">Size</label>
-            <select id="lp-size" class="input" style="width:100%;">
-              <option value="640x480">640×480</option>
-              <option value="1280x720" selected>1280×720</option>
-              <option value="1920x1080">1920×1080</option>
-              <option value="2560x1440">2560×1440</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="label">JPEG quality (q:v)</label>
-            <input id="lp-quality" class="input" type="number" min="2" max="31" value="3">
-          </div>
-        </div>
-
-        <!-- Actions -->
-        <div style="margin-top:0.75rem; display:flex; gap:0.5rem; align-items:center;">
-          <button type="button" id="lp-start" class="button button-primary">Start preview</button>
-          <button type="button" id="lp-stop" class="button" disabled>Stop</button>
-          <span style="font-size:12px; opacity:0.8;">Session: <code id="lp-session">(auto)</code></span>
-          <a id="lp-open-tab" href="#" target="_blank"
-             style="margin-left:auto; font-size:12px; text-decoration:underline; display:none;">Open in new tab ↗</a>
-        </div>
-
-        <!-- Preview surface -->
-        <div style="margin-top:0.75rem; display:flex; justify-content:center; align-items:center;">
-          <img id="lp-img" alt="MJPEG preview"
-               style="max-width:100%; max-height:60vh; object-fit:contain; border-radius:10px; background:#111;"/>
-        </div>
-
-        <!-- Hidden holder for session -->
-        <input type="hidden" id="lp-session-id" name="preview_session" value="">
-      </div>
-    </div>
-
-    <script>
-      (function () {
-        // Utility: random session id compatible with server
-        function makeSession() {
-          const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
-          let s = "cap_";
-          for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
-          return s;
-        }
-
-        const $ = (id) => document.getElementById(id);
-        const srcSel = $("lp-source");
-        const rtspWrap = $("lp-rtsp-wrap");
-        const camWrap = $("lp-webcam-wrap");
-        const rtsp = $("lp-rtsp");
-        const device = $("lp-device");
-        const fps = $("lp-fps");
-        const size = $("lp-size");
-        const quality = $("lp-quality");
-        const startBtn = $("lp-start");
-        const stopBtn = $("lp-stop");
-        const img = $("lp-img");
-        const status = $("lp-status");
-        const sessEl = $("lp-session-id");
-        const sessLabel = $("lp-session");
-        const openTab = $("lp-open-tab");
-
-        function setStatus(text, color) {
-          status.textContent = text;
-          status.style.background = color || "#555";
-        }
-
-        function updateSourceUI() {
-          const v = srcSel.value;
-          if (v === "rtsp") {
-            rtspWrap.style.display = "";
-            camWrap.style.display = "none";
-          } else {
-            rtspWrap.style.display = "none";
-            camWrap.style.display = "";
-          }
-        }
-
-        srcSel.addEventListener("change", updateSourceUI);
-        updateSourceUI();
-
-        async function startPreview() {
-          // Session
-          let session = sessEl.value || makeSession();
-          sessEl.value = session;
-          sessLabel.textContent = session;
-
-          const params = new URLSearchParams();
-          params.set("source", srcSel.value);
-          params.set("fps", fps.value || "8");
-          params.set("size", size.value || "1280x720");
-          params.set("quality", quality.value || "3");
-          if (srcSel.value === "rtsp") {
-            if (!rtsp.value.trim()) {
-              alert("Please enter RTSP URL");
-              return;
-            }
-            params.set("rtsp", rtsp.value.trim());
-          } else {
-            params.set("device", device.value || "/dev/video0");
-          }
-
-          setStatus("starting…", "#6b7280");  // gray
-          startBtn.disabled = true;
-
-          try {
-            const url = `/attendance/stream/run/start/${encodeURIComponent(session)}/?` + params.toString();
-            const r = await fetch(url, {credentials: "same-origin"});
-            const j = await r.json();
-            if (!j.ok) throw new Error(j.error || "start failed");
-
-            // Point the <img> to MJPEG stream
-            const mj = `/attendance/stream/live/${encodeURIComponent(session)}.mjpg?ts=${Date.now()}`;
-            img.src = mj;
-            openTab.href = mj;
-            openTab.style.display = "inline";
-            stopBtn.disabled = false;
-            setStatus("running", "#166534");  // green
-          } catch (e) {
-            console.error(e);
-            setStatus("error", "#7f1d1d"); // red
-            startBtn.disabled = false;
-          }
-        }
-
-        async function stopPreview() {
-          const session = sessEl.value;
-          if (!session) return;
-          try {
-            const url = `/attendance/stream/run/stop/${encodeURIComponent(session)}/`;
-            await fetch(url, {credentials: "same-origin"});
-          } catch (e) {
-            console.warn("stop failed:", e);
-          } finally {
-            img.removeAttribute("src");
-            stopBtn.disabled = true;
-            startBtn.disabled = false;
-            openTab.style.display = "none";
-            setStatus("idle", "#555");
-          }
-        }
-
-        // Wire buttons
-        startBtn.addEventListener("click", startPreview);
-        stopBtn.addEventListener("click", stopPreview);
-
-        // Safety: auto-stop when modal/page is closed
-        window.addEventListener("pagehide", stopPreview);
-        document.addEventListener("visibilitychange", () => {
-          if (document.visibilityState === "hidden") {
-            stopPreview();
-          }
-        });
-
-        // If your modal has a close button with known selector, also hook it:
-        const closeBtn = document.querySelector('[data-dismiss="modal"], .close, [aria-label="Close"]');
-        if (closeBtn) closeBtn.addEventListener("click", stopPreview);
-      })();
-    </script>
-
-
-    <script>
-      document.addEventListener('DOMContentLoaded', function () {
-        var form = document.getElementById('livecap-form');
-        document.body.addEventListener('htmx:afterRequest', function (evt) {
-          if (evt.target === form && evt.detail && evt.detail.successful) {
-            document.body.dispatchEvent(new CustomEvent('bisk:refresh-captures'));
-          }
-        });
-      });
-    </script>
     <form id="livecap-form"
           hx-post="{{ capture_url }}"
           hx-target="#captures-browser"
-          hx-swap="none"
-          hx-include="#lp-session-id">
-
+      {#              hx-swap="innerHTML">#}
+          hx-swap="none">
+      hx-on::after-request="document.body.dispatchEvent(new CustomEvent('bisk:refresh-captures'));">
       {% csrf_token %}
       <div class="lc-card">
 
@@ -801,6 +598,154 @@
       </div>
     </form>
 
+    {#        <h3 style="margin:0 0 12px;font-size:18px;">Live capture (FFmpeg)</h3>#}
+    {#        <form id="livecap-form"#}
+    {#              hx-post="{% url 'admin:attendance_faceembedding_re_enroll_capture_run' fe.pk %}"#}
+    {#              hx-post="{{ capture_url }}"#}
+    {#              hx-target="#captures-browser"#}
+    {#              hx-swap="outerHTML">#}
+    {#            {% csrf_token %}#}
+    {#            <div class="form-row" style="gap:12px; align-items:flex-end; flex-wrap:wrap">#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Camera</label>#}
+    {#                    <input type="text" name="camera_rtsp" placeholder="rtsp://… (optional)" style="width:280px">#}
+    {#                    <div class="help">Leave blank to use script defaults.</div>#}
+    {#                </div>#}
+    {##}
+    {#                <label>Top-K images</label>#}
+    {#                <select id="id_k" name="k">#}
+    {#                    {% for n in top_k_options %}#}
+    {#                        <option value="{{ n }}"{% if n|stringformat:"s" == selected_top_k %}#}
+    {#                                selected{% endif %}>{{ n }}</option>#}
+    {#                    {% endfor %}#}
+    {#                </select>#}
+    {##}
+    {#                <label>det_set</label>#}
+    {#                <select id="id_det_set" name="det_size">#}
+    {#                    {% for d in det_set_options %}#}
+    {#                        <option value="{{ d }}"{% if d|stringformat:"s" == selected_det_set %}#}
+    {#                                selected{% endif %}>{{ d }}</option>#}
+    {#                    {% endfor %}#}
+    {#                </select>#}
+    {##}
+    {##}
+    {#                <div>#}
+    {#                    <label>Duration (s)</label>#}
+    {#                    <input type="number" name="duration" value="30" min="5" step="5">#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>FPS</label>#}
+    {#                    <input type="number" name="fps" value="4" min="0.5" step="0.5">#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>min_face_px</label>#}
+    {#                    <input type="number" name="min_face_px" placeholder="inherit" min="20" step="5">#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Model</label>#}
+    {#                    <select name="model">#}
+    {#                        <option value="">(inherit)</option>#}
+    {#                        <option value="buffalo_l" selected>buffalo_l</option>#}
+    {#                        <option value="antelopev2">antelopev2</option>#}
+    {#                    </select>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Pipe MJPEG q</label>#}
+    {#                    <input type="number" name="pipe_mjpeg_q" placeholder="inherit" min="1" max="31">#}
+    {#                    <div class="help">1 best … 31 worst</div>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Crop format</label>#}
+    {#                    <select name="crop_fmt">#}
+    {#                        <option value="">(inherit)</option>#}
+    {#                        <option value="jpg" selected>jpg</option>#}
+    {#                        <option value="png">png</option>#}
+    {#                    </select>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>JPEG quality</label>#}
+    {#                    <input type="number" name="crop_jpeg_quality" value="92" min="1" max="100">#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>BBox expand</label>#}
+    {#                    <input type="number" name="bbox_expand" value="0.0" step="0.05" min="0" max="0.5">#}
+    {#                    <div class="help">Add margin around faces (fraction)</div>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Qual weights</label>#}
+    {#                    <input type="text" name="qual_weights" placeholder="0.6,0.3,0.1">#}
+    {#                    <div class="help">sharp,bright,size</div>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Transport</label>#}
+    {#                    <select name="rtsp_transport">#}
+    {#                        <option value="tcp" selected>tcp</option>#}
+    {#                        <option value="udp">udp</option>#}
+    {#                        <option value="auto">auto</option>#}
+    {#                    </select>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>Device</label>#}
+    {#                    <select name="device">#}
+    {#                        <option value="auto" selected>auto</option>#}
+    {#                        <option value="cuda">cuda</option>#}
+    {#                        <option value="cpu">cpu</option>#}
+    {#                    </select>#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <label>HW accel</label>#}
+    {#                    <select name="hwaccel">#}
+    {#                        <option value="none" selected>none</option>#}
+    {#                        <option value="nvdec">nvdec</option>#}
+    {#                    </select>#}
+    {#                </div>#}
+    {##}
+    {#                <div style="display:flex; align-items:center; gap:8px; margin-top:4px">#}
+    {#                    <label><input type="checkbox" name="save_top_crops" value="1" checked> Save top crops</label>#}
+    {#                    <button type="submit" class="button button-primary">Run live capture</button>#}
+    {#                </div>#}
+    {#            </div>#}
+    {#        </form>#}
+
+    {#        <form method="post" action="{{ capture_url }}" style="display:block;margin-bottom:16px;">#}
+    {#            {% csrf_token %}#}
+    {#            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">#}
+    {#                <div>#}
+    {#                    <label style="display:block;font-size:12px;opacity:.8">Camera</label>#}
+    {#                    {{ capture_form.camera }}#}
+    {#                </div>#}
+    {#                <div>#}
+    {#                    <label style="display:block;font-size:12px;opacity:.8">Top-K images</label>#}
+    {#                    {{ capture_form.k }}#}
+    {#                </div>#}
+    {#                <div>#}
+    {#                    <label style="display:block;font-size:12px;opacity:.8">det_set</label>#}
+    {#                    {{ capture_form.det_size }}#}
+    {#                </div>#}
+    {##}
+    {#                <div>#}
+    {#                    <button type="submit" class="button" style="margin-top:18px;">Run live capture</button>#}
+    {#                </div>#}
+    {#            </div>#}
+    {##}
+    {#            <p style="margin-top:8px;color:#9aa">#}
+    {#                Captures a short burst from the selected camera, clusters faces, picks the dominant#}
+    {#                person, ranks by quality (sharpness/brightness/size), and averages the top-K into#}
+    {#                <code>media/embeddings/{{ fe.student.h_code }}.npy</code>, then activates a new embedding.#}
+    {#            </p>#}
+    {#        </form>#}
 
   </div>
 
@@ -943,3 +888,4 @@
 
 
 {% endblock %}
+

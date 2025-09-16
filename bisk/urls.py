@@ -52,6 +52,7 @@ urlpatterns = [
     path("dashboard/", core_views.dashboard, name="dashboard"),
     path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),
     path("dashboard/cameras/", core_views.cameras_dashboard, name="cameras-dashboard"),
+    path("attendance/", include(("apps.attendance.urls", "attendance"), namespace="attendance")),
 ]
 
 # Dev static/media
