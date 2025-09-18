@@ -14,6 +14,7 @@ from django.conf import settings
 from django.utils import timezone
 from django import forms
 from django.db import transaction
+from uuid import uuid4
 
 from .models import (
     Student,
@@ -47,21 +48,22 @@ _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) a
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
 
+
 def _score_to_color_and_text(raw_score: float):
     s = float(raw_score or 0.0)
     s_txt = f"{s:.2f}"
 
     bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
-    b = float(bands.get("blue_min",   0.90))
-    g = float(bands.get("green_min",  0.80))
+    b = float(bands.get("blue_min", 0.90))
+    g = float(bands.get("green_min", 0.80))
     y = float(bands.get("yellow_min", 0.65))
     o = float(bands.get("orange_min", 0.50))
 
-    c_blue   = getattr(settings, "ATTENDANCE_COLOR_BLUE",   "#2196F3")
-    c_green  = getattr(settings, "ATTENDANCE_COLOR_GREEN",  "lime")
+    c_blue = getattr(settings, "ATTENDANCE_COLOR_BLUE", "#2196F3")
+    c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
     c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
     c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
-    c_red    = getattr(settings, "ATTENDANCE_COLOR_RED",    "red")
+    c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
 
     if s >= b:
         color = c_blue
@@ -232,35 +234,6 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
         messages.success(request, "Built embeddings_dim512.pkl for all active students.")
     except Exception as e:
         messages.error(request, f"PKL build failed: {e}")
-
-
-# class StudentResource(resources.ModelResource):
-#     class Meta:
-#         model = Student
-#         exclude = ("id",)  # include everything EXCEPT id
-#         import_id_fields = ("h_code",)  # upsert identity
-#         # fields = ("h_code","first_name","middle_name","last_name","is_active")
-#         # export_order = ("h_code","first_name","middle_name","last_name","is_active")
-#         skip_unchanged = True
-#         use_bulk = True
-#
-#     def before_import_row(self, row, **kwargs):
-#         if not (row.get("first_name") or row.get("middle_name") or row.get("last_name")):
-#             full = (row.get("full_name") or "").strip()
-#             if full:
-#                 parts = [p for p in full.split() if p]
-#                 if len(parts) == 1:
-#                     row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", ""
-#                 elif len(parts) == 2:
-#                     row["first_name"], row["middle_name"], row["last_name"] = parts[0], "", parts[1]
-#                 else:
-#                     row["first_name"], row["middle_name"], row["last_name"] = parts[0], " ".join(parts[1:-1]), parts[-1]
-#
-#     # Optional: make 'h_code' the first column in exports (everything else follows automatically)
-#     def get_export_fields(self):
-#         fields = super().get_export_fields()
-#         fields.sort(key=lambda f: (f.attribute != "h_code",))
-#         return fields
 
 
 @admin.register(Student)
@@ -442,29 +415,12 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
         base = settings.MEDIA_URL or "/media/"
         return f"{base.rstrip('/')}/{p.lstrip('/')}"
 
-    # new_tab-based face_preview
-    # def face_preview(self, obj):
-    #     url = self._image_url(getattr(obj, "best_crop", None))
-    #     if not url:
-    #         return "—"
-    #     return format_html(
-    #         '<a href="{}" target="_blank" rel="noopener">'
-    #         '<img src="{}" style="height:72px;border-radius:6px;" /></a>',
-    #         url, url
-    #     )
-
     # modal-based face_preview
     def face_preview(self, obj):
         url = self._image_url(getattr(obj, "best_crop", None))
         if not url:
             return "—"
-        # Modal hook: no target, href="#", and data-url for JS
-        # return format_html(
-        #     '<a href="#" class="bisk-img-modal" data-url="{}" title="Open preview">'
-        #     '  <img src="{}" style="height:72px;border-radius:6px;box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
-        #     '</a>',
-        #     url, url
-        # )
+
         return format_html(
             '<span style="display:inline-flex;gap:6px;align-items:center">'
             '  <a href="#" class="bisk-img-modal" data-url="{}" title="Open preview">'
@@ -496,35 +452,6 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
         color, s_txt = _score_to_color_and_text(getattr(obj, "best_score", None))  # for AttendanceRecordAdmin
         return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
 
-    # def score_col(self, obj):
-    #     s = float(obj.score or 0.0)
-    #     s_txt = f"{s:.2f}"
-    #
-    #     bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
-    #     b = float(bands.get("blue_min", 0.90))
-    #     g = float(bands.get("green_min", 0.80))
-    #     y = float(bands.get("yellow_min", 0.65))
-    #     o = float(bands.get("orange_min", 0.50))
-    #
-    #     c_blue = getattr(settings, "ATTENDANCE_COLOR_BLUE", "#2196F3")
-    #     c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
-    #     c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
-    #     c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
-    #     c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
-    #
-    #     if s >= b:
-    #         color = c_blue
-    #     elif s >= g:
-    #         color = c_green
-    #     elif s >= y:
-    #         color = c_yellow
-    #     elif s >= o:
-    #         color = c_orange
-    #     else:
-    #         color = c_red
-    #
-    #     return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
-
     def student_col(self, obj):
         return format_html("<b>{} – {}</b>", obj.student.h_code, obj.student.full_name())
 
@@ -540,15 +467,6 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
     class Media:
         js = ("attendance/crop_modal.js",)
 
-
-# @admin.register(AttendanceEvent)
-# class AttendanceEventAdmin(admin.ModelAdmin):
-#     date_hierarchy = "ts"
-#     list_display = ("student", "period", "camera", "score", "ts")
-#     list_filter = ("camera", "period__template")
-#     search_fields = ("student__h_code", "student__full_name")
-#     ordering = ("-ts",)
-#     list_select_related = ("student", "period__template", "camera")
 
 @admin.register(AttendanceEvent)
 class AttendanceEventAdmin(admin.ModelAdmin):
@@ -600,20 +518,6 @@ class AttendanceEventAdmin(admin.ModelAdmin):
     def score_col(self, obj):
         color, s_txt = _score_to_color_and_text(getattr(obj, "score", None))  # for AttendanceEventAdmin
         return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
-
-    # def score_col(self, obj):
-    #     s = float(obj.score or 0.0);
-    #     s_txt = f"{s:.2f}"
-    #     bands = getattr(settings, "ATTENDANCE_SCORE_BANDS", {})
-    #     g = float(bands.get("green_min", 0.80));
-    #     y = float(bands.get("yellow_min", 0.65));
-    #     o = float(bands.get("orange_min", 0.50))
-    #     c_green = getattr(settings, "ATTENDANCE_COLOR_GREEN", "lime")
-    #     c_yellow = getattr(settings, "ATTENDANCE_COLOR_YELLOW", "#facc15")
-    #     c_orange = getattr(settings, "ATTENDANCE_COLOR_ORANGE", "orange")
-    #     c_red = getattr(settings, "ATTENDANCE_COLOR_RED", "red")
-    #     color = c_green if s >= g else c_yellow if s >= y else c_orange if s >= o else c_red
-    #     return format_html('<span style="color:{};font-weight:600;">{}</span>', color, s_txt)
 
     def period_col(self, obj):
         if not obj.period:
@@ -949,53 +853,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                 f'</a>'
             )
 
-        # h = getattr(obj.student, "h_code", "")
-        # folder = student_gallery_dir(h)
-        #
-        # items = []
-        # for rec in det[:n]:
-        #     name = rec.get("name") or rec.get("path") or ""
-        #     # prefer normalized raw01; fall back to legacy score
-        #     raw01 = _coerce_raw01(rec.get("raw01", rec.get("score", None)))
-        #     rank = rec.get("rank", None)
-        #     sharp = rec.get("sharp", None)
-        #     bright = rec.get("bright", None)
-        #     det_conf = rec.get("det_conf", None)
-        #     det_size = rec.get("det_size", None)
-        #
-        #     # build MEDIA url safely
-        #     try:
-        #         rel = os.path.relpath(os.path.join(folder, name), settings.MEDIA_ROOT)
-        #         url = f"{settings.MEDIA_URL}{rel}"
-        #     except Exception:
-        #         url = "#"
-        #
-        #     score_txt = f"{raw01:.2f}" if isinstance(raw01, float) else ""
-        #     title = f"{name}"
-        #     if raw01 is not None:
-        #         title += f" | raw01={raw01:.3f}"
-        #     if isinstance(rank, int):
-        #         title += f" | rank={rank}"
-        #     if det_size:
-        #         title += f" | det={det_size}"
-        #     if det_conf is not None:
-        #         title += f" | conf={float(det_conf):.2f}"
-        #     if sharp is not None:
-        #         title += f" | sharp={float(sharp):.2f}"
-        #     if bright is not None:
-        #         title += f" | bright={float(bright):.2f}"
-        #
-        #     items.append(
-        #         f'<a href="{url}" target="_blank" rel="noopener" '
-        #         f'style="display:inline-block;margin-right:6px;text-align:center;text-decoration:none;" '
-        #         f'title="{title}">'
-        #         f'  <img src="{url}" '
-        #         f'       style="height:36px;width:auto;border-radius:4px;display:block;margin:auto;'
-        #         f'              box-shadow:0 0 0 1px rgba(0,0,0,.08);" />'
-        #         f'  <div style="font-size:11px;color:#555;">{score_txt}</div>'
-        #         f'</a>'
-        #     )
-
         more = len(det) - n
         if more > 0:
             items.append(
@@ -1089,6 +946,9 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         # active cameras for dropdown
         cameras = Camera.objects.filter(is_active=True).order_by("name")
 
+        # all cameras (active & non-active)
+        # cameras = Camera.objects.all().order_by("name")
+
         # if os.path.isdir(folder):
         #     # Score ALL images (ROI + cascade). Uses settings defaults.
         #     paths = [os.path.join(folder, n) for n in sorted(os.listdir(folder))]
@@ -1169,6 +1029,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             if f"--{key}" in cmd_list:
                 return
             cmd_list += [f"--{key}", sv]
+
         fe = get_object_or_404(FaceEmbedding, pk=pk)
         hcode = fe.student.h_code
 
@@ -1203,7 +1064,23 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         else:
             device = device_raw.lower()
         hwaccel = (request.POST.get("hwaccel") or "none").strip()
-        save_crops = bool(request.POST.get("save_top_crops") or "1")
+        save_crops = (request.POST.get("save_top_crops") == "1")
+        # Parse the optional "sharp,bright,size" triple (e.g., "0,0,1920x1080" or "0,0,1080")
+        preproc = (request.POST.get("preproc") or "").strip()
+        pipe_size = ""
+        if preproc:
+            parts = [p.strip() for p in preproc.split(",")]
+            if len(parts) >= 3 and parts[2]:
+                # Accept "1920x1080" or just "1080" (height). We'll normalize in the script.
+                pipe_size = parts[2]
+                print(f"{pipe_size=}")
+        # preview-only: boxes/labels only (no crops, no .npy)
+        preview_only = (request.POST.get("preview_only") == "1")
+
+        if preview_only:
+            k = 0
+            save_crops = False
+
         weights = (request.POST.get("qual_weights") or "").strip()
 
         # Source (camera RTSP). Keep name you already use.
@@ -1243,7 +1120,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         ]
         if save_crops:
             cmd += ["--save_top_crops"]
-
+        if pipe_size:
+            cmd += ["--pipe-size", pipe_size]
         # optional overrides (inherit when blank)
         if cam_rtsp:
             push_flag(cmd, "rtsp", cam_rtsp)
@@ -1277,22 +1155,40 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         if preview_allow_upscale:
             cmd += ["--preview_allow_upscale"]
 
-        # # Only pass numeric flags when they’re actually numeric
-        # if pipe_q.isdigit():
-        #     cmd += ["--pipe_mjpeg_q", pipe_q]
-        #
-        # if crop_jq.isdigit():
-        #     cmd += ["--crop_jpeg_quality", crop_jq]
-        #
-        # if min_face is not None:
-        #     cmd += ["--min_face_px", str(min_face)]
-        #
-        # # bbox_expand may be float; allow e.g. "0.1", "0", "1"
-        # try:
-        #     if bbox_exp and float(bbox_exp) == float(bbox_exp):  # benign parse check
-        #         cmd += ["--bbox_expand", bbox_exp]
-        # except ValueError:
-        #     pass
+        # Reuse the same preview session if provided; otherwise mint a new one
+        preview_session = (request.POST.get("preview_session") or request.GET.get("preview_session") or "").strip()
+        cap_session = preview_session if preview_session else f"cap_{uuid4().hex[:6]}"
+
+        # Build base URL from current request (e.g., http://127.0.0.1:8000)
+        scheme = "https" if request.is_secure() else "http"
+        server_base = f"{scheme}://{request.get_host()}"
+        uplink_key = getattr(settings, "STREAM_UPLINK_KEY", "")
+
+        # Hard-stop any lightweight preview runner on this session so frames don't interleave.
+        if preview_session:
+            stop_url = f"{server_base}/attendance/stream/run/stop/{preview_session}/"
+            try:
+                try:
+                    import requests
+                    requests.get(stop_url, timeout=1)
+                except Exception:
+                    import urllib.request
+                    urllib.request.urlopen(stop_url, timeout=1).read()
+            except Exception:
+                pass
+            else:
+                # brief breather so the process actually exits
+                import time as _t;
+                _t.sleep(0.25)
+        # Append preview/uplink flags (post annotated frames into the SAME session)
+        cmd += ["--preview-session", cap_session, "--server", server_base]
+        if uplink_key:
+            cmd += ["--uplink-key", uplink_key]
+        # cmd += ["--uplink-maxfps", "6", "--uplink-quality", "85"]
+        # Step-B: make preview-only snappier (higher FPS, slightly lower JPEG quality)
+        uplink_maxfps = "12" if preview_only else "6"
+        uplink_quality = "80" if preview_only else "85"
+        cmd += ["--uplink-maxfps", uplink_maxfps, "--uplink-quality", uplink_quality]
 
         print("CAPTURE CMD:", " ".join(cmd))
 
@@ -1355,402 +1251,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             messages.error(request, f"Capture error: {stderr or stdout or 'unknown'}")
 
         return redirect(request.META.get("HTTP_REFERER") or "../../")
-
-    # @method_decorator(require_POST)
-    # def re_enroll_capture_run(self, request, pk: int):
-    #     """
-    #     Kick off extras/capture_embeddings_ffmpeg.py and, optionally, save top crops
-    #     under face_gallery/<HCODE>/live_YYYYmmdd_HHMMSS/. Returns HTMX toast + refresh.
-    #     """
-    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #     hcode = fe.student.h_code
-    #
-    #     # keep current query in scope so the listing stays at the same level after refresh
-    #     hx_url = request.headers.get("HX-Current-URL") or ""
-    #     if hx_url and not request.GET:
-    #         from urllib.parse import urlparse, parse_qsl
-    #         parsed = urlparse(hx_url);
-    #         qd = QueryDict(mutable=True)
-    #         qd.update(dict(parse_qsl(parsed.query or "")));
-    #         request.GET = qd
-    #
-    #     # posted knobs (all optional)
-    #     k = int(request.POST.get("k") or 3)
-    #     det_set = int(request.POST.get("det_set") or 1024)
-    #     duration = int(request.POST.get("duration") or 30)
-    #     fps = float(request.POST.get("fps") or 4.0)
-    #     min_face = request.POST.get("min_face_px")  # may be blank
-    #     min_face = int(min_face) if (min_face and str(min_face).isdigit()) else None
-    #     model = request.POST.get("model") or ""  # blank = inherit
-    #     pipe_q = request.POST.get("pipe_mjpeg_q") or ""  # blank = inherit
-    #     crop_fmt = request.POST.get("crop_fmt") or ""  # blank = inherit
-    #     crop_jq = request.POST.get("crop_jpeg_quality") or ""
-    #     bbox_exp = request.POST.get("bbox_expand") or ""
-    #     rtsp_tr = request.POST.get("rtsp_transport") or "tcp"
-    #     device = request.POST.get("device") or "auto"
-    #     hwaccel = request.POST.get("hwaccel") or "none"
-    #     save_crops = bool(request.POST.get("save_top_crops") or "1")
-    #
-    #     # We’ll prefer a camera RTSP from your cameras app when provided.
-    #     cam_rtsp = request.POST.get("camera_rtsp") or ""
-    #
-    #     # Build command
-    #     script = Path(settings.BASE_DIR) / "extras" / "capture_embeddings_ffmpeg.py"
-    #     if not script.exists():
-    #         messages.error(request, "Capture script not found.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     cmd = [sys.executable, str(script),
-    #            "--hcode", hcode,
-    #            "--k", str(k),
-    #            "--duration", str(duration),
-    #            "--fps", str(fps),
-    #            "--det_size", str(det_set),
-    #            "--device", device,
-    #            "--rtsp_transport", rtsp_tr,
-    #            "--hwaccel", hwaccel,
-    #            "--save_top_crops"]
-    #
-    #     # optional overrides (inherit when blank)
-    #     if cam_rtsp:            cmd += ["--rtsp", cam_rtsp]
-    #     if model:               cmd += ["--model", model]
-    #     if pipe_q:              cmd += ["--pipe_mjpeg_q", str(pipe_q)]
-    #     if crop_fmt:            cmd += ["--crop_fmt", crop_fmt]
-    #     if crop_jq:             cmd += ["--crop_jpeg_quality", str(crop_jq)]
-    #     if bbox_exp:            cmd += ["--bbox_expand", str(bbox_exp)]
-    #     if min_face is not None: cmd += ["--min_face_px", str(min_face)]
-    #
-    #     # quality weights (optional “w_sharp,w_bright,w_size”)
-    #     weights = (request.POST.get("qual_weights") or "").strip()
-    #     if weights:
-    #         cmd += ["--weights", weights]
-    #
-    #     # Run
-    #     try:
-    #         out = subprocess.run(cmd, capture_output=True, text=True, timeout=60 * 5)
-    #     except Exception as e:
-    #         messages.error(request, f"Capture failed: {e}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     ok = ("[OK] wrote embedding:" in (out.stdout or "")) or out.returncode == 0
-    #     # Try to find the crops folder message
-    #     saved_dir = ""
-    #     for line in (out.stdout or "").splitlines():
-    #         if line.startswith("[TOP_CROPS]"):
-    #             # "[TOP_CROPS] saved=3 dir=face_gallery/H123456/live_YYYYmmdd_HHMMSS"
-    #             try:
-    #                 saved_dir = line.split("dir=", 1)[1].strip()
-    #             except Exception:
-    #                 pass
-    #
-    #     if out.returncode != 0 and not ok:
-    #         messages.error(request, f"Capture error: {out.stderr or out.stdout or 'unknown'}")
-    #     else:
-    #         messages.success(request, f"Live capture OK (k={k}, det={det_set}).")
-    #         if saved_dir:
-    #             messages.info(request, f"Saved crops: {saved_dir}")
-    #
-    #     # Ask the client to refresh the same listing level
-    #     if request.headers.get("HX-Request") == "true":
-    #         resp = HttpResponse("")  # content unused
-    #         resp["HX-Trigger"] = json.dumps({
-    #             "bisk:refresh-captures": True,
-    #             "toast": {"text": f"Live capture complete{f' · {saved_dir}' if saved_dir else ''}"}
-    #         })
-    #         return resp
-    #
-    #     return redirect(request.META.get("HTTP_REFERER") or "../../")
-
-    # # +more Live Capture (New Style)
-    # @transaction.atomic
-    # @method_decorator(require_POST)
-    # def re_enroll_capture_run(self, request, pk: int):
-    #     import sys, re, hashlib, subprocess
-    #     from pathlib import Path
-    #     import numpy as np
-    #     from django.utils import timezone
-    #     from django.http import HttpResponse, QueryDict
-    #     from urllib.parse import urlparse, parse_qsl
-    #
-    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #     student = fe.student
-    #     hcode = getattr(student, "h_code", None)
-    #     if not hcode:
-    #         messages.error(request, "Student H-code missing.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # If called from HTMX, preserve the current folder querystring so we can re-render the same grid
-    #     is_htmx = (request.headers.get("HX-Request") == "true")
-    #     if is_htmx and not request.GET:
-    #         hx_url = request.headers.get("HX-Current-URL") or ""
-    #         if hx_url:
-    #             parsed = urlparse(hx_url)
-    #             qd = QueryDict(mutable=True)
-    #             qd.update(dict(parse_qsl(parsed.query or "")))
-    #             request.GET = qd
-    #
-    #     form = self._CaptureForm(request.POST)
-    #     if not form.is_valid():
-    #         if is_htmx:
-    #             resp = HttpResponse('<div class="error">Invalid capture inputs.</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Live capture: invalid inputs"}})
-    #             return resp
-    #         messages.error(request, "Invalid capture inputs.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     cam = form.cleaned_data["camera"]
-    #     k = int(form.cleaned_data["k"])
-    #     det_size = int(form.cleaned_data["det_size"])
-    #
-    #     rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
-    #     if not rtsp:
-    #         messages.error(request, "Selected camera has no RTSP/URL configured.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     proj_root = Path(settings.BASE_DIR)
-    #     script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
-    #     if not script.exists():
-    #         messages.error(request, f"Capture script not found: {script}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # Run capture
-    #     cmd = [
-    #         sys.executable, str(script),
-    #         "--rtsp", str(rtsp),
-    #         "--hcode", hcode,
-    #         "--k", str(k),
-    #         "--det_size", str(det_size),
-    #         "--device", "auto",
-    #         "--fps", "4",
-    #         "--duration", "30",
-    #         "--rtsp_transport", "tcp",
-    #         "--save_top_crops",
-    #         # If you changed the gallery subdir name in settings, pass it:
-    #         # "--gallery_root", getattr(settings, "FACE_GALLERY_DIR", "face_gallery"),
-    #     ]
-    #     try:
-    #         run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
-    #     except subprocess.TimeoutExpired:
-    #         if is_htmx:
-    #             resp = HttpResponse('<div class="error">Capture timed out.</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture timed out"}})
-    #             return resp
-    #         messages.error(request, "Capture timed out.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     if run.returncode != 0:
-    #         msg = (run.stderr or run.stdout or "").strip()
-    #         if is_htmx:
-    #             resp = HttpResponse(f'<div class="error">Capture failed:<br><pre>{msg}</pre></div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Capture failed"}})
-    #             return resp
-    #         messages.error(request, f"Capture failed:\n{msg}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # Expect media/embeddings/<HCODE>.npy
-    #     emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
-    #     npy_path = emb_dir / f"{hcode}.npy"
-    #     if not npy_path.exists():
-    #         if is_htmx:
-    #             resp = HttpResponse(f'<div class="error">Capture finished but .npy not found: {npy_path}</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": ".npy not found"}})
-    #             return resp
-    #         messages.error(request, f"Capture finished but .npy not found: {npy_path}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # How many top crops were saved? (affects images_used and message)
-    #     saved_cnt = None
-    #     saved_dir_rel = None
-    #     m = re.search(r"\[TOP_CROPS\]\s+saved=(\d+)\s+dir=([^\r\n]+)", run.stdout or "")
-    #     if m:
-    #         saved_cnt = int(m.group(1))
-    #         saved_dir_rel = m.group(2).strip()
-    #
-    #     # Build new FaceEmbedding from the .npy
-    #     try:
-    #         vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
-    #         norm = float(np.linalg.norm(vec)) if vec.size else 0.0
-    #         raw = vec.tobytes()
-    #         sha = hashlib.sha256(raw).hexdigest()
-    #
-    #         FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
-    #
-    #         fe2 = FaceEmbedding.objects.create(
-    #             student=student,
-    #             dim=int(vec.size),
-    #             vector=raw,
-    #             source_path=str(npy_path.relative_to(Path(settings.MEDIA_ROOT))).replace("\\", "/"),
-    #             camera=cam,
-    #             is_active=True,
-    #             last_enrolled_at=timezone.now(),
-    #             last_used_k=k,
-    #             last_used_det_size=det_size,
-    #             images_considered=0,
-    #             images_used=int(saved_cnt) if saved_cnt is not None else k,
-    #             embedding_norm=norm,
-    #             embedding_sha256=sha,
-    #             arcface_model="buffalo_l",
-    #             provider=("CUDAExecutionProvider" if "CUDA" in (run.stdout or "") or "CUDA" in (
-    #                         run.stderr or "") else "CPUExecutionProvider"),
-    #             enroll_runtime_ms=0,
-    #             enroll_notes=(
-    #                 f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
-    #                 f"vec_dim={vec.size}; norm={norm:.4f}"
-    #             ),
-    #         )
-    #
-    #         # (Optional) populate used_images_detail from the saved crops so chips render immediately
-    #         if saved_dir_rel:
-    #             from pathlib import PurePosixPath
-    #             crops_dir = Path(settings.MEDIA_ROOT) / saved_dir_rel
-    #             if crops_dir.exists():
-    #                 detail = []
-    #                 # stable ordering
-    #                 for f in sorted(crops_dir.glob("*.jpg")):
-    #                     rel = str(PurePosixPath(saved_dir_rel) / f.name)
-    #                     detail.append({"name": f.name, "path": rel})
-    #                 if detail:
-    #                     fe2.used_images_detail = detail
-    #                     fe2.images_used = len(detail)
-    #                     fe2.save(update_fields=["used_images_detail", "images_used"])
-    #
-    #     except Exception as e:
-    #         if is_htmx:
-    #             resp = HttpResponse(f'<div class="error">Failed to save embedding from .npy: {e}</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Failed to save embedding (.npy)"}})
-    #             return resp
-    #         messages.error(request, f"Failed to save embedding from .npy: {e}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # HTMX: inline summary + refresh current grid; else redirect to changelist
-    #     if is_htmx:
-    #         bits = [f"Live capture OK → new embedding for <b>{hcode}</b>"]
-    #         bits.append(f"k={k}")
-    #         bits.append(f"det_size={det_size}")
-    #         if saved_cnt is not None:
-    #             bits.append(f"saved={saved_cnt} crop(s)")
-    #         summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
-    #
-    #         grid_resp = self.re_enroll_captures(request, pk)
-    #         grid_html = grid_resp.content.decode("utf-8")
-    #         oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
-    #
-    #         resp = HttpResponse(summary_html + oob)
-    #         toast_text = f"Live capture OK. {'Saved ' + str(saved_cnt) + ' crop(s) → ' + saved_dir_rel if saved_cnt is not None else ''}"
-    #         resp["HX-Trigger"] = json.dumps({"toast": {"text": toast_text}})
-    #         return resp
-    #
-    #     messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
-    #     if saved_cnt is not None:
-    #         messages.success(request, f"Saved {saved_cnt} live-capture crop(s) → {saved_dir_rel}")
-    #     return redirect("../../")
-
-    ## it goes to the main FaceEmbedding list_display
-    # def re_enroll_capture_run(self, request, pk: int):
-    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #     student = fe.student
-    #     hcode = getattr(student, "h_code", None)
-    #     if not hcode:
-    #         messages.error(request, "Student H-code missing.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     form = self._CaptureForm(request.POST)
-    #     if not form.is_valid():
-    #         messages.error(request, "Invalid capture inputs.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     cam = form.cleaned_data["camera"]
-    #     k = int(form.cleaned_data["k"])
-    #     det_size = int(form.cleaned_data["det_size"])
-    #
-    #     # Resolve RTSP/URL field (be tolerant to different field names)
-    #     rtsp = getattr(cam, "url", None) or getattr(cam, "rtsp", None) or getattr(cam, "rtsp_url", None)
-    #     if not rtsp:
-    #         messages.error(request, "Selected camera has no RTSP/URL configured.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # Build script path
-    #     proj_root = Path(settings.BASE_DIR)  # your Django base
-    #     script = proj_root / "extras" / "capture_embeddings_ffmpeg.py"
-    #     if not script.exists():
-    #         messages.error(request, f"Capture script not found: {script}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # Run capture (synchronously; keep it simple for now)
-    #     cmd = [
-    #         sys.executable, str(script),
-    #         "--rtsp", str(rtsp),
-    #         "--hcode", hcode,
-    #         "--k", str(k),
-    #         "--det_size", str(det_size),
-    #         "--device", "auto",
-    #         "--fps", "4",
-    #         "--duration", "30",
-    #         "--rtsp_transport", "tcp",
-    #         "--save_top_crops",
-    #     ]
-    #     try:
-    #         run = subprocess.run(cmd, capture_output=True, text=True, timeout=1200)
-    #     except subprocess.TimeoutExpired:
-    #         messages.error(request, "Capture timed out.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     if run.returncode != 0:
-    #         messages.error(request, f"Capture failed:\n{run.stderr or run.stdout}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # Expect the script to have written media/embeddings/<HCODE>.npy
-    #     emb_dir = Path(getattr(settings, "MEDIA_ROOT", "media")) / "embeddings"
-    #     npy_path = emb_dir / f"{hcode}.npy"
-    #     if not npy_path.exists():
-    #         messages.error(request, f"Capture finished but .npy not found: {npy_path}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # Ingest into FaceEmbedding (active singleton per student)
-    #     try:
-    #         vec = np.load(str(npy_path)).astype(np.float32).reshape(-1)
-    #         # L2 norm should be ~1.0; store as raw bytes
-    #         norm = float(np.linalg.norm(vec)) if vec.size else 0.0
-    #         raw = vec.tobytes()
-    #         sha = hashlib.sha256(raw).hexdigest()
-    #
-    #         # Deactivate existing active rows for this student
-    #         FaceEmbedding.objects.filter(student=student, is_active=True).update(is_active=False)
-    #
-    #         fe2 = FaceEmbedding.objects.create(
-    #             student=student,
-    #             dim=int(vec.size),
-    #             vector=raw,
-    #             source_path=str(npy_path.relative_to(Path(settings.MEDIA_ROOT))).replace("\\", "/"),
-    #             camera=cam,
-    #             is_active=True,
-    #             last_enrolled_at=timezone.now(),
-    #             last_used_k=k,
-    #             last_used_det_size=det_size,
-    #             images_considered=0,
-    #             images_used=k,
-    #             embedding_norm=norm,
-    #             embedding_sha256=sha,
-    #             arcface_model="buffalo_l",
-    #             provider="CUDAExecutionProvider" if "CUDA" in (run.stdout or "") else "CPUExecutionProvider",
-    #             enroll_runtime_ms=0,
-    #             enroll_notes=(
-    #                 f"live-capture ffmpeg; k={k}, det={det_size}, camera={getattr(cam, 'name', cam.pk)}; "
-    #                 f"vec_dim={vec.size}; norm={norm:.4f}"
-    #             ),
-    #         )
-    #         messages.success(request, f"Live capture OK → new embedding for {hcode} (id={fe2.id}).")
-    #     except Exception as e:
-    #         messages.error(request, f"Failed to save embedding from .npy: {e}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     m = re.search(r"\[TOP_CROPS\]\s+saved=(\d+)\s+dir=([^\r\n]+)", run.stdout or "")
-    #     if m:
-    #         saved_cnt, rel_dir = int(m.group(1)), m.group(2).strip()
-    #         messages.success(request, f"Saved {saved_cnt} live-capture crop(s) → {rel_dir}")
-    #
-    #     # persist last_used_min_score=None, we didn’t threshold here
-    #     return redirect("../../")
 
     # ---- POST: run enrollment with overrides (force) ----
     @transaction.atomic
@@ -1941,464 +1441,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
         return redirect("../../")
 
-    # def re_enroll_run(self, request, pk: int):
-    #     from pathlib import Path
-    #     import json, tempfile, shutil
-    #     from django.conf import settings
-    #     from django.http import HttpResponse
-    #     from django.utils.http import urlencode
-    #     from django.http import QueryDict
-    #     from urllib.parse import urlparse, parse_qsl
-    #
-    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #
-    #     # Preserve current query params when called from HTMX (so we refresh same folder)
-    #     is_htmx = (request.headers.get("HX-Request") == "true")
-    #     if is_htmx and not request.GET:
-    #         hx_url = request.headers.get("HX-Current-URL") or ""
-    #         if hx_url:
-    #             parsed = urlparse(hx_url)
-    #             qd = QueryDict(mutable=True)
-    #             qd.update(dict(parse_qsl(parsed.query or "")))
-    #             request.GET = qd  # downstream re_enroll_captures will honor this
-    #
-    #     form = self._ReEnrollForm(request.POST)
-    #     if not form.is_valid():
-    #         if is_htmx:
-    #             resp = HttpResponse('<div class="error">Invalid inputs.</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": "Re-enroll: invalid inputs"}})
-    #             return resp
-    #         messages.error(request, "Invalid inputs.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     k = form.cleaned_data.get("k")
-    #     det = form.cleaned_data.get("det_size")
-    #     min_score = form.cleaned_data.get("min_score")
-    #     strict_top = bool(form.cleaned_data.get("strict_top"))
-    #
-    #     # Optional selection (MEDIA-relative list)
-    #     try:
-    #         sel = json.loads(request.POST.get("selected") or "[]")
-    #         if not isinstance(sel, list):
-    #             sel = []
-    #     except Exception:
-    #         sel = []
-    #
-    #     # Apply detector size override (before run)
-    #     if det:
-    #         try:
-    #             set_det_size(int(det))
-    #         except Exception:
-    #             pass
-    #
-    #     # Stage selection into MEDIA_ROOT/tmp_enroll_<hcode>_... (recursive; images only)
-    #     stage_dir = None
-    #     staged_count = 0
-    #     base = Path(settings.MEDIA_ROOT)
-    #     try:
-    #         if sel:
-    #             stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base))
-    #             for rel in sel:
-    #                 p = (base / rel).resolve()
-    #                 if base not in p.parents and p != base:  # safety
-    #                     continue
-    #                 if p.is_file():
-    #                     shutil.copy2(p, stage_dir / p.name);
-    #                     staged_count += 1
-    #                 elif p.is_dir():
-    #                     for q in p.rglob("*"):
-    #                         if q.is_file() and q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
-    #                             shutil.copy2(q, stage_dir / q.name);
-    #                             staged_count += 1
-    #     except Exception as e:
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #         if is_htmx:
-    #             resp = HttpResponse(f'<div class="error">Preparing selection failed: {e}</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Selection failed: {e}"}})
-    #             return resp
-    #         messages.error(request, f"Preparing selection failed: {e}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # ---- run enrollment ----
-    #     try:
-    #         source_hcode = fe.student.h_code
-    #
-    #         # Common kwargs we always pass
-    #         _kwargs_common = dict(
-    #             k=int(k) if k else (fe.last_used_k or 3),
-    #             force=True,
-    #             min_score=float(min_score) if min_score is not None else 0.0,
-    #             strict_top=bool(strict_top),
-    #         )
-    #
-    #         if stage_dir and any(stage_dir.iterdir()):
-    #             sd = str(stage_dir)
-    #
-    #             # Try several API variants of enroll_student_from_folder
-    #             try:
-    #                 # 1) Some versions expect folder_override=<dir>
-    #                 res = enroll_student_from_folder(source_hcode, folder_override=sd, **_kwargs_common)
-    #             except TypeError:
-    #                 try:
-    #                     # 2) Others expect path=<dir>
-    #                     res = enroll_student_from_folder(source_hcode, path=sd, **_kwargs_common)
-    #                 except TypeError:
-    #                     # 3) Some expect the folder as the 2nd positional argument
-    #                     res = enroll_student_from_folder(source_hcode, sd, **_kwargs_common)
-    #         else:
-    #             res = enroll_student_from_folder(source_hcode, **_kwargs_common)
-    #
-    #     except Exception as e:
-    #         messages.error(request, f"Enroll failed: {e}")
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #     finally:
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #
-    #
-    #     if not res or not res.get("ok"):
-    #         msg = res.get("reason") if res else "Unknown error"
-    #         if is_htmx:
-    #             resp = HttpResponse(f'<div class="error">Enroll did not succeed: {msg}</div>')
-    #             resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Enroll did not succeed: {msg}"}})
-    #             return resp
-    #         messages.warning(request, f"Enroll did not succeed: {msg}")
-    #         return redirect("../../")
-    #
-    #     # Persist min-score to the active FaceEmbedding row (if present)
-    #     new_id = res.get("face_embedding_id")
-    #     meta = (res or {}).get("meta", {}) or {}
-    #     used_min = meta.get("min_score", min_score)
-    #     try:
-    #         if new_id:
-    #             fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
-    #         else:
-    #             fe2 = fe
-    #         if used_min is not None:
-    #             fe2.last_used_min_score = float(used_min)
-    #             fe2.save(update_fields=["last_used_min_score"])
-    #     except Exception:
-    #         pass
-    #
-    #     if is_htmx:
-    #         # Compose a compact inline summary
-    #         used = meta.get("used") or meta.get("files_used") or meta.get("images_used") or staged_count
-    #         accepted = meta.get("accepted") or meta.get("n_accepted")
-    #         avg_score = meta.get("avg_score") or meta.get("mean_score")
-    #
-    #         bits = [f"Re-enrolled with <b>{used}</b> image(s)"]
-    #         if k: bits.append(f"k={k}")
-    #         if det: bits.append(f"det_size={det}")
-    #         if min_score is not None: bits.append(f"min_score={min_score}")
-    #         if strict_top: bits.append("strict-top")
-    #         if accepted is not None: bits.append(f"accepted={accepted}")
-    #         if avg_score is not None: bits.append(f"avg={avg_score}")
-    #
-    #         summary_html = '<div class="success" style="margin-top:8px">' + ", ".join(bits) + ".</div>"
-    #
-    #         # Refresh the current folder view (respecting request.GET we set above)
-    #         grid_resp = self.re_enroll_captures(request, pk)  # uses current GET (folder, score, etc.)
-    #         grid_html = grid_resp.content.decode("utf-8")
-    #         oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
-    #
-    #         resp = HttpResponse(summary_html + oob)
-    #         resp["HX-Trigger"] = json.dumps({"toast": {"text": f"Re-enrolled {used} image(s)."}})
-    #         return resp
-    #
-    #     # Non-HTMX fallback
-    #     messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
-    #     return redirect("../../")
-
-    # def re_enroll_run(self, request, pk: int):
-    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #     form = self._ReEnrollForm(request.POST)
-    #     if not form.is_valid():
-    #         messages.error(request, "Invalid inputs.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     k = form.cleaned_data.get("k")
-    #     det = form.cleaned_data.get("det_size")
-    #     min_score = form.cleaned_data.get("min_score")
-    #     strict_top = bool(form.cleaned_data.get("strict_top"))
-    #
-    #     # --- optional selection (MEDIA-relative list) ---
-    #     import json, tempfile, shutil
-    #     from pathlib import Path
-    #     from django.conf import settings
-    #     from django.http import HttpResponse
-    #
-    #     try:
-    #         sel = json.loads(request.POST.get("selected") or "[]")
-    #         if not isinstance(sel, list):
-    #             sel = []
-    #     except Exception:
-    #         sel = []
-    #
-    #     # Apply detector size override (before run)
-    #     if det:
-    #         try:
-    #             set_det_size(int(det))
-    #         except Exception:
-    #             pass
-    #
-    #     # If selection present: stage into a temp folder under MEDIA_ROOT
-    #     stage_dir = None
-    #     staged_count = 0
-    #     base = Path(settings.MEDIA_ROOT)
-    #     try:
-    #         if sel:
-    #             stage_dir = Path(
-    #                 tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base)
-    #             )
-    #             for rel in sel:
-    #                 p = (base / rel).resolve()
-    #                 # safety: keep within MEDIA_ROOT
-    #                 if base not in p.parents and p != base:
-    #                     continue
-    #                 if p.is_file():
-    #                     shutil.copy2(p, stage_dir / p.name)
-    #                     staged_count += 1
-    #                 elif p.is_dir():
-    #                     # copy only images from folder (recursive)
-    #                     for q in p.rglob("*"):
-    #                         if q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"} and q.is_file():
-    #                             shutil.copy2(q, stage_dir / q.name)
-    #                             staged_count += 1
-    #     except Exception as e:
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #         messages.error(request, f"Preparing selection failed: {e}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     # ---- run enrollment ----
-    #     try:
-    #         # choose source folder
-    #         source_hcode = fe.student.h_code
-    #         if stage_dir and any(stage_dir.iterdir()):
-    #             # enroll only from staged files
-    #             try:
-    #                 res = enroll_student_from_folder(
-    #                     source_hcode,
-    #                     k=int(k) if k else (fe.last_used_k or 3),
-    #                     force=True,
-    #                     min_score=float(min_score) if min_score is not None else 0.0,
-    #                     strict_top=bool(strict_top),
-    #                     path=str(stage_dir),  # your helper will ignore if unsupported
-    #                 )
-    #             except TypeError:
-    #                 res = enroll_student_from_folder(
-    #                     source_hcode,
-    #                     k=int(k) if k else (fe.last_used_k or 3),
-    #                     force=True,
-    #                     min_score=float(min_score) if min_score is not None else 0.0,
-    #                     strict_top=bool(strict_top),
-    #                     folder_override=str(stage_dir),  # your helper will ignore if unsupported
-    #                 )
-    #         else:
-    #             res = enroll_student_from_folder(
-    #                 source_hcode,
-    #                 k=int(k) if k else (fe.last_used_k or 3),
-    #                 force=True,
-    #                 min_score=float(min_score) if min_score is not None else 0.0,
-    #                 strict_top=bool(strict_top),
-    #             )
-    #     except Exception as e:
-    #         messages.error(request, f"Enroll failed: {e}")
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #     finally:
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #
-    #     if not res or not res.get("ok"):
-    #         messages.warning(
-    #             request,
-    #             f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}",
-    #         )
-    #         return redirect("../../")
-    #
-    #     # Apply detector size override again (persist)
-    #     if det:
-    #         try:
-    #             set_det_size(int(det))
-    #         except Exception:
-    #             pass
-    #
-    #     # Persist min-score to the *active* FaceEmbedding row
-    #     new_id = res.get("face_embedding_id")
-    #     meta = (res or {}).get("meta", {}) or {}
-    #     used_min = meta.get("min_score", min_score)
-    #     try:
-    #         if new_id:
-    #             fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
-    #         else:
-    #             fe2 = fe  # fallback to the same row
-    #         if used_min is not None:
-    #             fe2.last_used_min_score = float(used_min)
-    #             fe2.save(update_fields=["last_used_min_score"])
-    #     except Exception:
-    #         pass
-    #
-    #     # ---- HTMX vs non-HTMX response ----
-    #     if request.headers.get("HX-Request") == "true":
-    #         # Build a compact inline summary
-    #         used = (
-    #                 meta.get("used")
-    #                 or meta.get("files_used")
-    #                 or meta.get("images_used")
-    #                 or staged_count
-    #         )
-    #         # Optional extra stats if your pipeline returns them:
-    #         accepted = meta.get("accepted") or meta.get("n_accepted")
-    #         avg_score = meta.get("avg_score") or meta.get("mean_score")
-    #
-    #         summary_bits = [f"Re-enrolled with <b>{used}</b> image(s)"]
-    #         if k: summary_bits.append(f"k={k}")
-    #         if det: summary_bits.append(f"det_size={det}")
-    #         if min_score is not None: summary_bits.append(f"min_score={min_score}")
-    #         if strict_top: summary_bits.append("strict-top")
-    #         if accepted is not None: summary_bits.append(f"accepted={accepted}")
-    #         if avg_score is not None: summary_bits.append(f"avg={avg_score}")
-    #
-    #         summary_html = (
-    #                 '<div class="success" style="margin-top:8px">'
-    #                 + ", ".join(summary_bits)
-    #                 + ".</div>"
-    #         )
-    #
-    #         # Re-render the captures grid and send it as an OOB swap
-    #         grid_resp = self.re_enroll_captures(request, pk)  # HttpResponse
-    #         grid_html = grid_resp.content.decode("utf-8")
-    #         oob = f'<div id="captures-browser" hx-swap-oob="innerHTML">{grid_html}</div>'
-    #
-    #         resp = HttpResponse(summary_html + oob)
-    #         resp["HX-Trigger"] = json.dumps(
-    #             {"toast": {"text": f"Re-enrolled {used} image(s)."}}
-    #         )
-    #         return resp
-    #
-    #     # Non-HTMX fallback
-    #     messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
-    #     return redirect("../../")  # back to changelist (refreshes row)
-
-    # def re_enroll_run(self, request, pk: int):
-    #     fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #     form = self._ReEnrollForm(request.POST)
-    #     if not form.is_valid():
-    #         messages.error(request, "Invalid inputs.")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     k = form.cleaned_data.get("k")
-    #     det = form.cleaned_data.get("det_size")
-    #     min_score = form.cleaned_data.get("min_score")
-    #     strict_top = bool(form.cleaned_data.get("strict_top"))
-    #
-    #     # NEW: optional selection (MEDIA-relative list)
-    #     import json, tempfile, shutil
-    #     sel = []
-    #     try:
-    #         sel = json.loads(request.POST.get("selected") or "[]")
-    #     except Exception:
-    #         sel = []
-    #
-    #     if det:
-    #         try:
-    #             set_det_size(int(det))
-    #         except Exception:
-    #             pass
-    #
-    #     # If selection present: stage into a temp folder under MEDIA_ROOT/tmp_enroll/<hcode>/...
-    #     stage_dir = None
-    #     base = Path(settings.MEDIA_ROOT)
-    #     try:
-    #         if sel:
-    #             stage_dir = Path(tempfile.mkdtemp(prefix=f"tmp_enroll_{fe.student.h_code}_", dir=base))
-    #             for rel in sel:
-    #                 p = (base / rel).resolve()
-    #                 if base not in p.parents and p != base:
-    #                     continue  # safety
-    #                 if p.is_file():
-    #                     shutil.copy2(p, stage_dir / p.name)
-    #                 elif p.is_dir():
-    #                     # copy only images from folder
-    #                     for q in p.rglob("*"):
-    #                         if q.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
-    #                             shutil.copy2(q, stage_dir / q.name)
-    #     except Exception as e:
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #         messages.error(request, f"Preparing selection failed: {e}")
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #
-    #     try:
-    #         # choose source folder
-    #         source_hcode = fe.student.h_code
-    #         if stage_dir and any(stage_dir.iterdir()):
-    #             # enroll only from staged files
-    #             res = enroll_student_from_folder(
-    #                 source_hcode, k=int(k) if k else (fe.last_used_k or 3),
-    #                 force=True,
-    #                 min_score=float(min_score) if min_score is not None else 0.0,
-    #                 strict_top=bool(strict_top),
-    #                 folder_override=str(stage_dir)
-    #                 # <-- your helper can accept this kw if you added it; else it ignores
-    #             )
-    #         else:
-    #             res = enroll_student_from_folder(
-    #                 source_hcode, k=int(k) if k else (fe.last_used_k or 3),
-    #                 force=True,
-    #                 min_score=float(min_score) if min_score is not None else 0.0,
-    #                 strict_top=bool(strict_top)
-    #             )
-    #     except Exception as e:
-    #         messages.error(request, f"Enroll failed: {e}")
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #         return redirect(request.META.get("HTTP_REFERER") or "../../")
-    #     finally:
-    #         if stage_dir and stage_dir.exists():
-    #             shutil.rmtree(stage_dir, ignore_errors=True)
-    #
-    #     if not res or not res.get("ok"):
-    #         messages.warning(request, f"Enroll did not succeed: {res.get('reason') if res else 'Unknown error'}")
-    #         return redirect("../../")
-    #
-    #     # Apply detector size override to your embedding singleton
-    #     if det:
-    #         try:
-    #             set_det_size(int(det))
-    #         except Exception:
-    #             pass
-    #
-    #     # Persist min-score to the *active* FaceEmbedding row (id provided by your enroll function)
-    #     new_id = res.get("face_embedding_id")
-    #     meta = (res or {}).get("meta", {}) or {}
-    #     used_min = meta.get("min_score", min_score)
-    #     try:
-    #         if new_id:
-    #             fe2 = FaceEmbedding.objects.select_for_update().get(pk=new_id)
-    #         else:
-    #             fe2 = fe  # fallback to the same row
-    #         if used_min is not None:
-    #             fe2.last_used_min_score = float(used_min)
-    #             fe2.save(update_fields=["last_used_min_score"])
-    #     except Exception:
-    #         pass
-    #
-    #     messages.success(request, f"Re-enrolled {fe.student.h_code} successfully.")
-    #
-    #     if request.headers.get("HX-Request") == "true":
-    #         # Don’t send HTML here; just ask the client to re-GET the listing URL
-    #         resp = HttpResponse("")
-    #         resp["HX-Trigger"] = json.dumps({"bisk:refresh-captures": True})
-    #         return resp
-    #     # Non-HTMX fallback (normal page submit): keep your existing redirect
-    #     return redirect("../../")  # back to changelist (refreshes row)
-
     def re_enroll_captures(self, request, pk: int):
 
         def _media_url(p: Path) -> str:
@@ -2583,56 +1625,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             "toast": {"text": f"Deleted {removed} item(s){(': ' + preview) if preview else ''}"}
         })
         return resp
-
-    # @method_decorator(require_POST)
-    # def re_enroll_captures_delete(self, request, pk: int):
-    #     """
-    #     Delete selected files/folders under MEDIA_ROOT safely, then re-render current listing.
-    #     Expects POST 'selected' = JSON array of MEDIA-relative paths.
-    #     """
-    #     # preserve current query params when coming from HTMX
-    #     hx_url = request.headers.get("HX-Current-URL") or ""
-    #     if hx_url and not request.GET:
-    #         from urllib.parse import urlparse, parse_qsl
-    #         parsed = urlparse(hx_url)
-    #         qd = QueryDict(mutable=True)
-    #         qd.update(dict(parse_qsl(parsed.query or "")))
-    #         request.GET = qd
-    #
-    #     try:
-    #         fe = get_object_or_404(FaceEmbedding, pk=pk)
-    #         sel = json.loads(request.POST.get("delete_selected") or "[]")
-    #         if not isinstance(sel, list):
-    #             return HttpResponseBadRequest("bad payload")
-    #     except Exception:
-    #         return HttpResponseBadRequest("bad payload")
-    #
-    #     base = Path(settings.MEDIA_ROOT)
-    #     removed = 0
-    #
-    #     for rel in sel:
-    #         try:
-    #             p = (base / rel).resolve()
-    #             # safety: keep within MEDIA_ROOT
-    #             if base not in p.parents and p != base:
-    #                 continue
-    #             if p.is_dir():
-    #                 shutil.rmtree(p, ignore_errors=True)
-    #                 removed += 1
-    #             elif p.exists():
-    #                 p.unlink(missing_ok=True)
-    #                 removed += 1
-    #         except Exception:
-    #             # swallow; continue best-effort
-    #             pass
-    #
-    #     messages.info(request, f"Removed {removed} item(s).")
-    #
-    #     # Re-render the current level after delete (same query params)
-    #     return self.re_enroll_captures(request, pk)
-
-    # class Media:
-    #     css = {"all": ("attendance/admin_chips.css",)}
 
     class Media:
         # Only defines a single CSS variable (--bisk-chip-fg) that flips in dark mode.

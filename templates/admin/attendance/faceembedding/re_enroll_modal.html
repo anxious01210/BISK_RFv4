@@ -348,7 +348,6 @@
 
 
 
-
                  {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}"
           >
             <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
@@ -448,7 +447,7 @@
     </details>
     <hr style="margin:24px 0;opacity:.25">
 
-    <h3 style="margin:0 0 12px;">Live capture (FFmpeg)</h3>
+
     <!-- === Live Preview (MJPEG) — inline section inside the same modal === -->
     <div id="live-preview-mjpeg" class="card"
          style="margin-top:1rem; border:1px solid var(--hairline,#444); border-radius:12px;">
@@ -460,7 +459,7 @@
 
       <div class="card-body" style="padding:1rem;">
         <!-- Source controls -->
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:0.75rem;">
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr; gap:0.75rem;">
           <div>
             <label class="label">Source</label>
             <select id="lp-source" class="input" style="width:100%;">
@@ -468,21 +467,29 @@
               <option value="webcam">Server Webcam</option>
             </select>
           </div>
+          <!-- Saved cameras (auto-fills RTSP). Hidden if none found or source != rtsp -->
+          <div id="lp-cam-saved-wrap" style="display:none;">
+            <label class="label">Saved cameras</label>
+            <select id="lp-cam-saved" class="input" style="width:100%;">
+              <option value="">— select from saved —</option>
+            </select>
+          </div>
+
 
           <div id="lp-rtsp-wrap">
             <label class="label">RTSP URL</label>
-            <input id="lp-rtsp" class="input" type="text"
+            <input id="lp-rtsp" class="input" type="text" style="width:100%;"
                    placeholder="rtsp://user:pass@host:554/Streaming/Channels/101/">
           </div>
 
           <div id="lp-webcam-wrap" style="display:none;">
             <label class="label">Webcam device</label>
-            <input id="lp-device" class="input" type="text" value="/dev/video0">
+            <input id="lp-device" class="input" type="text" value="/dev/video0" style="width:100%;">
           </div>
 
-          <div>
+          <div style="margin: 0px 15px;">
             <label class="label">FPS</label>
-            <input id="lp-fps" class="input" type="number" min="1" max="30" value="8">
+            <input id="lp-fps" class="input" type="number" min="1" max="30" value="8" style="width:100%;">
           </div>
 
           <div>
@@ -497,7 +504,7 @@
 
           <div>
             <label class="label">JPEG quality (q:v)</label>
-            <input id="lp-quality" class="input" type="number" min="2" max="31" value="3">
+            <input id="lp-quality" class="input" type="number" min="2" max="31" value="3" style="width:100%;">
           </div>
         </div>
 
@@ -547,6 +554,11 @@
         const sessEl = $("lp-session-id");
         const sessLabel = $("lp-session");
         const openTab = $("lp-open-tab");
+        // NEW: saved cameras UI refs
+        const camSavedWrap = $("lp-cam-saved-wrap");
+        const camSaved = $("lp-cam-saved");
+        let camsLoaded = false;
+        let camsAvailable = 0;
 
         function setStatus(text, color) {
           status.textContent = text;
@@ -558,13 +570,53 @@
           if (v === "rtsp") {
             rtspWrap.style.display = "";
             camWrap.style.display = "none";
+            // show saved cameras only if we have any
+            camSavedWrap.style.display = (camsAvailable > 0) ? "" : "none";
           } else {
             rtspWrap.style.display = "none";
             camWrap.style.display = "";
+            camSavedWrap.style.display = "none";
           }
         }
 
         srcSel.addEventListener("change", updateSourceUI);
+
+        // NEW: fetch saved cameras once
+        async function loadSavedCams() {
+          try {
+            const r = await fetch("/attendance/stream/cameras.json", {credentials: "same-origin"});
+            const j = await r.json();
+            camsLoaded = true;
+            const list = Array.isArray(j.cameras) ? j.cameras : [];
+            camsAvailable = list.length;
+            // populate
+            camSaved.innerHTML = '<option value="">— select from saved —</option>';
+            for (const c of list) {
+              // Expect {id, label, rtsp}
+              const opt = document.createElement("option");
+              opt.value = String(c.id ?? "");
+              opt.textContent = c.label || ("Camera " + (c.id ?? ""));
+              opt.dataset.rtsp = c.rtsp || "";
+              camSaved.appendChild(opt);
+            }
+          } catch (e) {
+            camsAvailable = 0;
+            // keep hidden silently
+          } finally {
+            updateSourceUI();
+          }
+        }
+
+        // NEW: when a camera is picked, copy its RTSP into the input
+        camSaved?.addEventListener("change", () => {
+          const sel = camSaved.options[camSaved.selectedIndex];
+          if (sel && sel.dataset && sel.dataset.rtsp) {
+            rtsp.value = sel.dataset.rtsp;
+          }
+        });
+
+        // initial UI state
+        if (!camsLoaded) loadSavedCams();
         updateSourceUI();
 
         async function startPreview() {
@@ -580,7 +632,7 @@
           params.set("quality", quality.value || "3");
           if (srcSel.value === "rtsp") {
             if (!rtsp.value.trim()) {
-              alert("Please enter RTSP URL");
+              alert("Please enter RTSP URL (or choose one from Saved cameras)");
               return;
             }
             params.set("rtsp", rtsp.value.trim());
@@ -632,6 +684,7 @@
         startBtn.addEventListener("click", startPreview);
         stopBtn.addEventListener("click", stopPreview);
 
+
         // Safety: auto-stop when modal/page is closed
         window.addEventListener("pagehide", stopPreview);
         document.addEventListener("visibilitychange", () => {
@@ -657,6 +710,8 @@
         });
       });
     </script>
+
+    <h3 style="margin:16px 0 12px;">Live capture (FFmpeg)</h3>
     <form id="livecap-form"
           hx-post="{{ capture_url }}"
           hx-target="#captures-browser"
@@ -716,8 +771,8 @@
             <label>Crop format</label>
             <select name="crop_fmt" class="lc-input">
               <option value="">inherit</option>
-              <option value="jpg" selected>jpg</option>
-              <option value="png">png</option>
+              <option value="jpg">jpg</option>
+              <option value="png" selected>png</option>
             </select>
           </div>
 
@@ -773,21 +828,33 @@
           <div class="lc-col">
             <label>Device</label>
             <select name="device" class="lc-input">
-              <option value="auto" selected>auto</option>
+              <option value="auto">auto</option>
               <option value="cpu">cpu</option>
-              <option value="cuda:0">cuda:0</option>
+              <option value="cuda:0" selected>cuda:0</option>
             </select>
           </div>
 
           <div class="lc-col">
             <label>HW accel</label>
             <select name="hwaccel" class="lc-input">
-              <option value="none" selected>none</option>
-              <option value="nvdec">nvdec</option>
+              <option value="none">none</option>
+              <option value="nvdec" selected>nvdec</option>
               <option value="vaapi">vaapi</option>
             </select>
           </div>
         </div>
+
+        <div class="lc-col">
+          <label for="id_pipe_size">Pipe size</label>
+          <select id="id_pipe_size" name="pipe_size">
+            <option value="">inherit (no scale)</option>
+            <option value="1280x720">1280×720</option>
+            <option value="1920x1080">1920×1080</option>
+            <option value="1080">height 1080 (keep aspect)</option>
+            <option value="720">height 720 (keep aspect)</option>
+          </select>
+        </div>
+
 
         <div class="lc-row" style="align-items:center;">
           <label class="lc-check">

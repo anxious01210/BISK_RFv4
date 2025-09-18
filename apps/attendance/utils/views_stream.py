@@ -148,6 +148,7 @@ _TEST_THREADS_LOCK = threading.Lock()
 # --- Keepalive as a tiny JPEG to avoid "broken image" icons -------------------
 _KEEPALIVE_CACHE = None
 
+
 def _keepalive_jpeg() -> bytes:
     """
     Returns a 1x1 black JPEG (cached). Uses Pillow if available, else a precomputed baseline JPEG.
@@ -179,7 +180,6 @@ def _keepalive_jpeg() -> bytes:
         b'\x11\x00?\x00\xd2\xcf \xff\xd9'
     )
     return _KEEPALIVE_CACHE
-
 
 
 def _run_synthetic_publisher(session_id: str, stop_event: threading.Event,
@@ -342,7 +342,6 @@ def uplink_frame(request, session: str):
     return JsonResponse({"ok": True, "published": True, "session": session, "bytes": len(data)})
 
 
-
 # --- Spawn local uplink runner (FFmpeg→JPEG→HTTP POST) -----------------------
 import os
 import sys
@@ -355,6 +354,7 @@ from django.views.decorators.http import require_GET
 _RUNNERS: Dict[str, subprocess.Popen] = {}
 _RUNNERS_LOCK = threading.Lock()
 
+
 def _runner_script_path() -> str:
     """
     Resolve extras/mjpeg_uplink_runner.py from BASE_DIR.
@@ -363,12 +363,14 @@ def _runner_script_path() -> str:
     p = base / "extras" / "mjpeg_uplink_runner.py"
     return str(p)
 
+
 def _default_server_from_request(request) -> str:
     """
     Build base server URL from the current request (e.g., "http://127.0.0.1:8000").
     """
     scheme = "https" if request.is_secure() else "http"
     return f"{scheme}://{request.get_host()}"
+
 
 @login_required
 @require_GET
@@ -424,7 +426,8 @@ def run_start(request, session: str):
         proc = _RUNNERS.get(session)
         alive = proc and (proc.poll() is None)
         if alive:
-            return JsonResponse({"ok": True, "running": True, "session": session, "pid": proc.pid, "note": "already running"})
+            return JsonResponse(
+                {"ok": True, "running": True, "session": session, "pid": proc.pid, "note": "already running"})
 
         # Start new
         try:
@@ -443,6 +446,7 @@ def run_start(request, session: str):
         "pid": proc.pid,
         "cmd": " ".join(shlex.quote(c) for c in cmd),
     })
+
 
 @login_required
 @require_GET
@@ -472,4 +476,57 @@ def run_stop(request, session: str):
         pass
 
     return JsonResponse({"ok": True, "stopped": True, "session": session})
+
+
+# --- List saved cameras as JSON (for RTSP dropdown in modal) -----------------
+from django.views.decorators.http import require_GET
+
+
+# --- List saved cameras as JSON (for RTSP dropdown in modal) -----------------
+from django.views.decorators.http import require_GET
+from django.apps import apps as django_apps
+
+@login_required
+@require_GET
+def cameras_json(request):
+    """
+    GET /attendance/stream/cameras.json
+    Returns a lightweight list of active cameras:
+      { ok: true, cameras: [{id, label, rtsp, transport}] }
+
+    Uses the `cameras` app's Camera model:
+      - name        -> label
+      - rtsp_url    -> rtsp
+      - rtsp_transport -> transport  ("auto" / "tcp" / "udp")
+    """
+    user = request.user
+    if not (user.is_staff or user.is_superuser):
+        return HttpResponseForbidden("Staff only")
+
+    try:
+        Camera = django_apps.get_model("cameras", "Camera")  # apps/cameras/models.py
+    except Exception:
+        return JsonResponse({"ok": True, "cameras": []})
+
+    # all cameras (active)
+    qs = Camera.objects.filter(is_active=True).order_by("name")
+    # all cameras (active & non-active)
+    # qs = Camera.objects.all().order_by("name")
+    cameras = []
+    for cam in qs:
+        label = getattr(cam, "name", None) or f"Camera {cam.pk}"
+        rtsp = getattr(cam, "rtsp_url", "") or ""
+        transport = getattr(cam, "rtsp_transport", "auto") or "auto"
+        # Optional: include location in the label if present
+        loc = getattr(cam, "location", "") or ""
+        if loc:
+            label = f"{label} — {loc}"
+        cameras.append({
+            "id": cam.pk,
+            "label": label,
+            "rtsp": rtsp,
+            "transport": transport,
+        })
+
+    return JsonResponse({"ok": True, "cameras": cameras})
 

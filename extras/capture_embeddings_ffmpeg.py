@@ -7,6 +7,17 @@ import numpy as np
 from PIL import Image, ImageOps, ImageStat
 from insightface.app import FaceAnalysis
 
+# --- Optional live preview uplink (MJPEG) ------------------------------------
+try:
+    # when running the script directly (python extras/capture_embeddings_ffmpeg.py)
+    from stream_uplink_publisher import StreamUplinkPublisher
+except Exception:
+    try:
+        # when imported from elsewhere as a package
+        from extras.stream_uplink_publisher import StreamUplinkPublisher
+    except Exception:
+        StreamUplinkPublisher = None  # graceful fallback
+
 MEDIA_ROOT_FALLBACK = Path("media").absolute()
 TIMEZONE_LOCAL = None
 
@@ -295,8 +306,47 @@ def main():
                    help="Max preview height (0 uses screen height or 720 fallback).")
     p.add_argument("--preview_allow_upscale", action="store_true",
                    help="Allow scaling up smaller sources to fill preview.")
+    # live-capture for .npy --preview flag
+    p.add_argument("--preview-session", default=None,
+                   help="If set, post annotated preview frames to the MJPEG session id (e.g. cap_xxxxxx)")
+    p.add_argument("--uplink-key", default=os.environ.get("STREAM_UPLINK_KEY"),
+                   help="Uplink auth key; if omitted and the endpoint requires a key, posts will be 403")
+    p.add_argument("--server", default=os.environ.get("BISK_SERVER", "http://127.0.0.1:8000"),
+                   help="Base URL of the Django server that hosts /attendance/stream/uplink/")
+    p.add_argument("--uplink-maxfps", type=int, default=6, help="Max post rate for preview frames")
+    p.add_argument("--uplink-quality", type=int, default=85, help="JPEG quality for preview frames (2..100)")
+    p.add_argument("--no-window", action="store_true", help="Disable OpenCV preview window even if --preview is set")
+    p.add_argument("--pipe-size", type=str, default="",
+                   help="Working frame size before detection. Accepts 'WIDTHxHEIGHT' or a single HEIGHT. "
+                        "Examples: '1920x1080' or '1080'. If empty, no scaling is applied.")
 
     args = p.parse_args()
+
+    publisher = None
+    if getattr(args, "preview_session", None) and StreamUplinkPublisher is not None:
+        try:
+            publisher = StreamUplinkPublisher(
+                server=args.server,
+                session=args.preview_session,
+                key=args.uplink_key,
+                max_fps=args.uplink_maxfps,
+            )
+        except Exception:
+            publisher = None  # do not crash capture if preview wiring fails
+
+    def _preview_publish_bgr(frame_bgr):
+        """
+        Best-effort: send an annotated BGR frame to the MJPEG uplink.
+        Safe to call on every frame; internally throttled by --uplink-maxfps.
+        """
+        if publisher is None or frame_bgr is None:
+            return
+        try:
+            # args is closed over from the outer scope
+            publisher.publish_bgr(frame_bgr, quality=int(getattr(args, "uplink_quality", 85)))
+        except Exception:
+            pass  # never break the capture on preview errors
+
     w_sharp, w_bright, w_size = [float(x) for x in str(args.weights).split(",")]
     src = args.webcam or args.rtsp
     if not src:
@@ -312,6 +362,14 @@ def main():
     app = get_app(args.det_size, model=args.model, device=args.device)
 
     samples: List[Sample] = [];
+    # has_preview = False
+    # if args.preview:
+    #     try:
+    #         import cv2  # noqa: F401
+    #     except Exception:
+    #         pass
+    #     else:
+    #         has_preview = True
     has_preview = False
     if args.preview:
         try:
@@ -320,6 +378,12 @@ def main():
             pass
         else:
             has_preview = True
+
+    # Split responsibilities:
+    # want_window = bool(args.preview) and has_preview  # controls cv2 window
+    want_window = bool(args.preview) and has_preview and (not getattr(args, "no_window", False))
+    want_uplink = bool(args.preview_session) and (publisher is not None)  # controls MJPEG posting
+    has_overlay = bool(want_window or want_uplink)  # draw boxes if either path is active
 
     # Screen size defaults for auto-fit
     if args.preview_max_w <= 0 or args.preview_max_h <= 0:
@@ -332,7 +396,8 @@ def main():
     fullscreen = bool(args.preview_fullscreen)
 
     # Prepare window if preview
-    if has_preview:
+    # if has_preview:
+    if want_window:
         import cv2
         cv2.namedWindow("capture_preview", cv2.WINDOW_NORMAL)
         if fullscreen:
@@ -347,7 +412,8 @@ def main():
                            webcam_size=(args.webcam_size or None)):
         H, W = rgb.shape[0], rgb.shape[1]
         faces = app.get(rgb)
-        disp: Optional[np.ndarray] = rgb.copy() if has_preview else None
+        # disp: Optional[np.ndarray] = rgb.copy() if has_preview else None
+        disp: Optional[np.ndarray] = rgb.copy() if has_overlay else None
 
         for f in faces:
             x1, y1, x2, y2 = [int(t) for t in f.bbox]
@@ -381,6 +447,38 @@ def main():
                 cv2.putText(disp, f"{qual:.2f}", (ex1, max(0, ey1 - 6)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
 
+        # if disp is not None:
+        #     import cv2
+        #     # Down/up-scale to fit preview bounds
+        #     scale = _scale_for_preview(W, H, max_w, max_h, bool(args.preview_allow_upscale))
+        #     if scale != 1.0:
+        #         new_w = max(1, int(W * scale))
+        #         new_h = max(1, int(H * scale))
+        #         interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
+        #         disp_scaled = cv2.resize(disp, (new_w, new_h), interpolation=interp)
+        #     else:
+        #         disp_scaled = disp
+        #
+        #     # Overlay hint
+        #     hint = "[F]ullscreen  [Q]/ESC to quit"
+        #     cv2.putText(disp_scaled, hint, (10, max(20, disp_scaled.shape[0] - 10)),
+        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
+        #
+        #     bgr = disp_scaled[..., ::-1].copy()
+        #     # NEW: send annotated frame to MJPEG preview (if --preview-session was provided)
+        #     _preview_publish_bgr(bgr)
+        #     cv2.imshow("capture_preview", bgr)
+        #
+        #     # NEW: send annotated frame to the uplink session
+        #     _preview_publish_bgr(bgr)
+        #
+        #     key = cv2.waitKey(1) & 0xFF
+        #     if key in (27, ord('q')):
+        #         break
+        #     if key in (ord('f'), ord('F')):
+        #         fullscreen = not fullscreen
+        #         cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN,
+        #                               cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
         if disp is not None:
             import cv2
             # Down/up-scale to fit preview bounds
@@ -393,23 +491,31 @@ def main():
             else:
                 disp_scaled = disp
 
-            # Overlay hint
+            # Overlay hint (useful when window is visible)
             hint = "[F]ullscreen  [Q]/ESC to quit"
             cv2.putText(disp_scaled, hint, (10, max(20, disp_scaled.shape[0] - 10)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
 
+            # Convert for cv2 & uplink
             bgr = disp_scaled[..., ::-1].copy()
-            cv2.imshow("capture_preview", bgr)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord('q')):
-                break
-            if key in (ord('f'), ord('F')):
-                fullscreen = not fullscreen
-                cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN,
-                                      cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
+            # Post annotated frames to MJPEG session if requested
+            if want_uplink:
+                _preview_publish_bgr(bgr)
 
-    if has_preview:
+            # Show local window only if requested
+            if want_window:
+                cv2.imshow("capture_preview", bgr)
+                key = cv2.waitKey(1) & 0xFF
+                if key in (27, ord('q')):
+                    break
+                if key in (ord('f'), ord('F')):
+                    fullscreen = not fullscreen
+                    cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN,
+                                          cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
+
+    # if has_preview:
+    if want_window:
         try:
             import cv2;
             cv2.destroyAllWindows()

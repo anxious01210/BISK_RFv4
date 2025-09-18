@@ -33,6 +33,8 @@ urlpatterns = [
     # spawn/stop local runner
     path("stream/run/start/<str:session>/", stream_views.run_start, name="att_stream_run_start"),
     path("stream/run/stop/<str:session>/", stream_views.run_stop, name="att_stream_run_stop"),
+    # ✨ list saved cameras for the modal dropdown
+    path("stream/cameras.json", stream_views.cameras_json, name="att_stream_cameras_json"),
 
 ]
 
