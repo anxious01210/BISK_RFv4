@@ -103,6 +103,7 @@ class PeriodTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.start_time}-{self.end_time})"
+        # return f"{self.name} ({self.start_time:%H:%M}-{self.end_time:%H:%M})"
 
     def is_active_on(self, dow: int) -> bool:
         """Return True if this template includes the weekday (Mon=0 … Sun=6)."""
