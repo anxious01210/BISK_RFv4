@@ -151,7 +151,7 @@ class AttendanceRecord(models.Model):
         max_length=16, default="present",
         help_text="Computed attendance status for the period (e.g., present/late/absent)."
     )
-    pass_count = models.PositiveIntegerField(default=1)          # new
+    pass_count = models.PositiveIntegerField(default=1)  # new
     last_pass_at = models.DateTimeField(blank=True, null=True, db_index=True)  # new
 
     class Meta:
@@ -246,6 +246,48 @@ class RecognitionSettings(models.Model):
         ),
     )
 
+    # --- Face-crop capture & curation policy ---
+    crops_enabled = models.BooleanField(
+        default=False,
+        help_text="Master switch. If off, no per-student capture occurs."
+    )
+    crops_apply_all_students = models.BooleanField(
+        default=False,
+        help_text="If ON, capture applies to ALL students. If OFF, only FaceEmbeddings with per-student opt-in."
+    )
+    crops_save_threshold = models.FloatField(
+        default=0.65,
+        help_text="Archive when live match score ≥ this value (independent of recognition min-score)."
+    )
+    crops_keep_n = models.PositiveIntegerField(
+        default=5,
+        help_text="Keep only the top-N images per (date/period/camera) folder."
+    )
+    crops_padding = models.PositiveIntegerField(
+        default=16,
+        help_text="Extra pixels around face before saving (visual pad)."
+    )
+    crops_margin = models.PositiveIntegerField(
+        default=8,
+        help_text="Optional black margin/border in saved image."
+    )
+    crops_format = models.CharField(
+        max_length=8, default="png",
+        help_text="png or jpg"
+    )
+    crops_quality = models.PositiveIntegerField(
+        default=95,
+        help_text="If JPG, 1..100"
+    )
+    crops_subdir = models.CharField(
+        max_length=32, default="captures",
+        help_text="Subfolder under each student’s gallery (e.g., 'captures')."
+    )
+    crops_include_period = models.BooleanField(
+        default=True,
+        help_text="Insert /<period_id>/ between date and camera in the path."
+    )
+
     @classmethod
     def get_solo(cls):
         # Simple singleton: id=1
@@ -258,6 +300,11 @@ class FaceEmbedding(models.Model):
     One embedding (float32 vector) for a student.
     Stored as raw bytes to avoid forcing numpy on the server.
     """
+    # Per-student archive opt-in (used when RecognitionSettings.crops_apply_all_students=False)
+    crops_opt_in = models.BooleanField(
+        default=False,
+        help_text="If true and global capture is enabled, archive top crops for this student."
+    )
     student = models.ForeignKey(
         "attendance.Student",
         on_delete=models.CASCADE,

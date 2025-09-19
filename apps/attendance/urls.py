@@ -3,6 +3,8 @@ from django.urls import path
 from rest_framework.routers import DefaultRouter
 from .api import AttendanceRecordViewSet, IngestView, EnrollView, GalleryView
 from . import views  # <-- add this
+# ✨ NEW: import the stream view from your chosen location
+from .utils import views_stream as stream_views
 
 app_name = "attendance"  # <-- namespacing key
 
@@ -21,6 +23,19 @@ urlpatterns = [
     # NEW — Lunch Supervisor panel
     path("dash/lunch/", views.lunch_page, name="lunch_page"),
     path("dash/lunch/stream/", views.lunch_stream_rows, name="lunch_stream_rows"),
+    # MJPEG stream endpoint (staff-only via the view)
+    path("stream/live/<str:session>.mjpg", stream_views.mjpeg_stream, name="att_mjpeg_stream"),
+    # synthetic publisher controls
+    path("stream/test/start/<str:session>/", stream_views.test_start, name="att_stream_test_start"),
+    path("stream/test/stop/<str:session>/", stream_views.test_stop, name="att_stream_test_stop"),
+    # HTTP uplink for posting frames
+    path("stream/uplink/<str:session>/", stream_views.uplink_frame, name="att_stream_uplink"),
+    # spawn/stop local runner
+    path("stream/run/start/<str:session>/", stream_views.run_start, name="att_stream_run_start"),
+    path("stream/run/stop/<str:session>/", stream_views.run_stop, name="att_stream_run_stop"),
+    # ✨ list saved cameras for the modal dropdown
+    path("stream/cameras.json", stream_views.cameras_json, name="att_stream_cameras_json"),
+
 ]
 
 urlpatterns += router.urls

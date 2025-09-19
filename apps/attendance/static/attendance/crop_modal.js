@@ -1,66 +1,92 @@
+// apps/attendance/static/attendance/crop_modal.js
 (function () {
-    // Inject a single overlay modal once per page load
+    // --- tiny helper: ensure HTMX is available (for hx-* in injected HTML)
+    function ensureHtmx() {
+        return new Promise((resolve) => {
+            if (window.htmx) return resolve();
+            const s = document.createElement("script");
+            s.src = "https://unpkg.com/htmx.org@1.9.12";
+            s.onload = () => resolve();
+            document.head.appendChild(s);
+        });
+    }
+
+    // --- modal skeleton (one overlay reused)
+    let overlay;
+
     function ensureOverlay() {
-        var el = document.getElementById("bisk-img-overlay");
-        if (el) return el;
+        if (overlay) return overlay;
+        overlay = document.createElement("div");
+        overlay.id = "bisk-reenroll-overlay";
+        overlay.style.cssText = `
+      position: fixed; inset: 0; z-index: 10000; display: none;
+      background: rgba(0,0,0,.5);
+    `;
+        overlay.innerHTML = `
+      <div id="bisk-reenroll-modal" style="
+        position:absolute; top: 4vh; left: 50%; transform: translateX(-50%);
+        width: min(1100px, 94vw); max-height: 92vh; overflow:auto;
+        border-radius: 10px; background: var(--body-bg, #111827);
+        box-shadow: 0 20px 60px rgba(0,0,0,.35);
+      ">
+        <div style="display:flex; justify-content:flex-end; padding:8px;">
+          <button type="button" id="bisk-reenroll-close" class="button">Close</button>
+        </div>
+        <div id="bisk-reenroll-body" style="padding:0 12px 12px;"></div>
+      </div>
+    `;
+        document.body.appendChild(overlay);
+        overlay.addEventListener("click", (ev) => {
+            if (ev.target.id === "bisk-reenroll-overlay") hide();
+        });
+        overlay.querySelector("#bisk-reenroll-close").addEventListener("click", hide);
+        return overlay;
+    }
 
-        el = document.createElement("div");
-        el.id = "bisk-img-overlay";
-        el.setAttribute("role", "dialog");
-        el.setAttribute("aria-modal", "true");
-        el.style.cssText = [
-            "position:fixed", "inset:0", "z-index:9999",
-            "display:none", "align-items:center", "justify-content:center",
-            "background:rgba(0,0,0,.7)"
-        ].join(";");
-        el.innerHTML =
-            '<div id="bisk-img-wrap" style="max-width:90vw;max-height:90vh;position:relative;">' +
-            '  <img id="bisk-img-full" alt="Preview" style="max-width:90vw;max-height:90vh;display:block;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,.4);" />' +
-            '  <button id="bisk-img-close" aria-label="Close" ' +
-            '          style="position:absolute;top:-12px;right:-12px;cursor:pointer;border:none;border-radius:999px;' +
-            '                 width:32px;height:32px;background:white;color:#111;font-weight:700;box-shadow:0 2px 10px rgba(0,0,0,.4);">×</button>' +
-            '</div>';
-        document.body.appendChild(el);
+    function show() {
+        ensureOverlay().style.display = "block";
+        document.body.style.overflow = "hidden";
+    }
 
-        // Close interactions
-        var img = el.querySelector("#bisk-img-full");
-        var wrap = el.querySelector("#bisk-img-wrap");
-        var btn = el.querySelector("#bisk-img-close");
+    function hide() {
+        if (!overlay) return;
+        overlay.style.display = "none";
+        const body = document.getElementById("bisk-reenroll-body");
+        if (body) body.innerHTML = "";
+        document.body.style.overflow = "";
+    }
 
-        function close() {
-            el.style.display = "none";
-            img.removeAttribute("src");
+    async function openInModal(url) {
+        show();
+        const body = document.getElementById("bisk-reenroll-body");
+        body.innerHTML = '<div style="padding:20px;opacity:.7">Loading…</div>';
+        try {
+            const res = await fetch(url, {headers: {"X-Requested-With": "XMLHttpRequest"}});
+            const html = await res.text();
+            body.innerHTML = html;
+
+            // Initialize HTMX in the injected content (so #captures-browser will hx-get)
+            await ensureHtmx();
+            if (window.htmx && typeof window.htmx.process === "function") {
+                window.htmx.process(body);
+            }
+        } catch (e) {
+            body.innerHTML = '<div style="padding:20px;color:#f99">Failed to load content.</div>';
+            console.error("Re-enroll modal load failed:", e);
         }
-
-        // Click backdrop closes (but not clicks on the image/wrap)
-        el.addEventListener("click", function (e) {
-            if (!wrap.contains(e.target)) close();
-        });
-        btn.addEventListener("click", function (e) {
-            e.preventDefault();
-            close();
-        });
-        document.addEventListener("keydown", function (e) {
-            if (e.key === "Escape" && el.style.display !== "none") close();
-        });
-
-        return el;
     }
 
-    function openModal(url) {
-        var el = ensureOverlay();
-        var img = el.querySelector("#bisk-img-full");
-        img.src = url;
-        el.style.display = "flex";
-    }
+    // --- make it callable from inline onclick on the link
+    window.BISK_openReEnrollModal = function (url) {
+        openInModal(url);
+    };
 
-    // Delegate clicks from any thumbnail link
-    document.addEventListener("click", function (e) {
-        var a = e.target.closest && e.target.closest("a.bisk-img-modal");
+    // --- backup: also intercept clicks via delegation (in case onclick is removed)
+    document.addEventListener("click", function (ev) {
+        const a = ev.target.closest("a.js-reenroll-modal");
         if (!a) return;
-        var url = a.getAttribute("data-url");
-        if (!url) return;
-        e.preventDefault();
-        openModal(url);
-    });
+        ev.preventDefault();
+        ev.stopPropagation();
+        openInModal(a.getAttribute("href"));
+    }, {capture: true});
 })();

@@ -126,10 +126,10 @@ class CameraAdmin(admin.ModelAdmin):
     list_display = ("name", "location", "is_active", "script_type_default", "prefer_camera_over_profile",
                     "target_fps_req", "det_set_req", "pause_until", "snapshot_thumb",)
     list_editable = (
-        "is_active", "pause_until",
+        "is_active", "pause_until", "prefer_camera_over_profile",
     )
     search_fields = ("name", "location")
-    list_filter = ("script_type_default", "scan_station", "is_active")
+    list_filter = ("script_type_default", "scan_station", "is_active", )
 
     actions = [
         pause_30_min,

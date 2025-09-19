@@ -20,14 +20,17 @@ from django.utils import timezone
 from django.conf import settings
 from apps.scheduler.resources import resolve_effective
 from apps.cameras.models import Camera
-from apps.attendance.models import Student, RecognitionSettings
+from apps.attendance.models import Student, RecognitionSettings, Student, FaceEmbedding
 from apps.attendance.services import record_recognition
 from apps.attendance.utils.media_paths import DIRS, ensure_media_tree
+from apps.attendance.utils.media_paths import student_capture_dir  # new
+from apps.attendance.utils.capture_curate import curate_top_crops
 
 import numpy as np
 from insightface.app import FaceAnalysis
 from PIL import Image
 import io
+
 
 SAVE_DEBUG_UNMATCHED = True
 HB_COUNTS = {"detected": 0, "matched": 0}
@@ -576,6 +579,90 @@ def recognition_loop(*, args, eff, gal_M: np.ndarray, gal_meta, camera_obj: Came
             except Exception as e:
                 crop_path = ""
                 log(f"[MATCH] {hcode} score={score:.3f} -> crop-save-error: {e}")
+
+            # --- DB-driven per-student archiving + optional curation ---
+            try:
+                # 1) read global policy once per write (cheap)
+                rs = RecognitionSettings.objects.order_by("-changed_at",
+                                                          "-id").first() or RecognitionSettings.objects.first()
+                if rs and rs.crops_enabled:
+                    # 2) check scope: all students OR per-student opt-in
+                    do_student = bool(rs.crops_apply_all_students)
+                    if not do_student:
+                        try:
+                            fe_active = FaceEmbedding.objects.filter(student=student, is_active=True).first()
+                            do_student = bool(fe_active and fe_active.crops_opt_in)
+                        except Exception:
+                            do_student = False
+
+                    if do_student:
+                        # 3) threshold gate (independent from recognition min_score)
+                        save_thr = float(getattr(rs, "crops_save_threshold", 0.65) or 0.65)
+                        if score >= save_thr:
+                            cam_name = str(camera_obj.name)
+                            # TODO: wire a real period id if you want it here; None becomes "_none_"
+                            # resolve period occurrence for this recognition
+                            period_id = None
+                            try:
+                                from apps.attendance.services import resolve_active_occurrence
+                                occ = resolve_active_occurrence(student)
+                                if occ:
+                                    period_id = occ.id
+                            except Exception:
+                                pass
+
+                            cap_dir = Path(student_capture_dir(
+                                hcode, cam_name, period_id, when=timezone.now(),
+                                subdir=getattr(rs, "crops_subdir", "captures"),
+                                include_period=bool(getattr(rs, "crops_include_period", True)),
+                            ))
+                            cap_dir.mkdir(parents=True, exist_ok=True)
+
+                            fmt = str(getattr(rs, "crops_format", "png")).lower()
+                            ext = ".png" if fmt == "png" else ".jpg"
+                            # camera id + name
+                            cam_label = f"cam{camera_obj.id}-{camera_obj.name}"
+                            # period id + name (if resolved)
+                            per_label = f"per{period_id}" if period_id else "perNone"
+                            try:
+                                if period_id:
+                                    from apps.attendance.models import PeriodOccurrence
+                                    occ = PeriodOccurrence.objects.filter(id=period_id).first()
+                                    if occ:
+                                        per_label = f"per{period_id}-{occ.template.name}"
+                            except Exception:
+                                pass
+
+                            # ts = timezone.now().strftime("%Y%m%d-%H%M%S")
+                            ts = timezone.localtime(timezone.now()).strftime("%Y%m%d-%H%M%S")
+                            # score_str = f"{score:.4f}".replace(".", "_")
+                            score_str = f"{score:.4f}"
+                            if per_label == "perNone":
+                                out_path = cap_dir / f"{hcode}_S{score_str}_{cam_label}_tzta-{ts}{ext}"
+                            else:
+                                out_path = cap_dir / f"{hcode}_S{score_str}_{cam_label}_{per_label}_{ts}{ext}"
+
+                            if fmt == "png":
+                                Image.fromarray(crop_rgb).save(str(out_path), format="PNG")
+                            else:
+                                q = int(getattr(rs, "crops_quality", 95) or 95)
+                                Image.fromarray(crop_rgb).save(str(out_path), format="JPEG",
+                                                               quality=max(1, min(100, q)))
+
+                            log(f"[captures] {hcode} score={score:.3f} saved {out_path}")
+
+                            # 4) light curation (keep top-N) when folder grows
+                            keep_n = int(getattr(rs, "crops_keep_n", 5) or 5)
+                            imgs_now = [p for p in cap_dir.iterdir()
+                                        if
+                                        p.is_file() and p.suffix.lower() in (".jpg", ".jpeg", ".png", ".bmp", ".webp")]
+                            if keep_n > 0 and len(imgs_now) > (2 * keep_n):
+                                stats = curate_top_crops(cap_dir, keep_n=keep_n)
+                                log(f"[captures] curated {cap_dir.name}: {stats}")
+                        else:
+                            log(f"[captures] {hcode} score={score:.3f} < crops_save_threshold -> skip")
+            except Exception as e:
+                log(f"[captures] DB-driven archive failed: {e}")
 
             HB_COUNTS["matched"] += 1
 

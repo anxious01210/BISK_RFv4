@@ -76,7 +76,8 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'django.template.context_processors.debug',
                 'django.template.context_processors.static',
-                'django.template.context_processors.media',  # ← add this, If you prefer to keep {{ MEDIA_URL }} working in all templates
+                'django.template.context_processors.media',
+                # ← add this, If you prefer to keep {{ MEDIA_URL }} working in all templates
             ],
         },
     },
@@ -327,17 +328,35 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 2000  # default is 1000
 #   GREEN:  score >= green_min
 
 ATTENDANCE_SCORE_BANDS = {
+    "blue_min": 0.90,
     "green_min": 0.80,
     "yellow_min": 0.65,
     "orange_min": 0.50,
 }
 
 # Tailwind-ish, readable on dark UIs
+ATTENDANCE_COLOR_BLUE = "#2196F3"  # blue-500
 ATTENDANCE_COLOR_GREEN = "#22c55e"  # green-500
 ATTENDANCE_COLOR_YELLOW = "#facc15"  # yellow-400
 ATTENDANCE_COLOR_ORANGE = "#f59e0b"  # orange-500
 ATTENDANCE_COLOR_RED = "#ef4444"  # red-500
 
-
 # For lunch Periods
 PASS_GAP_SECONDS = 45  # between 30–60s as you prefer
+
+# --- Face crop archiving (for runner) ---
+TOP_CROPS = {
+    "ENABLED": False,  # turn off to disable writes
+    "SUBDIR": "captures",  # under each student's gallery
+    "N": 5,  # save top-N images per confirmation
+    "PADDING": 16,  # px around detected box (before crop)
+    "MARGIN": 8,  # optional black frame in the saved image
+    "FORMAT": "png",  # 'png' or 'jpg'
+    "QUALITY": 100,  # if jpg
+    "SAVE_THRESHOLD": 0.65,
+    # only save if raw01 >= this (Gate meaning: archive if score ≥ TOP_CROPS.SAVE_THRESHOLD, regardless of your recognition min-score.)
+}
+
+DEFAULT_RTSP_RUN_LIVE_CAPTURE = "rtsp://admin:B!sk2025@192.168.137.95:554/Streaming/Channels/101/"
+
+STREAM_UPLINK_KEY = "dev-stream-key-change-me"

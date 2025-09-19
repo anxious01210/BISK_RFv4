@@ -1,226 +1,1041 @@
 {% extends "admin/base_site.html" %}
 {% load static %}
 
+{% block extrahead %}{{ block.super }}
+  <script defer src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <script>
+    document.addEventListener('DOMContentLoaded', function () {
+      document.body.addEventListener('htmx:configRequest', function (e) {
+        const t = document.querySelector('meta[name="csrf-token"]')?.content;
+        if (t) e.detail.headers['X-CSRFToken'] = t;
+      });
+    });
+  </script>
+{% endblock %}
+
+
+
+
 {% block extrastyle %}
-    <style>
-        /* reuse admin_chips tokens if loaded; provide fallbacks here */
-        :root {
-            --bisk-card-bg: #ffffff;
-            --bisk-card-br: #e5e7eb;
-            --bisk-card-fg: #374151;
-            --bisk-badge-br: #cbd5e1;
-            --bisk-badge-k: #e0e7ff;
-            --bisk-badge-min: #dcfce7;
-            --bisk-badge-det: #fef9c3;
-        }
+  <style>
+      /* reuse admin_chips tokens if loaded; provide fallbacks here */
+      :root {
+          --bisk-card-bg: #ffffff;
+          --bisk-card-br: #e5e7eb;
+          --bisk-card-fg: #374151;
+          --bisk-badge-br: #cbd5e1;
+          --bisk-badge-k: #e0e7ff;
+          --bisk-badge-min: #dcfce7;
+          --bisk-badge-det: #fef9c3;
+      }
 
-        @media (prefers-color-scheme: dark) {
-            :root {
-                --bisk-card-bg: #0f172a;
-                --bisk-card-br: #334155;
-                --bisk-card-fg: #e5e7eb;
-                --bisk-badge-br: #334155;
-                --bisk-badge-k: #111827;
-                --bisk-badge-min: #0b2b1f;
-                --bisk-badge-det: #1a1710;
-            }
-        }
+      @media (prefers-color-scheme: dark) {
+          :root {
+              --bisk-card-bg: #0f172a;
+              --bisk-card-br: #334155;
+              --bisk-card-fg: #e5e7eb;
+              --bisk-badge-br: #334155;
+              --bisk-badge-k: #111827;
+              --bisk-badge-min: #0b2b1f;
+              --bisk-badge-det: #1a1710;
+          }
+      }
 
-        :root[data-theme="dark"], .theme-dark {
-            --bisk-card-bg: #0f172a;
-            --bisk-card-br: #334155;
-            --bisk-card-fg: #e5e7eb;
-            --bisk-badge-br: #334155;
-            --bisk-badge-k: #111827;
-            --bisk-badge-min: #0b2b1f;
-            --bisk-badge-det: #1a1710;
-        }
+      :root[data-theme="dark"], .theme-dark {
+          --bisk-card-bg: #0f172a;
+          --bisk-card-br: #334155;
+          --bisk-card-fg: #e5e7eb;
+          --bisk-badge-br: #334155;
+          --bisk-badge-k: #111827;
+          --bisk-badge-min: #0b2b1f;
+          --bisk-badge-det: #1a1710;
+      }
 
-        .bisk-wrap {
-            padding: 16px;
-        }
+      .bisk-wrap {
+          padding: 16px;
+      }
 
-        .bisk-badges {
-            display: flex;
-            gap: 8px;
-            margin: 8px 0 16px;
-        }
+      .bisk-badges {
+          display: flex;
+          gap: 8px;
+          margin: 8px 0 16px;
+      }
 
-        .badge {
-            font-size: 11px;
-            padding: 2px 6px;
-            border-radius: 10px;
-            border: 1px solid var(--bisk-badge-br);
-            color: var(--bisk-card-fg);
-        }
+      .badge {
+          font-size: 11px;
+          padding: 2px 6px;
+          border-radius: 10px;
+          border: 1px solid var(--bisk-badge-br);
+          color: var(--bisk-card-fg);
+      }
 
-        .badge.k {
-            background: var(--bisk-badge-k);
-        }
+      .badge.k {
+          background: var(--bisk-badge-k);
+      }
 
-        .badge.min {
-            background: var(--bisk-badge-min);
-        }
+      .badge.min {
+          background: var(--bisk-badge-min);
+      }
 
-        .badge.det {
-            background: var(--bisk-badge-det);
-        }
+      .badge.det {
+          background: var(--bisk-badge-det);
+      }
 
-        .grid {
-            display: grid;
-            grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
-            gap: 10px;
-        }
+      .grid {
+          display: grid;
+          grid-template-columns:repeat(auto-fill, minmax(140px, 1fr));
+          gap: 10px;
+      }
 
-        .card {
-            border: 1px solid var(--bisk-card-br);
-            border-radius: 10px;
-            padding: 8px;
-            background: var(--bisk-card-bg);
-            color: var(--bisk-card-fg);
-        }
+      /*        */
+      .card {
+          border: 1px solid var(--bisk-card-br);
+          border-radius: 10px;
+          padding: 8px;
+          background: var(--bisk-card-bg);
+          color: var(--bisk-card-fg);
+      }
 
-        .thumb {
-            width: 100%;
-            height: 100px;
-            object-fit: cover;
-            border-radius: 8px;
-        }
+      .meta {
+          font-size: 11px;
+          margin-top: 6px;
+          color: var(--bisk-card-fg);
+          line-height: 1.3;
+      }
 
-        .meta {
-            font-size: 11px;
-            margin-top: 6px;
-            color: var(--bisk-card-fg);
-            line-height: 1.3;
-        }
+      .thumb {
+          width: 100%;
+          height: 100px;
+          object-fit: cover;
+          border-radius: 8px;
+          position: relative;
+          z-index: 1;
+      }
 
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr 1fr 1fr auto;
-            gap: 10px;
-            align-items: end;
-            margin-top: 14px;
-        }
+      .form-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr 1fr auto;
+          gap: 10px;
+          align-items: end;
+          margin-top: 14px;
+      }
 
-    </style>
+      /* file-manager elements */
+      .card.sel {
+          position: relative;
+          cursor: pointer;
+      }
+
+      .sel-box {
+          position: absolute;
+          top: 6px;
+          left: 6px;
+          width: 18px;
+          height: 18px;
+          border-radius: 4px;
+          border: 1px solid var(--bisk-card-br);
+          background: rgba(255, 255, 255, .08);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 2;
+          pointer-events: auto; /* so clicks reach the card */
+      }
+
+      .card.sel .tick {
+          width: 14px;
+          height: 14px;
+      }
+
+      .sel-box .tick path {
+          stroke: transparent !important; /* key: force hidden when not selected */
+          stroke-width: 3;
+          fill: none;
+          transition: stroke .12s ease;
+      }
+
+      /* show the blue box + white tick only when selected */
+      .card.sel.is-selected .sel-box {
+          background: #3b82f6;
+          border-color: #3b82f6;
+      }
+
+      .card.sel.is-selected .sel-box .tick path {
+          stroke: #fff !important;
+      }
+
+
+      /* breadcrumbs */
+      .crumbs {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin: 6px 0 10px;
+      }
+
+
+      .crumbs .trail {
+          font-size: 12px;
+          color: var(--bisk-card-fg);
+      }
+
+      /* --- Breadcrumb hover/active polish --- */
+      .crumbs a {
+          cursor: pointer;
+          transition: color .15s ease, background-color .15s ease, box-shadow .15s ease, transform .05s ease;
+      }
+
+      /* links in the trail */
+      .crumbs .crumb {
+          color: var(--bisk-card-fg);
+          text-decoration: none;
+          padding: 2px 6px;
+          border-radius: 6px;
+      }
+
+      .crumbs .crumb:hover,
+      .crumbs .crumb:focus-visible {
+          color: #93c5fd; /* blue-300 */
+          background: rgba(147, 197, 253, .12);
+          text-decoration: none;
+          outline: none;
+      }
+
+      /* the "← Up" chip */
+      .crumbs .up {
+          font-size: 12px;
+          line-height: 1;
+          background: #334155; /* slate-700 */
+          color: #fff;
+          border-radius: 8px;
+          padding: 2px 8px;
+          text-decoration: none;
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+      }
+
+      .crumbs .up:hover,
+      .crumbs .up:focus-visible {
+          background: #475569; /* slate-600 */
+          box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .18);
+          outline: none;
+      }
+
+      .crumbs .up:active {
+          transform: translateY(1px);
+      }
+
+      /* optional: tone down the slash separators a bit */
+      .crumbs .sep {
+          margin: 0 6px;
+          opacity: .55;
+      }
+
+      /* filename: force one line with ellipsis */
+      .card .meta .fname {
+          margin-top: 6px;
+          font-weight: 600;
+          color: #d7dce3;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+      }
+
+      .card .meta .stats {
+          margin-top: 4px;
+          font-size: 11px;
+          line-height: 1.1;
+          color: #9aa4b2;
+      }
+
+      .card.sel.is-selected {
+          box-shadow: 0 0 0 2px #3b82f6 inset;
+      }
+
+      .success {
+          background: #0f5132;
+          color: #d1fae5;
+          padding: 8px 10px;
+          border-radius: 8px;
+      }
+
+      .error {
+          background: #842029;
+          color: #ffe2e6;
+          padding: 8px 10px;
+          border-radius: 8px;
+      }
+
+      .lc-card {
+          border: 1px solid rgba(255, 255, 255, .08);
+          border-radius: 8px;
+          padding: 14px;
+          margin: 10px 0 18px;
+          background: #0f0f10;
+      }
+
+      .lc-row {
+          display: grid;
+          grid-template-columns:repeat(5, minmax(160px, 1fr));
+          gap: 14px;
+          margin-bottom: 10px;
+      }
+
+      .lc-col {
+          display: flex;
+          flex-direction: column;
+      }
+
+      .lc-input {
+      {#height: 32px;#} padding: 4px 8px;
+          border-radius: 6px;
+          border: 1px solid rgba(255, 255, 255, .12);
+          background: #161617;
+          color: #eaeaea;
+      }
+
+      .lc-help {
+          font-size: 11px;
+          opacity: .75;
+          margin-top: 4px;
+      }
+
+      .lc-check {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          margin-top: 4%;
+      }
+
+      .lc-spacer {
+          flex: 1
+      }
+
+      @media (max-width: 1200px) {
+          .lc-row {
+              grid-template-columns:repeat(2, minmax(160px, 1fr));
+          }
+      }
+
+  </style>
 {% endblock %}
 
 {% block content %}
-    <div class="bisk-wrap">
-        <h2>Re-enroll: {{ student.h_code }}</h2>
-        <div class="bisk-badges">
-            <span class="badge k">current K: {{ fe.last_used_k|default:"—" }}</span>
-            <span class="badge min">min: {{ fe.last_used_min_score|default:"—" }}</span>
-            <span class="badge det">det: {{ fe.last_used_det_size|default:"—" }}</span>
+  <div class="bisk-wrap">
+    <h2>Re-enroll: {{ student.h_code }}</h2>
+    <div class="bisk-badges">
+      <span class="badge k">current K: {{ fe.last_used_k|default:"—" }}</span>
+      <span class="badge min">min: {{ fe.last_used_min_score|default:"—" }}</span>
+      <span class="badge det">det: {{ fe.last_used_det_size|default:"—" }}</span>
+    </div>
+
+    {# --- NEW: Captures browser (HTMX) --- #}
+    <h3 style="margin:16px 0 8px;font-size:18px;">Captured crops (date / period / camera)</h3>
+    <div id="captures-browser"
+         hx-get="{{ browser_url }}?score=0"
+         hx-trigger="load, bisk:refresh-captures from:body"
+         hx-target="#captures-browser"
+         hx-swap="innerHTML">
+      <div style="opacity:.6">Loading…</div>
+    </div>
+
+
+    {% if rows %}
+      <div class="grid">
+        {% for r in rows %}
+          <div class="card"
+               title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+
+
+
+
+
+                 {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}"
+          >
+            <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
+            <div class="meta">
+              <div class="fname" title="{{ r.name }}">{{ r.name }}</div>
+              <div>score: {{ r.score|floatformat:2 }}</div>
+              <div>sharp: {{ r.sharp|floatformat:2 }}</div>
+              <div>bright: {{ r.bright|floatformat:2 }}</div>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      {#            <p>No images found (or no scorable images) in the student’s gallery.</p>#}
+    {% endif %}
+
+    <div style="display:flex; gap:8px; align-items:center; margin:8px 0 14px;">
+      {#            <input type="hidden" id="csrf_token" name="csrfmiddlewaretoken" value="{{ csrf_token }}">#}
+      <button id="btn-clear" type="button" class="button">Clear selection (Esc)</button>
+      <button id="btn-delete" type="button" class="button button-danger"
+              hx-post="{{ delete_url }}{% if request.GET %}?{{ request.GET.urlencode }}{% endif %}"
+              hx-include="#selected_paths"
+              hx-target="#captures-browser"
+              hx-swap="innerHTML"
+              hx-confirm="Delete the selected items?">
+        Delete selected
+      </button>
+
+    </div>
+
+    {# DELETE selection lives outside the re-enroll form #}
+    <input type="hidden" id="selected_paths" name="delete_selected" value="[]">
+
+
+    {# RE-ENROLL form with its own hidden 'selected' #}
+    <form id="reenroll-form" method="post"
+          hx-post="{% url 'admin:attendance_faceembedding_re_enroll_run' fe.pk %}"
+          hx-target="#reenroll-output" hx-swap="innerHTML">
+      {% csrf_token %}
+      <input type="hidden" id="selected-input" name="selected" value="[]">
+      <div class="form-row">
+        <div>
+          <label for="id_k">K</label>
+          {{ form.k }}
+        </div>
+        <div>
+          <label for="id_det_size">det-size</label>
+          {{ form.det_size }}
+        </div>
+        <div>
+          <label for="id_min_score">min-score</label>
+          {{ form.min_score }}
+        </div>
+        <div>
+          <label for="id_strict_top">strict-top</label>
+          {{ form.strict_top }}
+        </div>
+        <div>
+          <button type="submit" class="button button-primary">Run re-enroll (force)</button>
+          <a href="../../" class="button">Close</a>
+        </div>
+      </div>
+    </form>
+    <div id="reenroll-output"></div>
+    {#        <div id="reenroll-output" style="display:none"></div>#}
+
+  </div>
+  <div>
+    <!-- How the fields behave when left empty -->
+    <details style="margin:10px 0 16px;">
+      <summary style="cursor:pointer;font-weight:600;">What happens when fields are empty?</summary>
+      <div style="margin-top:10px;font-size:13px;line-height:1.5;">
+        <ul style="margin:0 0 0 18px;padding:0;">
+          <li><strong>K</strong> — If left blank, the system uses this row’s <code>last_used_k</code>, or
+            <strong>3</strong> if that’s empty.
+          </li>
+          <li><strong>det-size</strong> — If left blank, it keeps the current detector size already set in
+            memory (defaults to <strong>640</strong> unless you changed it earlier).
+          </li>
+          <li><strong>min-score</strong> — Only matters when <em>strict-top</em> is checked.
+            <ul style="margin:4px 0 0 18px;">
+              <li>When <em>strict-top</em> is <strong>checked</strong> and <em>min-score</em> is blank,
+                the view passes <strong>0.00</strong> (accept all), then picks the top-K.
+              </li>
+              <li>When <em>strict-top</em> is <strong>unchecked</strong>, <em>min-score</em> is
+                effectively ignored and the helper uses its own default (your
+                <code>EMBEDDING_MIN_SCORE</code> in settings) only for internal scoring; selection is
+                simply the top-K.
+              </li>
+            </ul>
+          </li>
+          <li><strong>strict-top</strong> — If checked, images with score &lt; min-score are dropped <em>before</em>
+            choosing K; if not, the top-K are chosen without a hard cutoff.
+          </li>
+        </ul>
+      </div>
+    </details>
+    <hr style="margin:24px 0;opacity:.25">
+
+
+    <!-- === Live Preview (MJPEG) — inline section inside the same modal === -->
+    <div id="live-preview-mjpeg" class="card"
+         style="margin-top:1rem; border:1px solid var(--hairline,#444); border-radius:12px;">
+      <div class="card-header" style="padding:0.75rem 1rem; display:flex; align-items:center; gap:0.75rem;">
+        <strong>Live Preview (MJPEG)</strong>
+        <span id="lp-status"
+              style="margin-left:auto; font-size:12px; padding:2px 8px; border-radius:999px; background:#555; color:#eee;">idle</span>
+      </div>
+
+      <div class="card-body" style="padding:1rem;">
+        <!-- Source controls -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr; gap:0.75rem;">
+          <div>
+            <label class="label">Source</label>
+            <select id="lp-source" class="input" style="width:100%;">
+              <option value="rtsp">RTSP Camera</option>
+              <option value="webcam">Server Webcam</option>
+            </select>
+          </div>
+          <!-- Saved cameras (auto-fills RTSP). Hidden if none found or source != rtsp -->
+          <div id="lp-cam-saved-wrap" style="display:none;">
+            <label class="label">Saved cameras</label>
+            <select id="lp-cam-saved" class="input" style="width:100%;">
+              <option value="">— select from saved —</option>
+            </select>
+          </div>
+
+
+          <div id="lp-rtsp-wrap">
+            <label class="label">RTSP URL</label>
+            <input id="lp-rtsp" class="input" type="text" style="width:100%;"
+                   placeholder="rtsp://user:pass@host:554/Streaming/Channels/101/">
+          </div>
+
+          <div id="lp-webcam-wrap" style="display:none;">
+            <label class="label">Webcam device</label>
+            <input id="lp-device" class="input" type="text" value="/dev/video0" style="width:100%;">
+          </div>
+
+          <div style="margin: 0px 15px;">
+            <label class="label">FPS</label>
+            <input id="lp-fps" class="input" type="number" min="0" max="30" value="30" style="width:100%;">
+          </div>
+
+          <div>
+            <label class="label">Size</label>
+            <select id="lp-size" class="input" style="width:100%;">
+              <option value="640x480">640×480</option>
+              <option value="1280x720" selected>1280×720</option>
+              <option value="1920x1080">1920×1080</option>
+              <option value="2560x1440">2560×1440</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="label">JPEG quality (q:v)</label>
+            <input id="lp-quality" class="input" type="number" min="2" max="31" value="3" style="width:100%;">
+          </div>
         </div>
 
-        {% if rows %}
-            <div class="grid">
-                {% for r in rows %}
-                    <div class="card"
-                         title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+        <!-- Actions -->
+        <div style="margin-top:0.75rem; display:flex; gap:0.5rem; align-items:center;">
+          <button type="button" id="lp-start" class="button button-primary">Start preview</button>
+          <button type="button" id="lp-stop" class="button" disabled>Stop</button>
+          <span style="font-size:12px; opacity:0.8;">Session: <code id="lp-session">(auto)</code></span>
+          <a id="lp-open-tab" href="#" target="_blank"
+             style="margin-left:auto; font-size:12px; text-decoration:underline; display:none;">Open in new tab ↗</a>
+        </div>
 
-                                 {{ r.bright|floatformat:2 }}{% if r.det_size %} | det={{ r.det_size }}{% endif %}{% if r.det_conf %} | conf={{ r.det_conf|floatformat:2 }}{% endif %}">
-                        <img class="thumb" src="{{ r.url }}" onerror="this.style.display='none'">
-                        <div class="meta">
-                            <div><strong>{{ r.name }}</strong></div>
-                            <div>score: {{ r.score|floatformat:2 }}</div>
-                            <div>sharp: {{ r.sharp|floatformat:2 }}</div>
-                            <div>bright: {{ r.bright|floatformat:2 }}</div>
-                        </div>
-                    </div>
-                {% endfor %}
-            </div>
-        {% else %}
-            <p>No images found (or no scorable images) in the student’s gallery.</p>
-        {% endif %}
+        <!-- Preview surface -->
+        <div style="margin-top:0.75rem; display:flex; justify-content:center; align-items:center;">
+          <img id="lp-img" alt="MJPEG preview"
+               style="max-width:100%; max-height:60vh; object-fit:contain; border-radius:10px; background:#111;"/>
+        </div>
 
-        <form method="post" action="./run/">
-            {% csrf_token %}
-            <div class="form-row">
-                <div>
-                    <label for="id_k">K</label>
-                    {{ form.k }}
-                </div>
-                <div>
-                    <label for="id_det_size">det-size</label>
-                    {{ form.det_size }}
-                </div>
-                <div>
-                    <label for="id_min_score">min-score</label>
-                    {{ form.min_score }}
-                </div>
-                <div>
-                    <label for="id_strict_top">strict-top</label>
-                    {{ form.strict_top }}
-                </div>
-                <div>
-                    <button type="submit" class="button button-primary">Run re-enroll (force)</button>
-                    <a href="../../" class="button">Close</a>
-                </div>
-            </div>
-        </form>
+        <!-- Hidden holder for session -->
+        <input type="hidden" id="lp-session-id" name="preview_session" value="">
+      </div>
     </div>
-    <div>
-        <!-- How the fields behave when left empty -->
-        <details style="margin:10px 0 16px;">
-            <summary style="cursor:pointer;font-weight:600;">What happens when fields are empty?</summary>
-            <div style="margin-top:10px;font-size:13px;line-height:1.5;">
-                <ul style="margin:0 0 0 18px;padding:0;">
-                    <li><strong>K</strong> — If left blank, the system uses this row’s <code>last_used_k</code>, or
-                        <strong>3</strong> if that’s empty.
-                    </li>
-                    <li><strong>det-size</strong> — If left blank, it keeps the current detector size already set in
-                        memory (defaults to <strong>640</strong> unless you changed it earlier).
-                    </li>
-                    <li><strong>min-score</strong> — Only matters when <em>strict-top</em> is checked.
-                        <ul style="margin:4px 0 0 18px;">
-                            <li>When <em>strict-top</em> is <strong>checked</strong> and <em>min-score</em> is blank,
-                                the view passes <strong>0.00</strong> (accept all), then picks the top-K.
-                            </li>
-                            <li>When <em>strict-top</em> is <strong>unchecked</strong>, <em>min-score</em> is
-                                effectively ignored and the helper uses its own default (your
-                                <code>EMBEDDING_MIN_SCORE</code> in settings) only for internal scoring; selection is
-                                simply the top-K.
-                            </li>
-                        </ul>
-                    </li>
-                    <li><strong>strict-top</strong> — If checked, images with score &lt; min-score are dropped <em>before</em>
-                        choosing K; if not, the top-K are chosen without a hard cutoff.
-                    </li>
-                </ul>
-            </div>
-        </details>
-        <hr style="margin:24px 0;opacity:.25">
 
-        <h3 style="margin:0 0 12px;font-size:18px;">Live capture (FFmpeg)</h3>
-        <form method="post" action="{{ capture_url }}" style="display:block;margin-bottom:16px;">
-            {% csrf_token %}
-            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
-                <div>
-                    <label style="display:block;font-size:12px;opacity:.8">Camera</label>
-                    {{ capture_form.camera }}
-                </div>
-                <div>
-                    <label style="display:block;font-size:12px;opacity:.8">Top-K images</label>
-                    {{ capture_form.k }}
-                </div>
-                <div>
-                    <label style="display:block;font-size:12px;opacity:.8">det_set</label>
-                    {{ capture_form.det_size }}
-                </div>
+    <script>
+      (function () {
+        // Utility: random session id compatible with server
+        function makeSession() {
+          const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+          let s = "cap_";
+          for (let i = 0; i < 6; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+          return s;
+        }
 
-                <div>
-                    <button type="submit" class="button" style="margin-top:18px;">Run live capture</button>
-                </div>
-            </div>
+        const $ = (id) => document.getElementById(id);
+        const srcSel = $("lp-source");
+        const rtspWrap = $("lp-rtsp-wrap");
+        const camWrap = $("lp-webcam-wrap");
+        const rtsp = $("lp-rtsp");
+        const device = $("lp-device");
+        const fps = $("lp-fps");
+        const size = $("lp-size");
+        const quality = $("lp-quality");
+        const startBtn = $("lp-start");
+        const stopBtn = $("lp-stop");
+        const img = $("lp-img");
+        const status = $("lp-status");
+        const sessEl = $("lp-session-id");
+        const sessLabel = $("lp-session");
+        const openTab = $("lp-open-tab");
+        // NEW: saved cameras UI refs
+        const camSavedWrap = $("lp-cam-saved-wrap");
+        const camSaved = $("lp-cam-saved");
+        let camsLoaded = false;
+        let camsAvailable = 0;
 
-            <p style="margin-top:8px;color:#9aa">
-                Captures a short burst from the selected camera, clusters faces, picks the dominant
-                person, ranks by quality (sharpness/brightness/size), and averages the top-K into
-                <code>media/embeddings/{{ fe.student.h_code }}.npy</code>, then activates a new embedding.
-            </p>
-        </form>
+        function setStatus(text, color) {
+          status.textContent = text;
+          status.style.background = color || "#555";
+        }
 
-    </div>
+        function updateSourceUI() {
+          const v = srcSel.value;
+          if (v === "rtsp") {
+            rtspWrap.style.display = "";
+            camWrap.style.display = "none";
+            // show saved cameras only if we have any
+            camSavedWrap.style.display = (camsAvailable > 0) ? "" : "none";
+          } else {
+            rtspWrap.style.display = "none";
+            camWrap.style.display = "";
+            camSavedWrap.style.display = "none";
+          }
+        }
+
+        srcSel.addEventListener("change", updateSourceUI);
+
+        // NEW: fetch saved cameras once
+        async function loadSavedCams() {
+          try {
+            const r = await fetch("/attendance/stream/cameras.json", {credentials: "same-origin"});
+            const j = await r.json();
+            camsLoaded = true;
+            const list = Array.isArray(j.cameras) ? j.cameras : [];
+            camsAvailable = list.length;
+            // populate
+            camSaved.innerHTML = '<option value="">— select from saved —</option>';
+            for (const c of list) {
+              // Expect {id, label, rtsp}
+              const opt = document.createElement("option");
+              opt.value = String(c.id ?? "");
+              opt.textContent = c.label || ("Camera " + (c.id ?? ""));
+              opt.dataset.rtsp = c.rtsp || "";
+              camSaved.appendChild(opt);
+            }
+          } catch (e) {
+            camsAvailable = 0;
+            // keep hidden silently
+          } finally {
+            updateSourceUI();
+          }
+        }
+
+        // NEW: when a camera is picked, copy its RTSP into the input
+        camSaved?.addEventListener("change", () => {
+          const sel = camSaved.options[camSaved.selectedIndex];
+          if (sel && sel.dataset && sel.dataset.rtsp) {
+            rtsp.value = sel.dataset.rtsp;
+          }
+        });
+
+        // initial UI state
+        if (!camsLoaded) loadSavedCams();
+        updateSourceUI();
+
+        async function startPreview() {
+          // Session
+          let session = sessEl.value || makeSession();
+          sessEl.value = session;
+          sessLabel.textContent = session;
+
+          const params = new URLSearchParams();
+          params.set("source", srcSel.value);
+          params.set("fps", fps.value || "8");
+          params.set("size", size.value || "1280x720");
+          params.set("quality", quality.value || "3");
+          if (srcSel.value === "rtsp") {
+            if (!rtsp.value.trim()) {
+              alert("Please enter RTSP URL (or choose one from Saved cameras)");
+              return;
+            }
+            params.set("rtsp", rtsp.value.trim());
+          } else {
+            params.set("device", device.value || "/dev/video0");
+          }
+
+          setStatus("starting…", "#6b7280");  // gray
+          startBtn.disabled = true;
+
+          try {
+            const url = `/attendance/stream/run/start/${encodeURIComponent(session)}/?` + params.toString();
+            const r = await fetch(url, {credentials: "same-origin"});
+            const j = await r.json();
+            if (!j.ok) throw new Error(j.error || "start failed");
+
+            // Point the <img> to MJPEG stream
+            const mj = `/attendance/stream/live/${encodeURIComponent(session)}.mjpg?ts=${Date.now()}`;
+            img.src = mj;
+            openTab.href = mj;
+            openTab.style.display = "inline";
+            stopBtn.disabled = false;
+            setStatus("running", "#166534");  // green
+          } catch (e) {
+            console.error(e);
+            setStatus("error", "#7f1d1d"); // red
+            startBtn.disabled = false;
+          }
+        }
+
+        async function stopPreview() {
+          const session = sessEl.value;
+          if (!session) return;
+          try {
+            const url = `/attendance/stream/run/stop/${encodeURIComponent(session)}/`;
+            await fetch(url, {credentials: "same-origin"});
+          } catch (e) {
+            console.warn("stop failed:", e);
+          } finally {
+            img.removeAttribute("src");
+            stopBtn.disabled = true;
+            startBtn.disabled = false;
+            openTab.style.display = "none";
+            setStatus("idle", "#555");
+          }
+        }
+
+        // Wire buttons
+        startBtn.addEventListener("click", startPreview);
+        stopBtn.addEventListener("click", stopPreview);
+
+
+        // Safety: auto-stop when modal/page is closed
+        window.addEventListener("pagehide", stopPreview);
+        document.addEventListener("visibilitychange", () => {
+          if (document.visibilityState === "hidden") {
+            stopPreview();
+          }
+        });
+
+        // If your modal has a close button with known selector, also hook it:
+        const closeBtn = document.querySelector('[data-dismiss="modal"], .close, [aria-label="Close"]');
+        if (closeBtn) closeBtn.addEventListener("click", stopPreview);
+      })();
+    </script>
+
+
+    <script>
+      document.addEventListener('DOMContentLoaded', function () {
+        var form = document.getElementById('livecap-form');
+        document.body.addEventListener('htmx:afterRequest', function (evt) {
+          if (evt.target === form && evt.detail && evt.detail.successful) {
+            document.body.dispatchEvent(new CustomEvent('bisk:refresh-captures'));
+          }
+        });
+      });
+    </script>
+
+    <h3 style="margin:16px 0 12px;">Live capture (FFmpeg)</h3>
+    <form id="livecap-form"
+          hx-post="{{ capture_url }}"
+          hx-target="#captures-browser"
+          hx-swap="none"
+          hx-include="#lp-session-id">
+
+      {% csrf_token %}
+      <div class="lc-card">
+
+        <div class="lc-row">
+          <div class="lc-col">
+            <label>Camera</label>
+            <select name="camera_rtsp" id="lc-camera" class="lc-input">
+              <option value="">— use script default —</option>
+              {% for cam in cameras %}
+                <option value="{{ cam.rtsp_url }}" data-tr="{{ cam.rtsp_transport|default:'auto' }}">
+                  {{ cam.name }}{% if cam.location %} — {{ cam.location }}{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+            <div class="lc-help">Leave blank to use the script’s default RTSP.</div>
+          </div>
+
+          <div class="lc-col">
+            <label>Top-K images</label>
+            <select id="id_k" name="k">
+              {% for n in top_k_options %}
+                <option value="{{ n }}"{% if n|stringformat:"s" == selected_top_k %}
+                        selected{% endif %}>{{ n }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="lc-col">
+            <label>det_set</label>
+            <select id="id_det_set" name="det_size">
+              {% for d in det_set_options %}
+                <option value="{{ d }}"{% if d|stringformat:"s" == selected_det_set %}
+                        selected{% endif %}>{{ d }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="lc-col">
+            <label>Duration (s)</label>
+            <input class="lc-input" type="number" name="duration" min="5" step="1" value="30">
+          </div>
+
+          <div class="lc-col">
+            <label>FPS</label>
+            <input class="lc-input" type="number" name="fps" min="1" max="30" step="0.5" value="4">
+          </div>
+        </div>
+
+        <div class="lc-row">
+          <div class="lc-col">
+            <label>Crop format</label>
+            <select name="crop_fmt" class="lc-input">
+              <option value="">inherit</option>
+              <option value="jpg">jpg</option>
+              <option value="png" selected>png</option>
+            </select>
+          </div>
+
+          <div class="lc-col">
+            <label>JPEG quality</label>
+            <input class="lc-input" type="number" name="crop_jpeg_quality" min="50" max="100" step="1"
+                   value="92">
+          </div>
+
+          <div class="lc-col">
+            <label>min_face_px</label>
+            <input class="lc-input" type="number" name="min_face_px" placeholder="inherit">
+          </div>
+
+          <div class="lc-col">
+            <label>BBox expand</label>
+            <input class="lc-input" type="number" name="bbox_expand" step="0.05" min="0.0" max="0.8"
+                   value="0.0">
+            <div class="lc-help">Extra margin around faces (fraction).</div>
+          </div>
+
+          <div class="lc-col">
+            <label>Model</label>
+            <select name="model" class="lc-input">
+              <option value="">inherit</option>
+              <option value="buffalo_l" selected>buffalo_l</option>
+              <option value="antelopev2">antelopev2</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="lc-row">
+          <div class="lc-col">
+            <label>Qual weights</label>
+            <input class="lc-input" name="qual_weights" placeholder="e.g. 0.6,0.3,0.1">
+            <div class="lc-help">sharp,bright,size (optional)</div>
+          </div>
+
+          <div class="lc-col">
+            <label>Pipe MJPEG q</label>
+            <input class="lc-input" name="pipe_mjpeg_q" placeholder="inherit">
+          </div>
+
+          <div class="lc-col">
+            <label>Transport</label>
+            <select name="rtsp_transport" id="lc-transport" class="lc-input">
+              <option value="auto">auto</option>
+              <option value="tcp" selected>tcp</option>
+              <option value="udp">udp</option>
+            </select>
+          </div>
+
+          <div class="lc-col">
+            <label>Device</label>
+            <select name="device" class="lc-input">
+              <option value="auto">auto</option>
+              <option value="cpu">cpu</option>
+              <option value="cuda:0" selected>cuda:0</option>
+            </select>
+          </div>
+
+          <div class="lc-col">
+            <label>HW accel</label>
+            <select name="hwaccel" class="lc-input">
+              <option value="none">none</option>
+              <option value="nvdec" selected>nvdec</option>
+              <option value="vaapi">vaapi</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="lc-row" style="align-items:center;">
+          <div class="lc-col">
+            <label for="id_pipe_size">Pipe size</label>
+            <select id="id_pipe_size" name="pipe_size" class="lc-input">
+              <option value="">inherit (no scale)</option>
+              <option value="1280x720">1280×720</option>
+              <option value="1920x1080">1920×1080</option>
+              <option value="1080">height 1080 (keep aspect)</option>
+              <option value="720">height 720 (keep aspect)</option>
+            </select>
+          </div>
+
+
+          {#        <div class="lc-row" style="align-items:center;">#}
+          {#          <label class="lc-check">#}
+          {#            <input type="checkbox" name="save_top_crops" value="1" checked> Save top crops#}
+          {#          </label>#}
+          {##}
+          {#          <div class="lc-spacer"></div>#}
+          {##}
+          {#          <button type="submit" class="button" style="margin-top:8px;">Run live capture</button>#}
+          {#        </div>#}
+
+          <div class="lc-col">
+            <label class="lc-check">
+              <input type="checkbox" name="save_top_crops" value="1" checked> Save top crops
+            </label>
+          </div>
+          <div class="lc-col">
+            <!-- NEW: optional npy write (default unchecked) -->
+            <label class="lc-check" style="margin-left:10px;">
+              <input type="checkbox" name="write_npy" value="1"> Also write .npy now
+            </label>
+          </div>
+          <div class="lc-col">
+            <label class="lc-check" style="margin-left:10px;">
+              <input type="checkbox" name="disable_uplink" value="1" checked>
+              Disable preview uplink during capture
+            </label>
+          </div>
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
+          <button type="submit" class="button" style="margin-top:8px;">Run live capture</button>
+        </div>
+
+      </div>
+    </form>
+
+
+  </div>
+
+  <script>
+    /* Re-enroll modal — selection + HTMX glue (single-click, capture phase) */
+    (function () {
+      const onReady = (fn) =>
+        (document.readyState === 'loading')
+          ? document.addEventListener('DOMContentLoaded', fn)
+          : fn();
+
+      onReady(() => {
+        const CONTAINER_ID = 'captures-browser';
+        const ROOT = document.getElementById(CONTAINER_ID);
+        const H_DELETE = document.getElementById('selected_paths');  // used by Delete
+        const H_RUN = document.getElementById('selected-input');  // used by Re-enroll
+        const BTN_CLEAR = document.getElementById('btn-clear');
+        const FORM = document.getElementById('reenroll-form');
+
+        if (!ROOT) return;
+
+        const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+        const selectedCards = () => $$('.card.sel.is-selected', ROOT);
+        const selectedRels = () => selectedCards().map(c => c.dataset.rel).filter(Boolean);
+
+        function syncHidden() {
+          const payload = JSON.stringify(selectedRels());
+          if (H_DELETE) H_DELETE.value = payload;
+          if (H_RUN) H_RUN.value = payload;
+        }
+
+        function clearSelection() {
+          selectedCards().forEach(c => c.classList.remove('is-selected'));
+          syncHidden();
+        }
+
+        // Toggle once on CLICK (capture phase so other handlers can’t swallow it)
+        function clickToggle(e) {
+          const container = document.getElementById(CONTAINER_ID);
+          if (!container || !container.contains(e.target)) return;
+          const card = e.target.closest('.card.sel');
+          if (!card) return;
+          card.classList.toggle('is-selected');
+          syncHidden();
+        }
+
+        document.addEventListener('click', clickToggle, true); // capture = true
+
+        // Esc clears
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape') clearSelection();
+        });
+
+        // Clear button
+        BTN_CLEAR?.addEventListener('click', clearSelection);
+
+        // Keep hidden fields coherent after HTMX replaces the grid
+        document.body.addEventListener('htmx:afterSwap', (evt) => {
+          if (evt.target && evt.target.id === CONTAINER_ID) syncHidden();
+        });
+
+        // Ensure selection is serialized right before Re-enroll POST
+        FORM?.addEventListener('submit', syncHidden);
+        document.body.addEventListener('htmx:beforeRequest', (evt) => {
+          if (evt.target === FORM) syncHidden();
+        });
+
+        // Initial sync
+        syncHidden();
+
+        // (Optional) expose a tiny flag so you can confirm it ran:
+        window.__REENROLL_WIRED__ = true;
+      });
+    })();
+
+
+    /***Start*** --- helpers for feedback / busy state --- ***/
+    (function () {
+      const FORM = document.getElementById('reenroll-form');
+      const BTN_RUN = FORM?.querySelector('button[type="submit"]');
+      const BTN_DELETE = document.getElementById('btn-delete');
+
+      // Simple toast
+      function showToast(detail) {
+        const msg = typeof detail === 'string' ? detail : (detail?.text || JSON.stringify(detail));
+        const el = document.createElement('div');
+        el.textContent = msg;
+        el.style.position = 'fixed';
+        el.style.right = '16px';
+        el.style.bottom = '16px';
+        el.style.padding = '10px 12px';
+        el.style.background = '#1f2937';
+        el.style.color = '#fff';
+        el.style.borderRadius = '10px';
+        el.style.boxShadow = '0 6px 30px rgba(0,0,0,.35)';
+        el.style.zIndex = '9999';
+        document.body.appendChild(el);
+        setTimeout(() => el.remove(), 7000);
+      }
+
+      function setBusy(btn, on, labelBusy) {
+        if (!btn) return;
+        if (on) {
+          btn.dataset._label = btn.textContent;
+          btn.textContent = labelBusy || 'Working…';
+          btn.setAttribute('disabled', 'disabled');
+        } else {
+          if (btn.dataset._label) btn.textContent = btn.dataset._label;
+          btn.removeAttribute('disabled');
+        }
+      }
+
+      // Accept server "toast" events
+      document.body.addEventListener('toast', (e) => showToast(e.detail));
+
+      // Busy states during HTMX requests
+      document.body.addEventListener('htmx:beforeRequest', (e) => {
+        if (e.target === FORM) setBusy(BTN_RUN, true, 'Re-enrolling…');
+        if (e.target === BTN_DELETE) setBusy(BTN_DELETE, true, 'Deleting…');
+      });
+      document.body.addEventListener('htmx:afterRequest', (e) => {
+        if (e.target === FORM) setBusy(BTN_RUN, false);
+        if (e.target === BTN_DELETE) setBusy(BTN_DELETE, false);
+      });
+    })();
+    /***End *** --- helpers for feedback / busy state --- ***/
+    // When camera changes, copy its preferred transport into the transport select (if present)
+    (function () {
+      const camSel = document.getElementById('lc-camera');
+      const trSel = document.getElementById('lc-transport');
+      if (camSel && trSel) {
+        camSel.addEventListener('change', function () {
+          const opt = this.options[this.selectedIndex];
+          const tr = opt ? (opt.dataset.tr || '') : '';
+          if (tr) trSel.value = tr;
+        });
+      }
+    })();
+  </script>
+
+
 {% endblock %}
