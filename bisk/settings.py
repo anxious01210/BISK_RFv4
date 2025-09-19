@@ -357,6 +357,6 @@ TOP_CROPS = {
     # only save if raw01 >= this (Gate meaning: archive if score ≥ TOP_CROPS.SAVE_THRESHOLD, regardless of your recognition min-score.)
 }
 
-
+DEFAULT_RTSP_RUN_LIVE_CAPTURE = "rtsp://admin:B!sk2025@192.168.137.95:554/Streaming/Channels/101/"
 
 STREAM_UPLINK_KEY = "dev-stream-key-change-me"

@@ -287,8 +287,7 @@
       }
 
       .lc-input {
-          height: 32px;
-          padding: 4px 8px;
+      {#height: 32px;#} padding: 4px 8px;
           border-radius: 6px;
           border: 1px solid rgba(255, 255, 255, .12);
           background: #161617;
@@ -305,6 +304,7 @@
           display: flex;
           gap: 8px;
           align-items: center;
+          margin-top: 4%;
       }
 
       .lc-spacer {
@@ -345,6 +345,8 @@
         {% for r in rows %}
           <div class="card"
                title="{{ r.name }} | score={{ r.score|floatformat:2 }} | sharp={{ r.sharp|floatformat:2 }} | bright=
+
+
 
 
 
@@ -489,7 +491,7 @@
 
           <div style="margin: 0px 15px;">
             <label class="label">FPS</label>
-            <input id="lp-fps" class="input" type="number" min="1" max="30" value="8" style="width:100%;">
+            <input id="lp-fps" class="input" type="number" min="0" max="30" value="30" style="width:100%;">
           </div>
 
           <div>
@@ -844,27 +846,54 @@
           </div>
         </div>
 
-        <div class="lc-col">
-          <label for="id_pipe_size">Pipe size</label>
-          <select id="id_pipe_size" name="pipe_size">
-            <option value="">inherit (no scale)</option>
-            <option value="1280x720">1280×720</option>
-            <option value="1920x1080">1920×1080</option>
-            <option value="1080">height 1080 (keep aspect)</option>
-            <option value="720">height 720 (keep aspect)</option>
-          </select>
-        </div>
-
-
         <div class="lc-row" style="align-items:center;">
-          <label class="lc-check">
-            <input type="checkbox" name="save_top_crops" value="1" checked> Save top crops
-          </label>
+          <div class="lc-col">
+            <label for="id_pipe_size">Pipe size</label>
+            <select id="id_pipe_size" name="pipe_size" class="lc-input">
+              <option value="">inherit (no scale)</option>
+              <option value="1280x720">1280×720</option>
+              <option value="1920x1080">1920×1080</option>
+              <option value="1080">height 1080 (keep aspect)</option>
+              <option value="720">height 720 (keep aspect)</option>
+            </select>
+          </div>
 
+
+          {#        <div class="lc-row" style="align-items:center;">#}
+          {#          <label class="lc-check">#}
+          {#            <input type="checkbox" name="save_top_crops" value="1" checked> Save top crops#}
+          {#          </label>#}
+          {##}
+          {#          <div class="lc-spacer"></div>#}
+          {##}
+          {#          <button type="submit" class="button" style="margin-top:8px;">Run live capture</button>#}
+          {#        </div>#}
+
+          <div class="lc-col">
+            <label class="lc-check">
+              <input type="checkbox" name="save_top_crops" value="1" checked> Save top crops
+            </label>
+          </div>
+          <div class="lc-col">
+            <!-- NEW: optional npy write (default unchecked) -->
+            <label class="lc-check" style="margin-left:10px;">
+              <input type="checkbox" name="write_npy" value="1"> Also write .npy now
+            </label>
+          </div>
+          <div class="lc-col">
+            <label class="lc-check" style="margin-left:10px;">
+              <input type="checkbox" name="disable_uplink" value="1" checked>
+              Disable preview uplink during capture
+            </label>
+          </div>
           <div class="lc-spacer"></div>
-
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
+          <div class="lc-spacer"></div>
           <button type="submit" class="button" style="margin-top:8px;">Run live capture</button>
         </div>
+
       </div>
     </form>
 

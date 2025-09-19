@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Iterator, Optional, TypedDict, cast
 import numpy as np
 from PIL import Image, ImageOps, ImageStat
+from django.conf import settings
 from insightface.app import FaceAnalysis
 
 # --- Optional live preview uplink (MJPEG) ------------------------------------
@@ -164,6 +165,7 @@ def greedy_clusters(vecs: List[np.ndarray], sim_thresh: float = 0.70) -> List[Li
 
 def build_ffmpeg_cmd(src: str, fps: int, transport: str, hwaccel: str,
                      pipe_mjpeg_q: Optional[int],
+                     pipe_size: Optional[str] = None,
                      webcam_input_format: str = "auto",
                      webcam_size: Optional[str] = None) -> List[str]:
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error"]
@@ -183,7 +185,25 @@ def build_ffmpeg_cmd(src: str, fps: int, transport: str, hwaccel: str,
             cmd += ["-input_format", webcam_input_format]
         if webcam_size: cmd += ["-video_size", webcam_size]
         cmd += ["-i", dev]
-    if int(fps) > 0: cmd += ["-vf", f"fps={int(fps)}"]
+    # if int(fps) > 0: cmd += ["-vf", f"fps={int(fps)}"]
+
+    # Build filter chain (fps and/or scaling)
+    vf = []
+    if int(fps) > 0:
+        vf.append(f"fps={int(fps)}")
+    # pipe_size: 'WIDTHxHEIGHT' or a single HEIGHT (keep aspect)
+    if pipe_size:
+        s = str(pipe_size).strip().lower()
+        if "x" in s:
+            # explicit WxH; force even dims, good scaler
+            w, h = s.split("x", 1)
+            vf.append(f"scale={int(w)}:{int(h)}:flags=lanczos")
+        else:
+            # height only, keep aspect; width divisible by 2
+            vf.append(f"scale=-2:{int(s)}:flags=lanczos")
+    if vf:
+        cmd += ["-vf", ",".join(vf)]
+
     cmd += ["-an", "-f", "image2pipe", "-vcodec", "mjpeg"]
     if pipe_mjpeg_q is not None: cmd += ["-q:v", str(int(pipe_mjpeg_q))]
     cmd += ["pipe:1"];
@@ -208,9 +228,10 @@ def iter_jpeg_frames(proc: subprocess.Popen) -> Iterator[bytes]:
 
 def iter_frames(src: str, fps: int, transport: str, hwaccel: str,
                 pipe_mjpeg_q: Optional[int], duration: int,
-                webcam_input_format: str = "auto", webcam_size: Optional[str] = None) -> Iterator[np.ndarray]:
+                webcam_input_format: str = "auto", webcam_size: Optional[str] = None,
+                pipe_size: Optional[str] = None) -> Iterator[np.ndarray]:
     cmd = build_ffmpeg_cmd(src, fps=fps, transport=transport, hwaccel=hwaccel,
-                           pipe_mjpeg_q=pipe_mjpeg_q,
+                           pipe_mjpeg_q=pipe_mjpeg_q, pipe_size=pipe_size,
                            webcam_input_format=webcam_input_format,
                            webcam_size=webcam_size)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -232,17 +253,50 @@ def iter_frames(src: str, fps: int, transport: str, hwaccel: str,
 def ensure_dirs(path: Path): path.mkdir(parents=True, exist_ok=True)
 
 
+# def expand_bbox(bbox, W, H, expand: float):
+#     if not expand or expand <= 0.0: return bbox
+#     x1, y1, x2, y2 = map(float, bbox);
+#     w = x2 - x1;
+#     h = y2 - y1
+#     ex = w * float(expand);
+#     ey = h * float(expand)
+#     nx1 = max(0, int(round(x1 - ex)));
+#     ny1 = max(0, int(round(y1 - ey)))
+#     nx2 = min(W - 1, int(round(x2 + ex)));
+#     ny2 = min(H - 1, int(round(y2 + ey)))
+#     return (nx1, ny1, nx2, ny2)
+
 def expand_bbox(bbox, W, H, expand: float):
-    if not expand or expand <= 0.0: return bbox
-    x1, y1, x2, y2 = map(float, bbox);
-    w = x2 - x1;
-    h = y2 - y1
-    ex = w * float(expand);
+    """Expand bbox by 'expand' fraction on each side and clamp to image.
+    bbox = (x1,y1,x2,y2) with x2>x1,y2>y1; returns integer, clamped coords."""
+    if not expand or expand <= 0.0:
+        x1, y1, x2, y2 = map(int, bbox)
+        x1 = max(0, min(x1, W))
+        x2 = max(0, min(x2, W))
+        y1 = max(0, min(y1, H))
+        y2 = max(0, min(y2, H))
+        return (x1, y1, x2, y2)
+
+    x1, y1, x2, y2 = map(float, bbox)
+    w = max(1.0, x2 - x1)
+    h = max(1.0, y2 - y1)
+    ex = w * float(expand)
     ey = h * float(expand)
-    nx1 = max(0, int(round(x1 - ex)));
-    ny1 = max(0, int(round(y1 - ey)))
-    nx2 = min(W - 1, int(round(x2 + ex)));
-    ny2 = min(H - 1, int(round(y2 + ey)))
+
+    nx1 = int(round(x1 - ex))
+    ny1 = int(round(y1 - ey))
+    nx2 = int(round(x2 + ex))
+    ny2 = int(round(y2 + ey))
+
+    # clamp to [0..W] / [0..H]
+    nx1 = max(0, min(nx1, W))
+    ny1 = max(0, min(ny1, H))
+    nx2 = max(0, min(nx2, W))
+    ny2 = max(0, min(ny2, H))
+
+    # ensure at least 1px in both directions
+    if nx2 <= nx1: nx2 = min(W, nx1 + 1)
+    if ny2 <= ny1: ny2 = min(H, ny1 + 1)
     return (nx1, ny1, nx2, ny2)
 
 
@@ -274,7 +328,7 @@ def _scale_for_preview(w: int, h: int, max_w: int, max_h: int, allow_upscale: bo
 def main():
     p = argparse.ArgumentParser(
         description="Live-capture FaceEmbeddings to a .npy and/or save crops; designed for Django admin modal usage.")
-    p.add_argument("--rtsp", type=str, default="")
+    p.add_argument("--rtsp", type=str, default=getattr(settings, "DEFAULT_RTSP_RUN_LIVE_CAPTURE", ""))
     p.add_argument("--webcam", type=str, default="")
     p.add_argument("--webcam_input_format", choices=("auto", "mjpeg", "yuyv422"), default="auto")
     p.add_argument("--webcam_size", type=str, default="")
@@ -319,6 +373,7 @@ def main():
     p.add_argument("--pipe-size", type=str, default="",
                    help="Working frame size before detection. Accepts 'WIDTHxHEIGHT' or a single HEIGHT. "
                         "Examples: '1920x1080' or '1080'. If empty, no scaling is applied.")
+    p.add_argument("--write-npy", action="store_true", help="If set, write embeddings/<HCODE>.npy")
 
     args = p.parse_args()
 
@@ -407,7 +462,7 @@ def main():
 
     for rgb in iter_frames(src, fps=args.fps, transport=args.rtsp_transport,
                            hwaccel=args.hwaccel, pipe_mjpeg_q=args.pipe_mjpeg_q,
-                           duration=args.duration,
+                           duration=args.duration, pipe_size=(args.pipe_size or None),
                            webcam_input_format=args.webcam_input_format,
                            webcam_size=(args.webcam_size or None)):
         H, W = rgb.shape[0], rgb.shape[1]
@@ -419,7 +474,17 @@ def main():
             x1, y1, x2, y2 = [int(t) for t in f.bbox]
             if (x2 - x1) < int(args.min_face_px) or (y2 - y1) < int(args.min_face_px): continue
             ex1, ey1, ex2, ey2 = expand_bbox((x1, y1, x2, y2), W, H, float(args.bbox_expand))
-            crop = rgb[max(0, ey1):max(0, ey2), max(0, ex1):max(0, ex2)]
+
+            # (synthetic padding => which adds black margin/border)
+            # crop = rgb[max(0, ey1):max(0, ey2), max(0, ex1):max(0, ex2)]
+
+            # clamp to image bounds (no synthetic padding ever)
+            x1 = max(0, min(ex1, W))
+            x2 = max(0, min(ex2, W))
+            y1 = max(0, min(ey1, H))
+            y2 = max(0, min(ey2, H))
+            crop = rgb[y1:y2, x1:x2]
+
             if crop.size == 0: continue
 
             emb = getattr(f, "normed_embedding", None)
@@ -447,38 +512,6 @@ def main():
                 cv2.putText(disp, f"{qual:.2f}", (ex1, max(0, ey1 - 6)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1, cv2.LINE_AA)
 
-        # if disp is not None:
-        #     import cv2
-        #     # Down/up-scale to fit preview bounds
-        #     scale = _scale_for_preview(W, H, max_w, max_h, bool(args.preview_allow_upscale))
-        #     if scale != 1.0:
-        #         new_w = max(1, int(W * scale))
-        #         new_h = max(1, int(H * scale))
-        #         interp = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
-        #         disp_scaled = cv2.resize(disp, (new_w, new_h), interpolation=interp)
-        #     else:
-        #         disp_scaled = disp
-        #
-        #     # Overlay hint
-        #     hint = "[F]ullscreen  [Q]/ESC to quit"
-        #     cv2.putText(disp_scaled, hint, (10, max(20, disp_scaled.shape[0] - 10)),
-        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2, cv2.LINE_AA)
-        #
-        #     bgr = disp_scaled[..., ::-1].copy()
-        #     # NEW: send annotated frame to MJPEG preview (if --preview-session was provided)
-        #     _preview_publish_bgr(bgr)
-        #     cv2.imshow("capture_preview", bgr)
-        #
-        #     # NEW: send annotated frame to the uplink session
-        #     _preview_publish_bgr(bgr)
-        #
-        #     key = cv2.waitKey(1) & 0xFF
-        #     if key in (27, ord('q')):
-        #         break
-        #     if key in (ord('f'), ord('F')):
-        #         fullscreen = not fullscreen
-        #         cv2.setWindowProperty("capture_preview", cv2.WND_PROP_FULLSCREEN,
-        #                               cv2.WINDOW_FULLSCREEN if fullscreen else cv2.WINDOW_NORMAL)
         if disp is not None:
             import cv2
             # Down/up-scale to fit preview bounds
@@ -532,9 +565,14 @@ def main():
         :max(1, int(args.k))]
 
     arr = np.stack([cast(np.ndarray, c["emb"]) for c in chosen]).astype(np.float32)
-    avg = l2norm(arr.mean(axis=0));
-    ensure_dirs(emb_dir)
-    np.save(emb_dir / f"{args.hcode}.npy", avg)
+    avg = l2norm(arr.mean(axis=0))
+    # ensure_dirs(emb_dir)
+    # np.save(emb_dir / f"{args.hcode}.npy", avg)
+    if args.write_npy:
+        ensure_dirs(emb_dir)
+        out_path = emb_dir / f"{args.hcode}.npy"
+        np.save(out_path, avg)
+        print(f"[OK] wrote embedding: {out_path}")
 
     if args.save_top_crops:
         ts = time.strftime("%Y%m%d_%H%M%S")

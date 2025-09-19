@@ -1,10 +1,10 @@
 # apps/attendance/admin.py
-import hashlib, subprocess, sys, csv, os, re, json, shutil
+import hashlib, subprocess, sys, csv, os, re, json, shutil, tempfile
 from pathlib import Path
 import numpy as np
 from django.views.decorators.http import require_POST
 from django.utils.decorators import method_decorator
-
+from urllib.parse import urlparse, parse_qsl
 from apps.cameras.models import Camera
 from django.urls import path, reverse
 from django.shortcuts import redirect, render, get_object_or_404
@@ -27,6 +27,9 @@ from .models import (
 )
 from .services import roll_periods
 
+import urllib.request
+import requests
+
 from django.http import HttpResponse, HttpResponseBadRequest, QueryDict
 from apps.attendance.models import Student
 from apps.attendance.utils.media_paths import DIRS, student_gallery_dir, ensure_media_tree
@@ -38,9 +41,10 @@ from import_export import resources, fields
 from import_export.widgets import BooleanWidget
 from import_export.admin import ImportExportMixin
 from import_export.formats import base_formats
-from urllib.parse import urlparse
+
 from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme  # if you need
+
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
@@ -1007,7 +1011,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         })
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
 
-    # ---- POST: live capture (FFmpeg) with extra tunables ----
+
     # ---- POST: live capture (FFmpeg) with extra tunables ----
     @method_decorator(require_POST)
     def re_enroll_capture_run(self, request, pk: int):
@@ -1036,7 +1040,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         # keep current query in scope so the listing stays at the same level after refresh
         hx_url = request.headers.get("HX-Current-URL") or ""
         if hx_url and not request.GET:
-            from urllib.parse import urlparse, parse_qsl
             parsed = urlparse(hx_url)
             qd = QueryDict(mutable=True)
             qd.update(dict(parse_qsl(parsed.query or "")))
@@ -1044,9 +1047,13 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
         # posted knobs (all optional; keep your names exactly)
         k = int(request.POST.get("k") or 3)
-        det_set = int(request.POST.get("det_set") or 1024)
+        # det_set = int(request.POST.get("det_set") or 1024)
+        det_raw = (request.POST.get("det_size") or request.POST.get("det_set") or "").strip()
+        det_set = int(det_raw) if det_raw.isdigit() else 1024
         duration = int(request.POST.get("duration") or 30)
-        fps = int(float(request.POST.get("fps") or 4))  # script expects int
+        # fps = int(float(request.POST.get("fps") or 4))  # script expects int
+        fps_raw = (request.POST.get("fps") or "").strip()
+        fps = int(float(fps_raw)) if fps_raw != "" else 0
         min_face = request.POST.get("min_face_px")
         min_face = int(min_face) if (min_face and str(min_face).isdigit()) else None
         model = (request.POST.get("model") or "").strip()  # blank = inherit
@@ -1067,13 +1074,37 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         save_crops = (request.POST.get("save_top_crops") == "1")
         # Parse the optional "sharp,bright,size" triple (e.g., "0,0,1920x1080" or "0,0,1080")
         preproc = (request.POST.get("preproc") or "").strip()
-        pipe_size = ""
-        if preproc:
-            parts = [p.strip() for p in preproc.split(",")]
-            if len(parts) >= 3 and parts[2]:
-                # Accept "1920x1080" or just "1080" (height). We'll normalize in the script.
-                pipe_size = parts[2]
-                print(f"{pipe_size=}")
+        # pipe_size = ""
+        # if preproc:
+        #     parts = [p.strip() for p in preproc.split(",")]
+        #     if len(parts) >= 3 and parts[2]:
+        #         # Accept "1920x1080" or just "1080" (height). We'll normalize in the script.
+        #         pipe_size = parts[2]
+        #         print(f"{pipe_size=}")
+
+        # --- Pipe size: prefer explicit select, fallback to preproc[2] ---
+        pipe_size = (request.POST.get("pipe_size") or "").strip()
+
+        # Normalize common labels from the UI select
+        norm = pipe_size.lower()
+        if norm in ("", "inherit", "inherit (no scale)"):
+            pipe_size = ""  # no scaling => don't pass the flag
+        elif norm == "height 720 (keep aspect)":
+            pipe_size = "720"
+        elif norm == "height 1080 (keep aspect)":
+            pipe_size = "1080"
+        # "1280x720" / "1920x1080" pass through as-is
+
+        # Fallback to the legacy preproc field (sharp,bright,size)
+        if not pipe_size:
+            preproc = (request.POST.get("preproc") or "").strip()
+            if preproc:
+                parts = [p.strip() for p in preproc.split(",")]
+                if len(parts) >= 3:
+                    s = parts[2]
+                    if s and s.lower() not in ("inherit", "inherit (no scale)"):
+                        pipe_size = s
+
         # preview-only: boxes/labels only (no crops, no .npy)
         preview_only = (request.POST.get("preview_only") == "1")
 
@@ -1092,6 +1123,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         preview_max_w = (request.POST.get("preview_max_w") or "").strip()
         preview_max_h = (request.POST.get("preview_max_h") or "").strip()
         preview_allow_upscale = bool(request.POST.get("preview_allow_upscale") or "")
+        write_npy_now = bool(request.POST.get('write_npy_now') or request.POST.get('write_npy'))
+        disable_uplink = (request.POST.get("disable_uplink") == "1")
 
         # Script path
         script = Path(settings.BASE_DIR) / "extras" / "capture_embeddings_ffmpeg.py"
@@ -1122,6 +1155,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             cmd += ["--save_top_crops"]
         if pipe_size:
             cmd += ["--pipe-size", pipe_size]
+            # optional debug:
+            # print(f"[CAPTURE] pipe_size={pipe_size}")
         # optional overrides (inherit when blank)
         if cam_rtsp:
             push_flag(cmd, "rtsp", cam_rtsp)
@@ -1154,6 +1189,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             push_flag(cmd, "preview_max_h", preview_max_h)
         if preview_allow_upscale:
             cmd += ["--preview_allow_upscale"]
+        if write_npy_now:
+            cmd += ['--write-npy']
 
         # Reuse the same preview session if provided; otherwise mint a new one
         preview_session = (request.POST.get("preview_session") or request.GET.get("preview_session") or "").strip()
@@ -1169,10 +1206,9 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
             stop_url = f"{server_base}/attendance/stream/run/stop/{preview_session}/"
             try:
                 try:
-                    import requests
                     requests.get(stop_url, timeout=1)
                 except Exception:
-                    import urllib.request
+
                     urllib.request.urlopen(stop_url, timeout=1).read()
             except Exception:
                 pass
@@ -1180,15 +1216,24 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
                 # brief breather so the process actually exits
                 import time as _t;
                 _t.sleep(0.25)
-        # Append preview/uplink flags (post annotated frames into the SAME session)
-        cmd += ["--preview-session", cap_session, "--server", server_base]
-        if uplink_key:
-            cmd += ["--uplink-key", uplink_key]
+        # # Append preview/uplink flags (post annotated frames into the SAME session)
+        # cmd += ["--preview-session", cap_session, "--server", server_base]
+        # if uplink_key:
+        #     cmd += ["--uplink-key", uplink_key]
+        # Append preview/uplink flags only if not disabled
+        if not disable_uplink:
+            if cap_session:
+                cmd += ["--preview-session", cap_session]
+            if server_base:
+                cmd += ["--server", server_base]
+            if uplink_key:
+                cmd += ["--uplink-key", uplink_key, "--uplink-maxfps", "6", "--uplink-quality", "85"]
+
         # cmd += ["--uplink-maxfps", "6", "--uplink-quality", "85"]
         # Step-B: make preview-only snappier (higher FPS, slightly lower JPEG quality)
-        uplink_maxfps = "12" if preview_only else "6"
-        uplink_quality = "80" if preview_only else "85"
-        cmd += ["--uplink-maxfps", uplink_maxfps, "--uplink-quality", uplink_quality]
+        # uplink_maxfps = "12" if preview_only else "6"
+        # uplink_quality = "80" if preview_only else "85"
+        # cmd += ["--uplink-maxfps", uplink_maxfps, "--uplink-quality", uplink_quality]
 
         print("CAPTURE CMD:", " ".join(cmd))
 
@@ -1230,14 +1275,46 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
 
         ok = ("[OK] wrote embedding:" in stdout) or (out.returncode == 0)
 
+        # parse optional "wrote embedding" path for nicer toast
+        embed_path = ""
+        for line in stdout.splitlines():
+            if line.startswith("[OK] wrote embedding:"):
+                try:
+                    embed_path = line.split(":", 1)[1].strip()
+                except Exception:
+                    pass
+
+        # # HTMX branch: tiny body + HX-Trigger (DON'T swap the grid)
+        # if request.headers.get("HX-Request") == "true":
+        #     msg = f"Live capture {'OK' if ok else 'error'} (k={k}, det={det_set})"
+        #     if saved_dir:
+        #         msg += f" · {saved_dir}"
+        #     resp = HttpResponse("<!-- ok -->" if ok else "<!-- error -->")
+        #     resp["HX-Trigger"] = json.dumps({
+        #         "toast": {"text": msg if ok else f"Capture error: {(stderr or stdout).strip()[:300]}"},
+        #         "bisk:refresh-captures": True
+        #     })
+        #     return resp
         # HTMX branch: tiny body + HX-Trigger (DON'T swap the grid)
         if request.headers.get("HX-Request") == "true":
+
+
             msg = f"Live capture {'OK' if ok else 'error'} (k={k}, det={det_set})"
             if saved_dir:
                 msg += f" · {saved_dir}"
+            if embed_path:
+                # Show only the file name to keep toast short
+                msg += f" · npy: {Path(embed_path).name}"
+
             resp = HttpResponse("<!-- ok -->" if ok else "<!-- error -->")
             resp["HX-Trigger"] = json.dumps({
-                "toast": {"text": msg if ok else f"Capture error: {(stderr or stdout).strip()[:300]}"},
+                "toast": {
+                    "text": msg if ok else f"Capture error: {(stderr or stdout).strip()[:300]}",
+                    # keep toast visible longer (ms)
+                    "duration": 12000,
+                    # optional: if your global toast handler supports variants
+                    "variant": "success" if ok else "error"
+                },
                 "bisk:refresh-captures": True
             })
             return resp
@@ -1256,12 +1333,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     @transaction.atomic
     @method_decorator(require_POST)
     def re_enroll_run(self, request, pk: int):
-        from pathlib import Path
-        import os, json, tempfile, shutil
-        from django.conf import settings
-        from django.http import HttpResponse, QueryDict
-        from urllib.parse import urlparse, parse_qsl
-
         fe = get_object_or_404(FaceEmbedding, pk=pk)
 
         # Keep the same folder (querystring) when called via HTMX
