@@ -9,20 +9,164 @@ from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.html import escape
 from django.views.decorators.http import require_GET, require_POST
 from django.urls import reverse
+from math import ceil
+from django.db.models import F, Window
+from django.db.models.functions import RowNumber
 from .models import AttendanceRecord
 
 
 def _parse_any(s):
     if not s:
         return None
+    s = s.strip()
+    # try datetime then date
     dt = parse_datetime(s)
     if dt:
-        return timezone.make_aware(dt) if timezone.is_naive(dt) else dt
+        return dt
     d = parse_date(s)
     if d:
-        tz = timezone.get_current_timezone()
-        return tz.localize(datetime.combine(d, time.min))
+        return datetime.combine(d, time.min).replace(tzinfo=timezone.get_current_timezone())
     return None
+
+
+# small helper so both the list view and confirm swap render the same photo+row
+def _photos_html(gallery_url: str, crop_url: str) -> str:
+    def _ph(url: str) -> str:
+        if not url:
+            return "<div class='photo ph-empty'></div>"
+        return (
+            "<div class='ph'>"
+            f"  <img src='{url}' class='photo js-preview' data-full='{url}' loading='lazy'/>"
+            f"  <a class='open' href='{url}' target='_blank' title='Open in new tab'>↗</a>"
+            "</div>"
+        )
+    return "<div class='photos'>" + _ph(gallery_url) + _ph(crop_url) + "</div>"
+
+# def _row_html(rec, media_url, is_supervisor, confirm_url):
+#     st = rec.student
+#     h = escape(getattr(st, "h_code", ""))
+#     name = escape(st.full_name() if hasattr(st, "full_name") else "")
+#     grade = escape(getattr(st, "get_grade_display", lambda: getattr(st, "grade", "") or "—")())
+#     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
+#     score = f"{float(rec.best_score or 0.0):.2f}"
+#     cam = escape(getattr(rec.best_camera, "name", "") or "-")
+#     eligible_html = "<span class='badge g'>LUNCH</span>" if getattr(st, "has_lunch", False) else "<span class='badge r'>No Lunch</span>"
+#     ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
+#     pc = int(getattr(rec, "pass_count", 1) or 1)
+#     badge_class = "badge r" if pc >= 2 else "badge g"
+#     if getattr(rec, "confirmed", False):
+#         confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+#     elif is_supervisor:
+#         confirm_html = (
+#             f"<button hx-post='{confirm_url}' "
+#             f"hx-vals='{{\"id\": {rec.id}}}' "
+#             f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
+#         )
+#     else:
+#         confirm_html = "—"
+#
+#     # photos
+#     crop = getattr(rec, "best_crop", "") or ""
+#     crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
+#     gallery_url = ""
+#     try:
+#         if hasattr(st, "gallery_photo_relurl"):
+#             u = st.gallery_photo_relurl()
+#             gallery_url = u or ""
+#     except Exception:
+#         gallery_url = ""
+#     img_html = _photos_html(gallery_url, crop_url)
+#
+#     return (
+#         f"<tr>"
+#         f"<td>{img_html}</td>"
+#         f"<td><b>{h}</b><br/><span class='small'>{name}</span><br/><span class='small'>{grade}</span></td>"
+#         f"<td>{per_name}</td>"
+#         f"<td>{cam}</td>"
+#         f"<td>{eligible_html}</td>"
+#         f"<td>{confirm_html}</td>"
+#         f"<td><span class='{badge_class}'>{pc}</span></td>"
+#         f"<td>{score}</td>"
+#         f"<td class='small'>{ts}</td>"
+#         f"</tr>"
+#     )
+
+def _row_html(rec, media_url, is_supervisor, confirm_url):
+    from django.utils import timezone
+
+    def fmt_hms(dt):
+        if not dt:
+            return "—"
+        try:
+            return dt.astimezone(timezone.get_current_timezone()).strftime("%H:%M:%S")
+        except Exception:
+            try:
+                return dt.strftime("%H:%M:%S")
+            except Exception:
+                return "—"
+
+    st = rec.student
+    h = escape(getattr(st, "h_code", ""))
+    name = escape(st.full_name() if hasattr(st, "full_name") else "")
+    grade = escape(getattr(st, "get_grade_display", lambda: getattr(st, "grade", "") or "—")())
+    per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
+    score = f"{float(rec.best_score or 0.0):.2f}"
+    cam = escape(getattr(rec.best_camera, "name", "") or "-")
+    eligible_html = "<span class='badge g'>LUNCH</span>" if getattr(st, "has_lunch", False) else "<span class='badge r'>No Lunch</span>"
+    pc = int(getattr(rec, "pass_count", 1) or 1)
+    badge_class = "badge r" if pc >= 2 else "badge g"
+
+    # Confirm cell
+    if getattr(rec, "confirmed", False):
+        confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+    elif is_supervisor:
+        confirm_html = (
+            f"<button hx-post='{confirm_url}' "
+            f"hx-vals='{{\"id\": {rec.id}}}' "
+            f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
+        )
+    else:
+        confirm_html = "—"
+
+    # Photos (gallery + crop)
+    crop = getattr(rec, "best_crop", "") or ""
+    crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
+    gallery_url = ""
+    try:
+        if hasattr(st, "gallery_photo_relurl"):
+            u = st.gallery_photo_relurl()
+            gallery_url = u or ""
+    except Exception:
+        gallery_url = ""
+    img_html = _photos_html(gallery_url, crop_url)
+
+    # Times: first/best/last stacked, and last_pass_at separate
+    t_first = fmt_hms(getattr(rec, "first_seen", None))
+    t_best  = fmt_hms(getattr(rec, "best_seen",  None))
+    t_last  = fmt_hms(getattr(rec, "last_seen",  None))
+    t_pass  = fmt_hms(getattr(rec, "last_pass_at", None))
+
+    times_html = (
+        f"<span class='small'><span class='k'>first:</span> {t_first}</span><br/>"
+        f"<span class='small'><span class='k'>best:</span> {t_best}</span><br/>"
+        f"<span class='small'><span class='k'>last:</span> {t_last}</span>"
+    )
+    pass_html = f"<span class='small'>{t_pass}</span>"
+
+    return (
+        f"<tr>"
+        f"<td>{img_html}</td>"
+        f"<td><b>{h}</b><br/><span class='small'>{name}</span><br/><span class='small'>{grade}</span></td>"
+        f"<td>{per_name}</td>"
+        f"<td>{cam}</td>"
+        f"<td>{eligible_html}</td>"
+        f"<td>{confirm_html}</td>"
+        f"<td><span class='{badge_class}'>{pc}</span></td>"
+        f"<td>{score}</td>"
+        f"<td class='small'>{times_html}</td>"   # ← first/best/last stacked
+        f"<td class='small'>{pass_html}</td>"    # ← last_pass_at
+        f"</tr>"
+    )
 
 
 def _is_lunch_supervisor(user) -> bool:
@@ -45,6 +189,7 @@ def lunch_stream_rows(request):
     is_supervisor = _is_lunch_supervisor(request.user)
     confirm_url = reverse("attendance:confirm_record")
 
+    # ----- base queryset and filters (shared) -----
     qs = (AttendanceRecord.objects
           .select_related("student", "period__template", "best_camera")
           .all())
@@ -98,14 +243,33 @@ def lunch_stream_rows(request):
     if end_dt:
         qs = qs.filter(best_seen__lte=end_dt)
 
-    mode = request.GET.get("mode", "latest")
+    mode = request.GET.get("mode", "latest").strip()  # 'latest' | 'all' | 'lastN'
 
-    # Cursor only for all mode
+    last_n = request.GET.get("last_n") or ""
+    try:
+        last_n = int(last_n) if last_n else None
+    except Exception:
+        last_n = None
+
+    # paging params (used when mode is 'all' or 'lastN')
+    try:
+        page = max(1, int(request.GET.get("page", "1")))
+    except Exception:
+        page = 1
+    try:
+        page_size = max(1, int(request.GET.get("page_size", "20")))
+    except Exception:
+        page_size = 20
+
     at = _parse_any(request.GET.get("after_ts"))
-    if at and mode != "latest":
-        qs = qs.filter(best_seen__gte=at)
 
+    # ------------- branching by mode -------------
+    totals = None  # (total, pages, page)
     if mode == "latest":
+        # stream: allow cursor
+        if at:
+            qs = qs.filter(best_seen__gte=at)
+
         latest_pk = (
             AttendanceRecord.objects
             .filter(student_id=OuterRef("student_id"),
@@ -113,122 +277,100 @@ def lunch_stream_rows(request):
             .order_by("-best_seen", "-id")
             .values("pk")[:1]
         )
-        qs = qs.filter(pk=Subquery(latest_pk))
+        qs = qs.filter(pk=Subquery(latest_pk)).order_by("best_seen")[:200]
 
-    qs = qs.order_by("best_seen")[:200]
+    elif mode == "all":
+        qs = qs.order_by("-best_seen", "-id")
+        total = qs.count()
+        pages = max(1, ceil(total / page_size))
+        page = min(page, pages)
+        start = (page - 1) * page_size
+        qs = qs[start:start + page_size]
+        totals = (total, pages, page)
 
+    elif mode == "lastN" and (last_n or 0) > 0:
+        # Prefer window function (Postgres, SQLite 3.25+) for accuracy and speed
+        try:
+            qs = (qs
+                  .annotate(
+                      rn=Window(
+                          expression=RowNumber(),
+                          partition_by=[F("student_id"), F("period_id")],
+                          order_by=[F("best_seen").desc(), F("id").desc()],
+                      )
+                  )
+                  .filter(rn__lte=last_n)
+                  .order_by("-best_seen", "-id"))
+            total = qs.count()
+            pages = max(1, ceil(total / page_size))
+            page = min(page, pages)
+            start = (page - 1) * page_size
+            qs = qs[start:start + page_size]
+            totals = (total, pages, page)
+        except Exception:
+            # Fallback: coarse but portable
+            qs = qs.order_by("-best_seen", "-id")[:5000]
+            # group in Python
+            from collections import defaultdict
+            groups = defaultdict(list)
+            for r in qs:
+                groups[(r.student_id, r.period_id)].append(r)
+            flat = []
+            for key, rows in groups.items():
+                flat.extend(rows[:last_n])
+            # sort again newest first
+            flat.sort(key=lambda r: (r.best_seen, r.id), reverse=True)
+            total = len(flat)
+            pages = max(1, ceil(total / page_size))
+            page = min(page, pages)
+            start = (page - 1) * page_size
+            qs = flat[start:start + page_size]
+            totals = (total, pages, page)
+
+    else:
+        # unknown -> default to latest stream semantics
+        if at:
+            qs = qs.filter(best_seen__gte=at)
+        latest_pk = (
+            AttendanceRecord.objects
+            .filter(student_id=OuterRef("student_id"),
+                    period_id=OuterRef("period_id"))
+            .order_by("-best_seen", "-id")
+            .values("pk")[:1]
+        )
+        qs = qs.filter(pk=Subquery(latest_pk)).order_by("best_seen")[:200]
+
+    # ------------- render rows -------------
     rows = []
     media_url = (settings.MEDIA_URL or "").rstrip("/")
+    is_supervisor = _is_lunch_supervisor(request.user)
+    confirm_url = reverse("attendance:confirm_record")
+
+
     for rec in qs:
-        st = rec.student
-        h = escape(getattr(st, "h_code", ""))
-        name = escape(st.full_name() if hasattr(st, "full_name") else "")
-        per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
-        score = f"{float(rec.best_score or 0.0):.2f}"
-        cam = escape(getattr(rec.best_camera, "name", "") or "-")
-        eligible = "Yes" if getattr(st, "has_lunch", False) else "No"
-        eligible_html = f"<span class='badge g'>LUNCH</span>" if st.has_lunch else f"<span class='badge r'>No Lunch</span>"
-        ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
-        pc = int(getattr(rec, "pass_count", 1) or 1)
-        badge_class = "badge r" if pc >= 2 else "badge g"
-
-        # NEW: Confirm cell
-        if getattr(rec, "confirmed", False):
-            confirm_html = "<span class='badge g'>✔ Confirmed</span>"
-        elif is_supervisor:
-            # HTMX posts and asks server to return the updated <tr>, swapping in place
-            confirm_html = (
-                f"<button "
-                f"  hx-post='{confirm_url}' "
-                f"  hx-vals='{{\"id\": {rec.id}}}' "
-                f"  hx-target='closest tr' "
-                f"  hx-swap='outerHTML'"
-                f">Confirm</button>"
-            )
-        else:
-            confirm_html = "—"
-
-        # crop = getattr(rec, "best_crop", "") or ""
-        # crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
-        # crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
-        #
-        # gallery_url = ""
-        # try:
-        #     if hasattr(st, "gallery_photo_relurl"):
-        #         u = st.gallery_photo_relurl()
-        #         gallery_url = u or ""
-        # except Exception:
-        #     gallery_url = ""
-        # gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
-        # img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
-
-        crop = getattr(rec, "best_crop", "") or ""
-        crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
-
-        gallery_url = ""
-        try:
-            if hasattr(st, "gallery_photo_relurl"):
-                u = st.gallery_photo_relurl()
-                gallery_url = u or ""
-        except Exception:
-            gallery_url = ""
-
-        def _ph(url: str) -> str:
-            if not url:
-                return "<div class='photo ph-empty'></div>"
-            return (
-                "<div class='ph'>"
-                f"  <img src='{url}' class='photo js-preview' data-full='{url}' loading='lazy'/>"
-                f"  <a class='open' href='{url}' target='_blank' title='Open in new tab'>↗</a>"
-                "</div>"
-            )
-
-        img_html = (
-            "<div class='photos'>"
-            f"{_ph(gallery_url)}{_ph(crop_url)}"
-            "</div>"
-        )
-
-        rows.append(
-            f"<tr>"
-            f"<td>{img_html}</td>"
-            f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
-            f"<td>{per_name}</td>"
-            f"<td>{cam}</td>"
-            f"<td>{eligible_html}</td>"
-            f"<td>{confirm_html}</td>"  # NEW column
-            f"<td><span class='{badge_class}'>{pc}</span></td>"
-            f"<td>{score}</td>"
-            f"<td class='small'>{ts}</td>"
-            f"</tr>"
-        )
+        rows.append(_row_html(rec, media_url, is_supervisor, confirm_url))
 
     html = "\n".join(rows)
     if not rows and not at:
-        html = "<tr><td colspan='7' class='small' style='opacity:.7;'>No matches for current filters.</td></tr>"
+        # html = "<tr><td colspan='9' class='small' style='opacity:.7;'>No matches for current filters.</td></tr>"
+        html = "<tr><td colspan='10' class='small' style='opacity:.7;'>No matches for current filters.</td></tr>"
 
     headers = {}
-    if rows:
-        try:
-            last_ts = qs[len(qs) - 1].best_seen.astimezone().isoformat()
-            headers["HX-Trigger"] = f'{{"lunch:last_ts": "{last_ts}"}}'
-        except Exception:
-            pass
+    try:
+        if mode == "latest" and rows:
+            last_ts = (qs[len(qs) - 1].best_seen if hasattr(qs, "__getitem__") else None)
+            if last_ts:
+                headers["HX-Trigger"] = f'{{"lunch:last_ts": "{last_ts.astimezone().isoformat()}"}}'
+        elif totals:
+            total, pages, page = totals
+            headers["HX-Trigger"] = f'{{"lunch:total": {total}, "lunch:pages": {pages}, "lunch:page": {page}}}'
+    except Exception:
+        pass
 
     return HttpResponse(html, headers=headers)
 
-# put above lunch_stream_rows/confirm_record
-def _photos_html(gallery_url: str, crop_url: str) -> str:
-    def _ph(url: str) -> str:
-        if not url:
-            return "<div class='photo ph-empty'></div>"
-        return (
-            "<div class='ph'>"
-            f"  <img src='{url}' class='photo js-preview' data-full='{url}' loading='lazy'/>"
-            f"  <a class='open' href='{url}' target='_blank' title='Open in new tab'>↗</a>"
-            "</div>"
-        )
-    return "<div class='photos'>" + _ph(gallery_url) + _ph(crop_url) + "</div>"
+
+
 
 # NEW: Lunch supervisor confirms a record
 @login_required
@@ -261,8 +403,10 @@ def confirm_record(request):
     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
     score = f"{float(rec.best_score or 0.0):.2f}"
     cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    eligible_html = f"<span class='badge g'>LUNCH</span>" if getattr(st, 'has_lunch', False) else f"<span class='badge r'>No Lunch</span>"
+    eligible_html = f"<span class='badge g'>LUNCH</span>" if getattr(st, 'has_lunch',
+                                                                     False) else f"<span class='badge r'>No Lunch</span>"
     ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
+    # ts = escape(rec.best_seen.astimezone().strftime("%Y-%m-%d %H:%M:%S"))
     pc = int(getattr(rec, "pass_count", 1) or 1)
     badge_class = "badge r" if pc >= 2 else "badge g"
     confirm_html = "<span class='badge g'>✔ Confirmed</span>"
@@ -285,7 +429,13 @@ def confirm_record(request):
     html = (
         f"<tr>"
         f"<td>{img_html}</td>"
-        f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
+        # f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
+        f"<td>"
+        # f"  <b>{h}</b>"
+        f"  <span>{h}</span>"
+        f"  <br/><span class='small'>{name}</span>"
+        f"  <br/><span class='small'>{escape(getattr(st, 'get_grade_display', lambda: getattr(st, 'grade', '') or '—')())}</span>"
+        f"</td>"
         f"<td>{per_name}</td>"
         f"<td>{cam}</td>"
         f"<td>{eligible_html}</td>"
