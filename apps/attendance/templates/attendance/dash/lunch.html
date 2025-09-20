@@ -7,14 +7,160 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <style>
-    body { background:#0b0b0b; color:#ddd; font-family:system-ui,sans-serif; }
-    .sticky-head { position:sticky; top:0; background:#111; color:#fff; padding:10px; z-index:10; }
-    .badge { padding:2px 8px; border-radius:9999px; font-size:12px; color:#fff; }
-    .g { background:#16a34a } .r { background:#dc2626 }
-    .photo { width:44px; height:44px; object-fit:cover; border-radius:6px; }
-    table { width:100%; border-collapse:collapse; }
-    th,td { padding:8px; border-bottom:1px solid #333; vertical-align:middle; }
-    .small { font-size:12px; opacity:.8; }
+      body {
+          background: #0b0b0b;
+          color: #ddd;
+          font-family: system-ui, sans-serif;
+      }
+
+      .sticky-head {
+          position: sticky;
+          top: 0;
+          background: #111;
+          color: #fff;
+          padding: 10px;
+          z-index: 10;
+      }
+
+      .badge {
+          padding: 2px 8px;
+          border-radius: 9999px;
+          font-size: 12px;
+          color: #fff;
+      }
+
+      .g {
+          background: #16a34a
+      }
+
+      .r {
+          background: #dc2626
+      }
+
+      .photo {
+          width: 44px;
+          height: 44px;
+          object-fit: cover;
+          border-radius: 6px;
+      }
+
+      table {
+          width: 100%;
+          border-collapse: collapse;
+      }
+
+      th, td {
+          padding: 8px;
+          border-bottom: 1px solid #333;
+          vertical-align: middle;
+      }
+
+      .small {
+          font-size: 12px;
+          opacity: .8;
+      }
+
+      /* --- Lunch photo previews --- */
+      .photos {
+          display: flex;
+          gap: 6px;
+          align-items: center;
+      }
+
+      .ph {
+          position: relative;
+          display: inline-block;
+      }
+
+      .ph .open {
+          position: absolute;
+          right: 4px;
+          top: 4px;
+          text-decoration: none;
+          background: rgba(0, 0, 0, .55);
+          color: #fff;
+          font-size: 12px;
+          line-height: 1;
+          padding: 3px 5px;
+          border-radius: 4px;
+          opacity: .0;
+          transition: opacity .15s;
+      }
+
+      .ph:hover .open {
+          opacity: 1;
+      }
+
+      .photo {
+          width: 54px;
+          height: 54px;
+          object-fit: cover;
+          border-radius: 6px;
+      }
+
+      .ph-empty {
+          width: 54px;
+          height: 54px;
+          border-radius: 6px;
+          background: #333;
+      }
+
+      /* --- Image modal --- */
+      .img-modal[hidden] {
+          display: none;
+      }
+
+      .img-modal {
+          position: fixed;
+          inset: 0;
+          background: rgba(0, 0, 0, .75);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 9999;
+      }
+
+      .img-modal .inner {
+          position: relative;
+          max-width: min(90vw, 1100px);
+          max-height: 90vh;
+          background: #111;
+          padding: 14px;
+          border-radius: 10px;
+      }
+
+      .img-modal img {
+          max-width: 86vw;
+          max-height: 80vh;
+          display: block;
+          margin: 0 auto;
+          border-radius: 8px;
+      }
+
+      .img-modal .open {
+          position: absolute;
+          right: 42px;
+          top: 10px;
+          text-decoration: none;
+          background: rgba(255, 255, 255, .12);
+          color: #fff;
+          padding: 6px 8px;
+          border-radius: 6px;
+      }
+
+      .img-modal .close-modal {
+          position: absolute;
+          right: 10px;
+          top: 10px;
+          border: 0;
+          background: rgba(255, 255, 255, .12);
+          color: #fff;
+          width: 32px;
+          height: 32px;
+          border-radius: 6px;
+          font-size: 18px;
+          cursor: pointer;
+      }
   </style>
 </head>
 <body>
@@ -89,10 +235,17 @@
 
 <table>
   <thead>
-    <tr>
-      <th>Photos</th><th>Student</th><th>Period</th><th>Camera</th>
-      <th>Eligible</th><th>Pass</th><th>Score</th><th>Time</th>
-    </tr>
+  <tr>
+    <th>Photos</th>
+    <th>Student</th>
+    <th>Period</th>
+    <th>Camera</th>
+    <th>Eligible</th>
+    <th>Confirm</th>
+    <th>Pass</th>
+    <th>Score</th>
+    <th>Time</th>
+  </tr>
   </thead>
   <tbody id="rows"></tbody>
 </table>
@@ -105,6 +258,8 @@
      hx-target="#rows"
      hx-swap="innerHTML"
      hx-indicator="#spinner"></div>
+
+
 
 <script>
   // Debug: log outgoing params
@@ -122,11 +277,13 @@
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
     return start.toISOString();
   }
+
   function isoSince(minutes) {
     const now = new Date();
     const d = new Date(now.getTime() - minutes * 60 * 1000);
     return d.toISOString();
   }
+
   function updateSince() {
     const sel = document.getElementById('sinceSel').value;
     let from;
@@ -135,24 +292,30 @@
     else from = isoSince(60);
     document.getElementById('date_from').value = from;
   }
+
   function updatePeriods() {
     const opts = Array.from(document.getElementById('periodSel').selectedOptions).map(o => o.value);
     document.getElementById('period').value = opts.join(',') || 'lunch-pri,lunch-sec';
   }
+
   function updateEligible() {
     document.getElementById('eligible_only').value = document.getElementById('eligibleChk').checked ? '1' : '';
   }
+
   function updateMode() {
     const mode = document.getElementById('modeSel').value;
     document.getElementById('mode').value = mode;
     setSwapForMode();
   }
+
   function updateCamera() {
     document.getElementById('camera').value = document.getElementById('cameraInp').value.trim();
   }
+
   function updateMinScore() {
     document.getElementById('min_score').value = document.getElementById('minScore').value.trim();
   }
+
   function resetCursor() {
     _lastTs = null;
     document.getElementById('after_ts').value = '';
@@ -200,14 +363,41 @@
     updateMinScore();
     setSwapForMode();
 
-    document.getElementById('modeSel').addEventListener('change',  () => { updateMode();     resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
-    document.getElementById('periodSel').addEventListener('change',() => { updatePeriods();  resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
-    document.getElementById('eligibleChk').addEventListener('change',() => { updateEligible();resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
-    document.getElementById('cameraInp').addEventListener('change', () => { updateCamera();  resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
-    document.getElementById('minScore').addEventListener('change',() => { updateMinScore(); resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
-    document.getElementById('sinceSel').addEventListener('change', () => { updateSince();   resetCursor(); htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('modeSel').addEventListener('change', () => {
+      updateMode();
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
+    document.getElementById('periodSel').addEventListener('change', () => {
+      updatePeriods();
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
+    document.getElementById('eligibleChk').addEventListener('change', () => {
+      updateEligible();
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
+    document.getElementById('cameraInp').addEventListener('change', () => {
+      updateCamera();
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
+    document.getElementById('minScore').addEventListener('change', () => {
+      updateMinScore();
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
+    document.getElementById('sinceSel').addEventListener('change', () => {
+      updateSince();
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
     document.getElementById('pollSel').addEventListener('change', applyPollInterval);
-    document.getElementById('resetBtn').addEventListener('click', () => { resetCursor();    htmx.trigger('#lunch-driver', 'refresh'); });
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      resetCursor();
+      htmx.trigger('#lunch-driver', 'refresh');
+    });
 
     // first fetch
     htmx.trigger('#lunch-driver', 'refresh');
@@ -230,7 +420,8 @@
             _lastTs = data['lunch:last_ts'];
             document.getElementById('after_ts').value = _lastTs;
           }
-        } catch (_) {}
+        } catch (_) {
+        }
       } else {
         const nowIso = new Date().toISOString();
         _lastTs = nowIso;
@@ -238,9 +429,81 @@
       }
 
       const audio = document.getElementById('ding');
-      if (audio && audio.play) { audio.currentTime = 0; audio.play().catch(() => {}); }
+      if (audio && audio.play) {
+        audio.currentTime = 0;
+        audio.play().catch(() => {
+        });
+      }
+    }
+  });
+
+
+  // ---- HTMX CSRF for POST (Confirm) ----
+  function getCookie(name) {
+    const v = `; ${document.cookie}`;
+    const parts = v.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+  }
+
+  document.body.addEventListener('htmx:configRequest', function (evt) {
+    const token = getCookie('csrftoken');
+    if (token) evt.detail.headers['X-CSRFToken'] = token;
+  });
+
+
+  // ---- Image preview modal (delegated + lazy lookup) ----
+  function modalEls() {
+    return {
+      modal: document.getElementById('img-modal'),
+      modalImg: document.getElementById('img-modal-img'),
+      modalOpen: document.getElementById('img-modal-open'),
+    };
+  }
+
+  document.addEventListener('click', (e) => {
+    const thumb = e.target.closest('.js-preview');
+    if (thumb) {
+      const {modal, modalImg, modalOpen} = modalEls();
+      if (!modal || !modalImg || !modalOpen) return;
+      const src = thumb.dataset.full || thumb.getAttribute('src');
+      modalImg.src = src;
+      modalOpen.href = src;
+      modal.hidden = false;
+      return;
+    }
+
+    const closeBtn = e.target.closest('.close-modal');
+    if (closeBtn) {
+      const {modal, modalImg} = modalEls();
+      if (modal) modal.hidden = true;
+      if (modalImg) modalImg.src = '';
+      return;
+    }
+
+    // click backdrop to close
+    const {modal, modalImg} = modalEls();
+    if (modal && e.target === modal) {
+      modal.hidden = true;
+      if (modalImg) modalImg.src = '';
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    const {modal, modalImg} = modalEls();
+    if (e.key === 'Escape' && modal && !modal.hidden) {
+      modal.hidden = true;
+      if (modalImg) modalImg.src = '';
     }
   });
 </script>
+<!-- Image preview modal -->
+<div id="img-modal" class="img-modal" hidden>
+  <div class="inner">
+    <a id="img-modal-open" class="open" href="#" target="_blank" title="Open original">↗</a>
+    <button class="close-modal" aria-label="Close">×</button>
+    <img id="img-modal-img" alt="">
+  </div>
+  <!-- click outside inner to close -->
+</div>
 </body>
 </html>

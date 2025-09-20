@@ -102,7 +102,7 @@ class PeriodTemplate(models.Model):
     )
 
     def __str__(self):
-        return f"{self.name} ({self.start_time}-{self.end_time})"
+        return f"{self.name} ({self.start_time}-{self.end_time})-id={self.id}"
         # return f"{self.name} ({self.start_time:%H:%M}-{self.end_time:%H:%M})"
 
     def is_active_on(self, dow: int) -> bool:
@@ -154,6 +154,11 @@ class AttendanceRecord(models.Model):
     )
     pass_count = models.PositiveIntegerField(default=1)  # new
     last_pass_at = models.DateTimeField(blank=True, null=True, db_index=True)  # new
+    confirmed = models.BooleanField(                       # NEW
+        default=False,
+        db_index=True,
+        help_text="Manually marked by a lunch supervisor as verified."  # NEW
+    )
 
     class Meta:
         unique_together = [("student", "period")]
@@ -192,6 +197,15 @@ class RecognitionSettings(models.Model):
             "Debounce window in seconds per student. During this window, repeated detections of the "
             "same person on the same camera/period will not create new records; we only update "
             "last_seen/best_seen. Prevents duplicate ‘pops’ when a person stays in view."
+        ),
+    )
+    pass_gap_window_sec = models.PositiveIntegerField(     # NEW
+        default=120,
+        help_text=(
+            "Gap in seconds to count a *new pass* for pass_count. "
+            "Used to increment AttendanceRecord.pass_count when the same student reappears "
+            "after this gap within the same period. Typical 60–240."
+            "We meant to use it for the LUNCH periods for the student waiting in queue, e.x. lunch-pri & lunch-sec"
         ),
     )
     min_improve_delta = models.FloatField(

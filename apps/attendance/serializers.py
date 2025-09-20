@@ -15,6 +15,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
     student_grade = serializers.SerializerMethodField()
     student_photo_url = serializers.SerializerMethodField()
     pass_count = serializers.IntegerField(read_only=True)
+    confirmed = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = AttendanceRecord
@@ -33,6 +34,7 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             "camera",
             "crop_url",
             "pass_count",
+            "confirmed",
             "student_grade",
             "student_photo_url",
         )

@@ -360,3 +360,6 @@ TOP_CROPS = {
 DEFAULT_RTSP_RUN_LIVE_CAPTURE = "rtsp://admin:B!sk2025@192.168.137.95:554/Streaming/Channels/101/"
 
 STREAM_UPLINK_KEY = "dev-stream-key-change-me"
+
+# Record into all periods that share the lowest “order” value at that time:
+MULTI_PERIOD_ON_TIES = True

@@ -7,8 +7,8 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.html import escape
-from django.views.decorators.http import require_GET
-
+from django.views.decorators.http import require_GET, require_POST
+from django.urls import reverse
 from .models import AttendanceRecord
 
 
@@ -41,6 +41,9 @@ def lunch_page(request):
 def lunch_stream_rows(request):
     if not _is_lunch_supervisor(request.user):
         return HttpResponseForbidden("Requires lunch_supervisor")
+
+    is_supervisor = _is_lunch_supervisor(request.user)
+    confirm_url = reverse("attendance:confirm_record")
 
     qs = (AttendanceRecord.objects
           .select_related("student", "period__template", "best_camera")
@@ -129,9 +132,38 @@ def lunch_stream_rows(request):
         pc = int(getattr(rec, "pass_count", 1) or 1)
         badge_class = "badge r" if pc >= 2 else "badge g"
 
+        # NEW: Confirm cell
+        if getattr(rec, "confirmed", False):
+            confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+        elif is_supervisor:
+            # HTMX posts and asks server to return the updated <tr>, swapping in place
+            confirm_html = (
+                f"<button "
+                f"  hx-post='{confirm_url}' "
+                f"  hx-vals='{{\"id\": {rec.id}}}' "
+                f"  hx-target='closest tr' "
+                f"  hx-swap='outerHTML'"
+                f">Confirm</button>"
+            )
+        else:
+            confirm_html = "—"
+
+        # crop = getattr(rec, "best_crop", "") or ""
+        # crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
+        # crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
+        #
+        # gallery_url = ""
+        # try:
+        #     if hasattr(st, "gallery_photo_relurl"):
+        #         u = st.gallery_photo_relurl()
+        #         gallery_url = u or ""
+        # except Exception:
+        #     gallery_url = ""
+        # gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
+        # img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
+
         crop = getattr(rec, "best_crop", "") or ""
         crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
-        crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
 
         gallery_url = ""
         try:
@@ -140,9 +172,22 @@ def lunch_stream_rows(request):
                 gallery_url = u or ""
         except Exception:
             gallery_url = ""
-        gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
 
-        img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
+        def _ph(url: str) -> str:
+            if not url:
+                return "<div class='photo ph-empty'></div>"
+            return (
+                "<div class='ph'>"
+                f"  <img src='{url}' class='photo js-preview' data-full='{url}' loading='lazy'/>"
+                f"  <a class='open' href='{url}' target='_blank' title='Open in new tab'>↗</a>"
+                "</div>"
+            )
+
+        img_html = (
+            "<div class='photos'>"
+            f"{_ph(gallery_url)}{_ph(crop_url)}"
+            "</div>"
+        )
 
         rows.append(
             f"<tr>"
@@ -151,6 +196,7 @@ def lunch_stream_rows(request):
             f"<td>{per_name}</td>"
             f"<td>{cam}</td>"
             f"<td>{eligible_html}</td>"
+            f"<td>{confirm_html}</td>"  # NEW column
             f"<td><span class='{badge_class}'>{pc}</span></td>"
             f"<td>{score}</td>"
             f"<td class='small'>{ts}</td>"
@@ -170,3 +216,83 @@ def lunch_stream_rows(request):
             pass
 
     return HttpResponse(html, headers=headers)
+
+# put above lunch_stream_rows/confirm_record
+def _photos_html(gallery_url: str, crop_url: str) -> str:
+    def _ph(url: str) -> str:
+        if not url:
+            return "<div class='photo ph-empty'></div>"
+        return (
+            "<div class='ph'>"
+            f"  <img src='{url}' class='photo js-preview' data-full='{url}' loading='lazy'/>"
+            f"  <a class='open' href='{url}' target='_blank' title='Open in new tab'>↗</a>"
+            "</div>"
+        )
+    return "<div class='photos'>" + _ph(gallery_url) + _ph(crop_url) + "</div>"
+
+# NEW: Lunch supervisor confirms a record
+@login_required
+@require_POST
+def confirm_record(request):
+    if not _is_lunch_supervisor(request.user):
+        return HttpResponseForbidden("Requires lunch_supervisor")
+
+    rid = request.POST.get("id") or request.POST.get("record_id")
+    if not rid:
+        return HttpResponse("Missing id", status=400)
+
+    try:
+        rec = AttendanceRecord.objects.select_related(
+            "student", "period__template", "best_camera"
+        ).get(pk=int(rid))
+    except AttendanceRecord.DoesNotExist:
+        return HttpResponse("Not found", status=404)
+
+    # Mark confirmed
+    if not getattr(rec, "confirmed", False):
+        rec.confirmed = True
+        rec.save(update_fields=["confirmed"])
+
+    # Rebuild a single <tr> (same shape as lunch_stream_rows)
+    st = rec.student
+    media_url = (settings.MEDIA_URL or "").rstrip("/")
+    h = escape(getattr(st, "h_code", ""))
+    name = escape(st.full_name() if hasattr(st, "full_name") else "")
+    per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
+    score = f"{float(rec.best_score or 0.0):.2f}"
+    cam = escape(getattr(rec.best_camera, "name", "") or "-")
+    eligible_html = f"<span class='badge g'>LUNCH</span>" if getattr(st, 'has_lunch', False) else f"<span class='badge r'>No Lunch</span>"
+    ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
+    pc = int(getattr(rec, "pass_count", 1) or 1)
+    badge_class = "badge r" if pc >= 2 else "badge g"
+    confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+
+    crop = getattr(rec, "best_crop", "") or ""
+    crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
+    crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
+
+    gallery_url = ""
+    try:
+        if hasattr(st, "gallery_photo_relurl"):
+            u = st.gallery_photo_relurl()
+            gallery_url = u or ""
+    except Exception:
+        gallery_url = ""
+    gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
+    # img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
+    img_html = _photos_html(gallery_url, crop_url)
+
+    html = (
+        f"<tr>"
+        f"<td>{img_html}</td>"
+        f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
+        f"<td>{per_name}</td>"
+        f"<td>{cam}</td>"
+        f"<td>{eligible_html}</td>"
+        f"<td>{confirm_html}</td>"
+        f"<td><span class='{badge_class}'>{pc}</span></td>"
+        f"<td>{score}</td>"
+        f"<td class='small'>{ts}</td>"
+        f"</tr>"
+    )
+    return HttpResponse(html)

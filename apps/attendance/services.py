@@ -156,6 +156,9 @@ def _write_from_match(
                 best_crop=rel_crop or "",
                 sightings=1,
                 status="present",
+                # pass_count mechanism: first sighting in this period
+                pass_count=1,
+                last_pass_at=ts_local,
             ),
         )
 
@@ -187,6 +190,22 @@ def _write_from_match(
             rec.last_seen = max(rec.last_seen, ts_local)
             rec.sightings = (rec.sightings or 0) + 1
             rec.status = rec.status or "present"
+            rec.last_seen = max(rec.last_seen, ts_local)
+            rec.sightings = (rec.sightings or 0) + 1
+            rec.status = rec.status or "present"
+
+            # NEW: pass_count increment using a separate gap window
+            # If the student reappears after `pass_gap_window_sec`, count a new "pass".
+            gap_secs = int(getattr(rs, "pass_gap_window_sec", 120) or 120)
+            try:
+                last_pass = rec.last_pass_at or rec.first_seen or rec.last_seen
+                if (ts_local - last_pass) >= timedelta(seconds=gap_secs):
+                    rec.pass_count = (rec.pass_count or 0) + 1
+                    rec.last_pass_at = ts_local
+            except Exception:
+                # Defensive: never break the write-path on counter logic
+                pass
+
             rec.save()
             improved_any = improved_any or improved
         else:

@@ -1,12 +1,16 @@
 # apps/attendance/api.py
-from rest_framework import viewsets, permissions, filters
 from .models import AttendanceRecord, Student, FaceEmbedding, PeriodTemplate
-from django_filters.rest_framework import (
-    DjangoFilterBackend, FilterSet, DateFilter, NumberFilter, CharFilter,BaseInFilter, ModelMultipleChoiceFilter
-)
+from rest_framework import viewsets, permissions
+from rest_framework.filters import SearchFilter, OrderingFilter
 
+from django_filters.rest_framework import DjangoFilterBackend, FilterSet
+import django_filters as df  # <- alias
+
+from django_filters.widgets import CSVWidget
+from django.utils.html import escape, format_html
+
+# from django_filters import rest_framework as filters
 from .serializers import AttendanceRecordSerializer
-from django import forms
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.utils.dateparse import parse_datetime
@@ -14,13 +18,20 @@ from django.conf import settings
 from apps.cameras.models import Camera  # adjust if your path differs
 from .services import ingest_match
 from django.db.models import Q
-from django.utils.html import escape, format_html
 import base64
-from rest_framework import status
+import re
 
-class CharInFilter(BaseInFilter, CharFilter):
+
+class CharInFilter(df.BaseInFilter, df.CharFilter):
     """Accept comma-separated values (or repeated params) and apply SQL IN."""
     pass
+
+
+# CSV / repeated param for integers
+class NumberInFilter(df.BaseInFilter, df.NumberFilter):
+    """Accept comma-separated integers (or repeat params) and apply SQL IN."""
+    pass
+
 
 def parse_iso(dt_str):
     if not dt_str:
@@ -28,39 +39,6 @@ def parse_iso(dt_str):
     dt = parse_datetime(dt_str)
     return dt  # your project runs system time at UTC+3; keep consistent
 
-# class FilterHelpOnLabel(FilterSet):
-#     field.label = format_html(
-#         '{} <span style="margin-left:6px; color:#9aa0a6; font-weight:normal; white-space:normal; display:block;">{}</span>',
-#         field.label,
-#         escape(field.help_text),
-#     )
-
-# from django.utils.html import escape, format_html
-# from django_filters import FilterSet  # or keep your existing import
-
-# class FilterHelpOnLabel(FilterSet):
-#     """Render each filter's help_text inline next to the label in DRF UI."""
-#
-#     def get_form_class(self):
-#         Base = super().get_form_class()
-#
-#         class FormWithInlineHelp(Base):
-#             def __init__(self, *args, **kwargs):
-#                 super().__init__(*args, **kwargs)
-#                 for field in self.fields.values():
-#                     if getattr(field, "help_text", ""):
-#                         field.label = format_html(
-#                             '{} <span style="margin-left:6px; color:#9aa0a6; '
-#                             'font-weight:normal; white-space:normal; display:block;">{}</span>',
-#                             field.label,
-#                             escape(field.help_text),
-#                         )
-#                         field.help_text = ""  # prevent duplicate rendering
-#
-#         return FormWithInlineHelp
-
-from django.utils.html import escape, format_html
-from django_filters import FilterSet
 
 class FilterHelpOnLabel(FilterSet):
     def get_form_class(self):
@@ -75,7 +53,7 @@ class FilterHelpOnLabel(FilterSet):
                     if ht:
                         # label + colon on first line, help text on its own line and indented
                         f.label = format_html(
-                            '{}:<span style="display:block; margin:2px 0 0 12px; '
+                            '{}:<span style="display:block; margin:2px 2px 0 8px; '
                             'color:#9aa0a6; font-weight:normal; white-space:normal;">{}</span>',
                             f.label,
                             escape(ht),
@@ -85,41 +63,97 @@ class FilterHelpOnLabel(FilterSet):
         return FormWithInlineHelp
 
 
-
-# class FilterHelpOnLabel(FilterSet):
-#     @classmethod
-#     def get_form_class(cls):
-#         Base = super().get_form_class()
-#
-#         class FormWithInlineHelp(Base):
-#             def __init__(self, *args, **kwargs):
-#                 super().__init__(*args, **kwargs)
-#                 for name, field in self.fields.items():
-#                     if getattr(field, "help_text", ""):
-#                         # put the help next to the label and prevent duplication
-#                         field.label = format_html(
-#                             '{} <span style="margin-left:6px; color:#9aa0a6; font-weight:normal;">{}</span>',
-#                             field.label,
-#                             escape(field.help_text),
-#                         )
-#                         field.help_text = ""   # stop DRF from rendering it below
-#         return FormWithInlineHelp
-
-# class FilterHelpOnLabel(FilterSet):
-#     """Append field.help_text to the label so DRF shows it."""
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         for name, field in self.form.fields.items():
-#             if getattr(field, "help_text", ""):
-#                 field.label = f"{field.label} — {field.help_text}"
-
 class AttendanceRecordFilter(FilterHelpOnLabel):
-# class AttendanceRecordFilter(FilterSet):
-    date_from = DateFilter(field_name="period__date", lookup_expr="gte")
-    date_to = DateFilter(field_name="period__date", lookup_expr="lte")
-    min_score = NumberFilter(field_name="best_score", lookup_expr="gte")
+    # class AttendanceRecordFilter(FilterSet):
+    date_from = df.DateFilter(
+        field_name="period__date",
+        lookup_expr="gte",
+        label="Date from (inclusive)",
+        help_text=(
+            "Lower bound on the **period date** (not a timestamp). "
+            "Format: YYYY-MM-DD. Example: ?date_from=2025-09-20"
+        ),
+    )
+    date_to = df.DateFilter(
+        field_name="period__date",
+        lookup_expr="lte",
+        label="Date to (inclusive)",
+        help_text=(
+            "Upper bound on the **period date** (not a timestamp). "
+            "Format: YYYY-MM-DD. Example: ?date_to=2025-09-21"
+        ),
+    )
+    min_score = df.NumberFilter(
+        field_name="best_score",
+        lookup_expr="gte",
+        label="Min score (≥)",
+        help_text=(
+            "Minimum **best_score** to include (0.00–1.00). "
+            "Example: ?min_score=0.80"
+        ),
+    )
+    max_score = df.NumberFilter(                                   # NEW
+        field_name="best_score",
+        lookup_expr="lte",
+        label="Max score (≤)",
+        help_text=(
+            "Maximum **best_score** to include (0.00–1.00). "
+            "Example: ?max_score=0.92"
+        ),
+    )
+    score_between = df.CharFilter(                                  # NEW
+        method="filter_score_between",
+        label="Score between (inclusive)",
+        help_text=(
+            "Filter by score range **inclusive**. Accepts many formats:\n"
+            "  ?score_between=0.70,0.85   (comma)\n"
+            "  ?score_between=0.70..0.85 (two dots)\n"
+            "  ?score_between=0.70-0.85  (dash)\n"
+            "Values must be between 0.00 and 1.00."
+        ),
+    )
+
+    # def filter_score_between(self, qs, name, value):                # NEW
+    #     if not value:
+    #         return qs
+    #     # split on comma, two+ dots, or dash, and tolerate spaces
+    #     parts = re.split(r"\s*(?:,|\.{2,}|-)\s*", str(value).strip())
+    #     if len(parts) != 2:
+    #         return qs
+    #     try:
+    #         lo, hi = float(parts[0]), float(parts[1])
+    #     except ValueError:
+    #         return qs
+    #     if lo > hi:
+    #         lo, hi = hi, lo
+    #     lo = max(0.0, lo)
+    #     hi = min(1.0, hi)
+    #     return qs.filter(best_score__gte=lo, best_score__lte=hi)
+    # --- NEW: pass_count filters ---
+    pass_count = df.NumberFilter(
+        field_name="pass_count", lookup_expr="exact",
+        label="Pass count (=)",
+        help_text="Exact value. Example: ?pass_count=2"
+    )
+    pass_count_min = df.NumberFilter(
+        field_name="pass_count", lookup_expr="gte",
+        label="Pass count (≥)",
+        help_text="Minimum pass count. Example: ?pass_count_min=2"
+    )
+    pass_count_max = df.NumberFilter(
+        field_name="pass_count", lookup_expr="lte",
+        label="Pass count (≤)",
+        help_text="Maximum pass count. Example: ?pass_count_max=3"
+    )
+    # --- NEW: confirmed flag ---
+    confirmed = df.BooleanFilter(
+        field_name="confirmed",
+        label="Confirmed?",
+        help_text="true/false (also 1/0, yes/no). Example: ?confirmed=true"
+    )
+
     # 1) Single student by h_code (case-insensitive)
-    h_code_exact = CharFilter(
+    h_code_exact = df.CharFilter(
         field_name="student__h_code",
         lookup_expr="iexact",
         label="Student h code (single)",
@@ -130,26 +164,61 @@ class AttendanceRecordFilter(FilterHelpOnLabel):
     h_code = CharInFilter(
         field_name="student__h_code",
         lookup_expr="in",
-        # label="Student h codes (CSV)",
+        label="Student h codes (CSV)",
         help_text="Comma-separated (or repeat ?h_code=). Examples: ?h_code=H1,H2 or ?h_code=H1&h_code=H2.",
     )
 
     # 3) Many students via multi-select (validated against DB)
-    students = ModelMultipleChoiceFilter(
+    students = df.ModelMultipleChoiceFilter(
         field_name="student__h_code",
         to_field_name="h_code",
         queryset=Student.objects.order_by("h_code"),
         label="Students (multi-select)",
         help_text="Use Ctrl/⌘ to select multiple. Leave empty to include all students.",
     )
-    camera = CharFilter(field_name="best_camera__name", lookup_expr="iexact")
-    # period = CharFilter(field_name="period__template__name", lookup_expr="iexact")
-    # Multi-select by template **IDs** (labels will still show names)
-    period_template = ModelMultipleChoiceFilter(
+    camera = df.CharFilter(field_name="best_camera__name", lookup_expr="iexact")
+
+    # --- Period filters (3 styles) ----------------------------------------------
+    # 1) Single PeriodTemplate by ID (exact)
+    period_template_id = df.NumberFilter(
+        field_name="period__template_id",
+        lookup_expr="exact",
+        label="Period template ID (single)",
+        help_text="Exact ID. Example: 3. Leave blank for all.",
+    )
+
+    # 2) Many PeriodTemplates by ID (CSV or repeated)  ← canonical param
+    period_template_ids = NumberInFilter(
+        field_name="period__template_id",
+        lookup_expr="in",
+        label="Period template IDs (CSV)",
+        widget=CSVWidget,  # <-- forces a text box; commas allowed
+        help_text=(
+            "Comma-separated (or repeat ?period_template_ids=). Examples: "
+            "?period_template_ids=3,5,9  or  "
+            "?period_template_ids=3&period_template_ids=5."
+        ),
+    )
+
+    # 3) Many PeriodTemplates via FK (multi-select of IDs)
+    period_templates = df.ModelMultipleChoiceFilter(
         field_name="period__template",
         queryset=PeriodTemplate.objects.order_by("name"),
         label="Period templates (IDs)",
+        help_text=(
+            "Use Ctrl/⌘ to select multiple. Leave empty to include all. "
+            "Values are PeriodTemplate IDs; the option text shows the name/time window."
+        ),
     )
+
+    # period = CharFilter(field_name="period__template__name", lookup_expr="iexact")
+
+    # # Multi-select by template **IDs** (labels will still show names)
+    # period_template = ModelMultipleChoiceFilter(
+    #     field_name="period__template",
+    #     queryset=PeriodTemplate.objects.order_by("name"),
+    #     label="Period templates (IDs)",
+    # )
 
     # # Multi-select by template **names** (values are the names)
     # period_template_name = ModelMultipleChoiceFilter(
@@ -158,7 +227,22 @@ class AttendanceRecordFilter(FilterHelpOnLabel):
     #     queryset=PeriodTemplate.objects.order_by("name"),
     #     label="Period templates (names)",
     # )
-
+    def filter_score_between(self, qs, name, value):                # NEW
+        if not value:
+            return qs
+        # split on comma, two+ dots, or dash, and tolerate spaces
+        parts = re.split(r"\s*(?:,|\.{2,}|-)\s*", str(value).strip())
+        if len(parts) != 2:
+            return qs
+        try:
+            lo, hi = float(parts[0]), float(parts[1])
+        except ValueError:
+            return qs
+        if lo > hi:
+            lo, hi = hi, lo
+        lo = max(0.0, lo)
+        hi = min(1.0, hi)
+        return qs.filter(best_score__gte=lo, best_score__lte=hi)
 
     class Meta:
         model = AttendanceRecord
@@ -168,23 +252,22 @@ class AttendanceRecordFilter(FilterHelpOnLabel):
 class AttendanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     serializer_class = AttendanceRecordSerializer
-    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = AttendanceRecordFilter
     search_fields = ["student__h_code", "student__full_name"]
-    ordering_fields = ["best_seen", "best_score", "period__date"]
+    # ordering_fields = ["best_seen", "best_score", "period__date"]
+    ordering_fields = ["best_seen", "best_score", "period__date", "pass_count", "confirmed"]
     ordering = ["-best_seen"]
 
-
     def get_queryset(self):
-        from django.db.models import Q
         qs = (AttendanceRecord.objects
               .select_related("student", "period__template", "best_camera")
               .all())
 
         # Multi-period: ?period=a,b,c (case-insensitive)
-        period_param = self.request.GET.get("period")
-        if period_param:
-            parts = [p.strip() for p in period_param.split(",") if p.strip()]
+        period_name_in = self.request.GET.get("period")
+        if period_name_in:
+            parts = [p.strip() for p in period_name_in.split(",") if p.strip()]
             if parts:
                 q = Q()
                 for p in parts:
@@ -195,7 +278,7 @@ class AttendanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
         after_ts = parse_iso(self.request.GET.get("after_ts"))
         if after_ts:
             qs = qs.filter(best_seen__gte=after_ts)
-
+        qs = qs.distinct()
         return qs
 
 
