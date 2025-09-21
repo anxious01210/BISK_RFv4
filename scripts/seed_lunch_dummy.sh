@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
-# Seed lunch AttendanceRecord data for testing (RESPECTS unique (student, period))
-# Usage: bash scripts/seed_lunch_dummy.sh [path_to_manage_py] [camera_name]
-# Example: bash scripts/seed_lunch_dummy.sh ./manage.py Dept_01
+# Seed lunch AttendanceRecord data for testing (1 row per student×period)
+# Usage:
+#   bash scripts/seed_lunch_dummy.sh ./manage.py Dept_01 Dept_02
+#   # or with no camera args to use all cameras in DB:
+#   bash scripts/seed_lunch_dummy.sh ./manage.py
 set -euo pipefail
 
 MANAGE_PY="${1:-./manage.py}"
-CAMERA_NAME="${2:-C01}"
-export SEED_CAMERA_NAME="$CAMERA_NAME"
+shift || true  # remaining args are camera names (optional)
+
+# Join remaining args into a comma-separated list for the heredoc
+if [ "$#" -gt 0 ]; then
+  CAM_LIST="$(printf "%s," "$@")"
+  CAM_LIST="${CAM_LIST%,}"
+else
+  CAM_LIST=""
+fi
+export SEED_CAMERA_NAMES="$CAM_LIST"
 
 python "$MANAGE_PY" shell <<'PY'
 from datetime import datetime, timedelta, time
@@ -15,7 +25,6 @@ from django.utils import timezone
 from django.db import transaction
 from django.apps import apps as djapps
 
-# --- get models by app label (independent of module path) ---
 def M(app_label, model_name):
     try:
         return djapps.get_model(app_label, model_name)
@@ -37,27 +46,22 @@ HCODES = [
 "H250013","H180126","H190018","H180125","H250029","H220284",
 "H210262","H210261","H210260","H250047","H250046","H210014"
 ]
-PERIOD_NAMES = ["lunch-pri","lunch-sec"]  # your view filters by period__template__name
-# views.py shows period filter by template name and ordering/paging on best_seen/newest-first. :contentReference[oaicite:2]{index=2}
+PERIOD_NAMES = ["lunch-pri","lunch-sec"]  # the view filters by template name. :contentReference[oaicite:2]{index=2}
 
 tz    = timezone.get_current_timezone()
 now   = timezone.localtime()
 today = now.date()
 
 aware = lambda dt: timezone.make_aware(dt, tz)
+def at_local(h,m=0,s=0): return aware(datetime(today.year, today.month, today.day, h, m, s))
 
-def at_local(h, m=0, s=0): return aware(datetime(today.year, today.month, today.day, h, m, s))
-
-# Realistic lunch window (HH:MM:SS renders nicely in the template). :contentReference[oaicite:3]{index=3}
+# realistic lunch window for your UI times. :contentReference[oaicite:3]{index=3}
 WINDOW_START = at_local(13, 0, 0)
 WINDOW_END   = at_local(13, 59, 0)
 clamp = lambda dt: max(WINDOW_START, min(WINDOW_END, dt))
 
 def get_or_create_period_for_today(name: str):
-    """
-    Ensure a PeriodTemplate named `name` and today's PeriodOccurrence spanning the day.
-    Your rows view filters by template name (period__template__name). :contentReference[oaicite:4]{index=4}
-    """
+    """Ensure PeriodTemplate `name` and a PeriodOccurrence for today."""
     if PeriodTemplate and PeriodOccurrence:
         tpl, _ = PeriodTemplate.objects.get_or_create(
             name=name,
@@ -72,9 +76,18 @@ def get_or_create_period_for_today(name: str):
             )
         )
         return occ
-    return None  # If your schema differs, the record inserts still happen (but the default period filter may hide them)
+    return None
 
-cam = Camera.objects.filter(name=os.environ.get("SEED_CAMERA_NAME","C01")).first() if Camera else None
+# --- Camera pool: use provided names or all cameras in DB ---
+cam_names_env = (os.environ.get("SEED_CAMERA_NAMES") or "").strip()
+cam_names = [c.strip() for c in cam_names_env.split(",") if c.strip()]
+cam_pool = []
+if Camera:
+    if cam_names:
+        cam_pool = list(Camera.objects.filter(name__in=cam_names))
+    else:
+        cam_pool = list(Camera.objects.all())
+# (ok if cam_pool is empty; we'll just not set best_camera)
 
 upserted = 0
 with transaction.atomic():
@@ -86,8 +99,7 @@ with transaction.atomic():
         for p_name in PERIOD_NAMES:
             per = get_or_create_period_for_today(p_name)
 
-            # --- single row per (student, period) → respect unique constraint ---
-            # Generate realistic times & values
+            # single row per (student, period) → matches your DB unique constraint
             base = i % 40
             dt_best = clamp(WINDOW_START + timedelta(minutes=base, seconds=random.randint(0, 40)))
             dt_first = dt_best - timedelta(seconds=random.randint(5, 25))
@@ -95,6 +107,9 @@ with transaction.atomic():
             dt_pass  = dt_best + timedelta(seconds=random.randint(10, 50))
             best_score = round(random.uniform(0.43, 0.95), 2)
             pass_count = random.choice([1,1,1,2])
+
+            # pick a random camera from the pool (if any)
+            cam = random.choice(cam_pool) if cam_pool else None
 
             defaults = dict(
                 first_seen=dt_first,
@@ -105,20 +120,20 @@ with transaction.atomic():
                 pass_count=pass_count,
                 confirmed=False,
             )
-            if cam: defaults["best_camera"] = cam
+            if cam:
+                defaults["best_camera"] = cam
 
             if per is not None:
                 rec, created = AttendanceRecord.objects.update_or_create(
                     student=st, period=per, defaults=defaults
                 )
             else:
-                # If period occurrences aren't used in your schema, try without period to avoid hiding rows.
-                rec, created = AttendanceRecord.objects.update_or_create(
-                    student=st, defaults=defaults
-                )
-                if cam and getattr(rec, "best_camera_id", None) != getattr(cam, "id", None):
-                    rec.best_camera = cam
-                    rec.save(update_fields=["best_camera"])
+                rec, created = AttendanceRecord.objects.update_or_create(student=st, defaults=defaults)
+
+            # ensure camera is set even on updates
+            if cam and getattr(rec, "best_camera_id", None) != getattr(cam, "id", None):
+                rec.best_camera = cam
+                rec.save(update_fields=["best_camera"])
 
             upserted += 1
 
@@ -127,4 +142,8 @@ PY
 
 
 # chmod +x scripts/seed_lunch_dummy.sh
-# bash scripts/seed_lunch_dummy.sh ./manage.py Dept_01
+# Randomly choose between Dept_01 and Dept_02 for each row:
+  # bash scripts/seed_lunch_dummy.sh ./manage.py Dept_01 Dept_02
+
+# Or, to use all cameras currently in your DB (no names needed):
+  # bash scripts/seed_lunch_dummy.sh ./manage.py

@@ -183,10 +183,6 @@
         <option value="latest">Latest per student (live)</option>
         <option value="all_live">All records (live)</option>
         <option value="all_paged">All records (paged)</option>
-        <option value="last2">Last 2 per student</option>
-        <option value="last4">Last 4 per student</option>
-        <option value="last6">Last 6 per student</option>
-        <option value="last10">Last 10 per student</option>
       </select>
     </label>
 
@@ -219,9 +215,15 @@
 
     <label id="poll-wrap">Poll
       <select id="poll">
+        <option value="500">0.5s</option>
+        <option value="1000">1s</option>
         <option value="2000" selected>2s</option>
         <option value="3000">3s</option>
         <option value="5000">5s</option>
+        <option value="10000">10s</option>
+        <option value="15000">15s</option>
+        <option value="30000">30s</option>
+        <option value="60000">60s</option>
         <option value="0">Paused</option>
       </select>
     </label>
@@ -234,8 +236,8 @@
         <option>4</option>
         <option>5</option>
         <option>7</option>
-        <option selected>20</option>
         <option>10</option>
+        <option style="font-weight: bold;" selected>20</option>
         <option>30</option>
         <option>40</option>
         <option>50</option>
@@ -251,7 +253,7 @@
 </span>
 
 
-    <button id="resetBtn" type="button">Reset cursor</button>
+    <button id="resetBtn" type="button" title="Restart live stream from the current 'Since' filter. Only applies in mode 'Latest per student (live)'.">Reset cursor</button>
     <span id="spinner" class="small" style="display:none;margin-left:10px;">Loading…</span>
   </div>
 
@@ -404,8 +406,9 @@
       const ms = parseInt(pollSel.value || '2000', 10) || 0;
       return ms > 0 ? `load, refresh, every ${Math.max(1, Math.round(ms / 1000))}s` : 'load, refresh';
     };
-    const isPaged = (m) => m === 'all_paged' || m.startsWith('last');
-    const lastNFromMode = (m) => m.startsWith('last') ? (parseInt(m.replace('last', ''), 10) || '') : '';
+    {#const isPaged = (m) => m === 'all_paged' || m.startsWith('last');#}
+    const isPaged = (m) => m === 'all_paged';
+    {#const lastNFromMode = (m) => m.startsWith('last') ? (parseInt(m.replace('last', ''), 10) || '') : '';#}
     const isAllLive = (m) => m === 'all_live';
 
     function setDriver(trigger, swap) {
@@ -426,8 +429,10 @@
 
       // server expects: latest | all | lastN
       // map client "all_live" to server "all"
-      modeInput.value = (m === 'all_paged' || isAllLive(m)) ? 'all' : (m.startsWith('last') ? 'lastN' : 'latest')
-      lastN.value = lastNFromMode(m);
+      {#modeInput.value = (m === 'all_paged' || isAllLive(m)) ? 'all' : (m.startsWith('last') ? 'lastN' : 'latest')#}
+      modeInput.value = (m === 'all_paged' || isAllLive(m)) ? 'all' : 'latest';
+      {#lastN.value = lastNFromMode(m);#}
+      lastN.value = ""; // not used anymore
 
       const paged = isPaged(m);
 
