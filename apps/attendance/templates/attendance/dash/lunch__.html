@@ -181,7 +181,6 @@
     <label>Mode
       <select id="modeSel">
         <option value="latest">Latest per student (live)</option>
-        <option value="all_live">All records (live)</option>
         <option value="all_paged">All records (paged)</option>
         <option value="last2">Last 2 per student</option>
         <option value="last4">Last 4 per student</option>
@@ -406,7 +405,6 @@
     };
     const isPaged = (m) => m === 'all_paged' || m.startsWith('last');
     const lastNFromMode = (m) => m.startsWith('last') ? (parseInt(m.replace('last', ''), 10) || '') : '';
-    const isAllLive = (m) => m === 'all_live';
 
     function setDriver(trigger, swap) {
       driver.setAttribute('hx-trigger', trigger);
@@ -425,32 +423,22 @@
       const m = modeSel.value;
 
       // server expects: latest | all | lastN
-      // map client "all_live" to server "all"
-      modeInput.value = (m === 'all_paged' || isAllLive(m)) ? 'all' : (m.startsWith('last') ? 'lastN' : 'latest')
+      modeInput.value = (m === 'all_paged') ? 'all' : (m.startsWith('last') ? 'lastN' : 'latest');
       lastN.value = lastNFromMode(m);
 
       const paged = isPaged(m);
 
       // toggle controls
-      // show poll when live modes are active
-      $('poll-wrap').style.display = (m === 'latest' || isAllLive(m)) ? '' : 'none';
-      // page size is useful for paged AND all_live (acts as “latest N”)
-      pageSizeWrap.style.display = (paged || isAllLive(m)) ? '' : 'none';
-      // no manual pager for all_live (always page 1)
+      $('poll-wrap').style.display = paged ? 'none' : '';
+      pageSizeWrap.style.display = paged ? '' : 'none';
       pager.style.display = paged ? 'inline-flex' : 'none';
 
-      // driver policy
-      if (m === 'latest' || isAllLive(m)) {
-        // live polling
-        setDriver(pollTriggerStr(), 'innerHTML');
-        if (isAllLive(m)) {
-          // all_live always shows newest page (page 1)
-          pageInp.value = '1';
-        }
-      } else {
-        // paged/manual modes
+      // driver policy: always REPLACE tbody; only "latest" keeps polling
+      if (paged) {
         setDriver('load, refresh', 'innerHTML');
         resetCursor();
+      } else {
+        setDriver(pollTriggerStr(), 'innerHTML');
       }
 
       resetPage();
@@ -487,9 +475,8 @@
     // mode & poll & paging events
     modeSel.addEventListener('change', applyMode);
     pollSel.addEventListener('change', () => {
-      if (modeSel.value === 'latest' || modeSel.value === 'all_live') {
+      if (modeSel.value === 'latest') {
         setDriver(pollTriggerStr(), 'innerHTML');
-        if (modeSel.value === 'all_live') pageInp.value = '1';
         htmx.trigger(driver, 'refresh');
       }
     });
@@ -552,11 +539,6 @@
         const audio = $('ding');
         audio && audio.play && audio.play().catch(() => {
         });
-      }
-
-      // keep newest page when live-all mode
-      if (modeSel.value === 'all_live') {
-        pageInp.value = '1';
       }
     });
 
