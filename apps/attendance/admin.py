@@ -24,6 +24,7 @@ from .models import (
     AttendanceEvent,
     RecognitionSettings,
     FaceEmbedding,
+    DashboardTag,
 )
 from .services import roll_periods
 
@@ -44,7 +45,6 @@ from import_export.formats import base_formats
 
 from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme  # if you need
-
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
@@ -127,36 +127,54 @@ def _coerce_raw01(value):
         x = 1.0
     return x
 
-
 def _first_image_rel(h_code: str) -> str | None:
+    """
+    Return MEDIA-relative path of the first image found directly under:
+        MEDIA/face_gallery/<H_CODE>/
+    Subfolders are ignored.
+    """
     folder = student_gallery_dir(h_code)
     if not os.path.isdir(folder):
         return None
 
-    # default subdir used by student_capture_dir(...)
-    subdir = "captures"
-    root = os.path.join(folder, subdir)
-    if not os.path.isdir(root):
-        return None
-
-    # Walk date / period / camera, return first existing image
-    for date in sorted(os.listdir(root)):
-        p_date = os.path.join(root, date)
-        if not os.path.isdir(p_date):
+    for name in sorted(os.listdir(folder)):
+        p = os.path.join(folder, name)
+        if not os.path.isfile(p):
             continue
-        for period in sorted(os.listdir(p_date)):
-            p_per = os.path.join(p_date, period)
-            if not os.path.isdir(p_per):
-                continue
-            for cam in sorted(os.listdir(p_per)):
-                p_cam = os.path.join(p_per, cam)
-                if not os.path.isdir(p_cam):
-                    continue
-                for name in sorted(os.listdir(p_cam)):
-                    if os.path.splitext(name)[1].lower() in IMG_EXTS:
-                        rel = os.path.relpath(os.path.join(p_cam, name), settings.MEDIA_ROOT)
-                        return rel.replace(os.sep, "/")
+        if os.path.splitext(name)[1].lower() in IMG_EXTS:
+            rel = os.path.relpath(p, settings.MEDIA_ROOT)
+            return rel.replace(os.sep, "/")
     return None
+
+# def _first_image_rel(h_code: str) -> str | None:
+#     folder = student_gallery_dir(h_code)
+#     if not os.path.isdir(folder):
+#         return None
+#
+#     # default subdir used by student_capture_dir(...)
+#     subdir = "captures"
+#     root = os.path.join(folder, subdir)
+#     if not os.path.isdir(root):
+#         return None
+#
+#     # Walk date / period / camera, return first existing image
+#     for date in sorted(os.listdir(root)):
+#         p_date = os.path.join(root, date)
+#         if not os.path.isdir(p_date):
+#             continue
+#         for period in sorted(os.listdir(p_date)):
+#             p_per = os.path.join(p_date, period)
+#             if not os.path.isdir(p_per):
+#                 continue
+#             for cam in sorted(os.listdir(p_per)):
+#                 p_cam = os.path.join(p_per, cam)
+#                 if not os.path.isdir(p_cam):
+#                     continue
+#                 for name in sorted(os.listdir(p_cam)):
+#                     if os.path.splitext(name)[1].lower() in IMG_EXTS:
+#                         rel = os.path.relpath(os.path.join(p_cam, name), settings.MEDIA_ROOT)
+#                         return rel.replace(os.sep, "/")
+#     return None
 
 
 @admin.action(description="Sort gallery intake (inbox → per-student)")
@@ -239,6 +257,12 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
     except Exception as e:
         messages.error(request, f"PKL build failed: {e}")
 
+# NEW: simple admin for controlled vocabulary
+@admin.register(DashboardTag)
+class DashboardTagAdmin(admin.ModelAdmin):
+    list_display = ("name", "slug")
+    list_editable = ("slug",)
+    search_fields = ("name", "slug")
 
 @admin.register(Student)
 class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
@@ -344,7 +368,11 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
 
 @admin.register(PeriodTemplate)
 class PeriodTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
+    list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled", )
+    list_filter = ("usage_tags",)
+    search_fields = ("name",)
+    filter_horizontal = ("usage_tags",)
+
     actions = ["action_generate_next_7_days"]
 
     @admin.action(description="Generate Period Occurrences for next 7 days")
@@ -1011,7 +1039,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         })
         return render(request, "admin/attendance/faceembedding/re_enroll_modal.html", ctx)
 
-
     # ---- POST: live capture (FFmpeg) with extra tunables ----
     @method_decorator(require_POST)
     def re_enroll_capture_run(self, request, pk: int):
@@ -1297,7 +1324,6 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         #     return resp
         # HTMX branch: tiny body + HX-Trigger (DON'T swap the grid)
         if request.headers.get("HX-Request") == "true":
-
 
             msg = f"Live capture {'OK' if ok else 'error'} (k={k}, det={det_set})"
             if saved_dir:

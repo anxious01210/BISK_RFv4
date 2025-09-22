@@ -63,6 +63,12 @@
           font-size: 12px;
           opacity: .8;
       }
+      /* Center label text vertically beside its control in the toolbar */
+      .sticky-head .small label {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+      }
 
       /* --- Lunch photo previews --- */
       .photos {
@@ -188,8 +194,7 @@
 
     <label>Periods
       <select id="periodSel" multiple size="2">
-        <option value="lunch-pri" selected>lunch-pri</option>
-        <option value="lunch-sec" selected>lunch-sec</option>
+
       </select>
     </label>
 
@@ -253,7 +258,10 @@
 </span>
 
 
-    <button id="resetBtn" type="button" title="Restart live stream from the current 'Since' filter. Only applies in mode 'Latest per student (live)'.">Reset cursor</button>
+    <button id="resetBtn" type="button"
+            title="Restart live stream from the current 'Since' filter. Only applies in mode 'Latest per student (live)'.">
+      Reset cursor
+    </button>
     <span id="spinner" class="small" style="display:none;margin-left:10px;">Loading…</span>
   </div>
 
@@ -265,8 +273,8 @@
 <form id="params">
   <input type="hidden" name="mode" id="mode_input" value="latest">
   <input type="hidden" name="last_n" id="last_n" value="">
-  <input type="hidden" name="period" id="period" value="lunch-pri,lunch-sec">
-  <input type="hidden" name="camera" id="camera" value="">
+  <input type="hidden" name="period" id="period" value="{{ default_periods }}">
+  <input type="hidden" name="camera" id="camera" value="{{ default_cameras }}">
   <input type="hidden" name="eligible_only" id="eligible_only" value="">
   <input type="hidden" name="min_score" id="min_score" value="">
   <input type="hidden" name="q" id="q" value="">
@@ -276,6 +284,13 @@
   <input type="hidden" name="page" id="page" value="1">
   <input type="hidden" name="page_size" id="page_size_input" value="20">
 </form>
+
+{% if show_empty_notice %}
+  <div class="notice"
+       style="margin:8px 0; padding:8px; background:#fff8db; border:1px solid #f1e8a8; border-radius:6px;">
+    No PeriodTemplates/Cameras tagged with <b>lunch</b>. Set tags in Admin and reload.
+  </div>
+{% endif %}
 
 <table>
   <thead>
@@ -354,6 +369,60 @@
       if (m) evt.detail.headers['X-CSRFToken'] = decodeURIComponent(m[1]);
     });
 
+// ---- hydrate Periods/Cameras from defaults and sync hidden inputs ----
+    (function hydrateFromDefaults() {
+      // hidden inputs already populated by the view
+      const defaultsPeriods = (document.getElementById("period").value || "")
+        .split(",").map(s => s.trim()).filter(Boolean);
+      const defaultsCameras = (document.getElementById("camera").value || "")
+        .split(",").map(s => s.trim()).filter(Boolean);
+
+      // Build Period options, select all, and set size = N (min 2 to keep UI tidy)
+      const sel = document.getElementById("periodSel");
+      sel.innerHTML = "";
+      defaultsPeriods.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        opt.selected = true;     // auto-select all
+        sel.appendChild(opt);
+      });
+      sel.size = Math.max(2, defaultsPeriods.length || 2);
+
+      // If you want the visible camera input prefilled too:
+      const cameraInp = document.getElementById("cameraInp");
+      if (cameraInp && defaultsCameras.length) {
+        cameraInp.value = defaultsCameras.join(",");
+      }
+
+      // DEBUG (optional): see what we hydrated
+      console.groupCollapsed("[lunch] hydrateFromDefaults");
+      console.log("periods:", defaultsPeriods);
+      console.log("cameras:", defaultsCameras);
+      console.groupEnd();
+
+      // Keep hidden inputs in sync with the visible controls
+      const periodHid = document.getElementById("period");
+      sel.addEventListener("change", () => {
+        const vals = Array.from(sel.options).filter(o => o.selected).map(o => o.value);
+        periodHid.value = vals.join(",");
+        htmx.trigger(document.getElementById("lunch-driver"), "refresh");
+      });
+
+      const cameraHid = document.getElementById("camera");
+      if (cameraInp) {
+        cameraInp.addEventListener("change", () => {
+          cameraHid.value = (cameraInp.value || "")
+            .split(",").map(s => s.trim()).filter(Boolean).join(",");
+          htmx.trigger(document.getElementById("lunch-driver"), "refresh");
+        });
+      }
+
+      // Kick an initial load using these hydrated values
+      htmx.trigger(document.getElementById("lunch-driver"), "refresh");
+    })();
+
+
     // ---------- filter updaters ----------
     function isoTodayStart() {
       const now = new Date();
@@ -374,7 +443,7 @@
 
     function updatePeriods() {
       const vals = Array.from(periodSel.selectedOptions).map(o => o.value);
-      periodInp.value = vals.join(',') || 'lunch-pri,lunch-sec';
+      periodInp.value = vals.join(',');
     }
 
     function updateEligible() {
@@ -523,11 +592,20 @@
 
     // ---------- first-time init (order matters!) ----------
     document.addEventListener('DOMContentLoaded', () => {
+      // hydrate visible controls from hidden defaults provided by the server
+      // periods: select options that match #period's comma list
+      const defaultPeriods = (periodInp.value || '').split(',').filter(Boolean);
+      Array.from(periodSel.options).forEach(o => {
+        o.selected = defaultPeriods.includes(o.value);
+      });
+      // camera: show the default list (if any) in the textbox so change events keep it
+      if (cameraHid.value) cameraInp.value = cameraHid.value;
+
       // set all hidden params BEFORE the very first fetch
       updateSince();
-      updatePeriods();
+      updatePeriods();   // now reflects server-tagged defaults (or empty if none)
       updateEligible();
-      updateCamera();
+      updateCamera();    // keeps defaults if set above
       updateMinScore();
 
       // let the controller configure the driver & make the first request

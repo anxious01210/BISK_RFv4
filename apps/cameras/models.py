@@ -39,6 +39,14 @@ class Camera(models.Model):
     # min_score = models.FloatField(null=True, blank=True)
     # model_tag = models.CharField(max_length=64, null=True, blank=True)
 
+    # NEW: controlled tags (shared with attendance.DashboardTag)
+    usage_tags = models.ManyToManyField(
+        "attendance.DashboardTag",
+        blank=True,
+        related_name="cameras",
+        help_text="Dashboards that should include this camera"
+    )
+
     @property
     def is_paused(self):
         from django.utils import timezone

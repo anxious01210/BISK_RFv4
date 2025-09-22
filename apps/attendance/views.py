@@ -3,8 +3,10 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, OuterRef, Subquery
 from django.http import HttpResponse, HttpResponseForbidden
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
+from apps.cameras.models import Camera
+from .models import DashboardTag, PeriodTemplate, AttendanceRecord
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.html import escape
 from django.views.decorators.http import require_GET, require_POST
@@ -12,7 +14,7 @@ from django.urls import reverse
 from math import ceil
 from django.db.models import F, Window
 from django.db.models.functions import RowNumber
-from .models import AttendanceRecord
+
 
 
 def _parse_any(s):
@@ -42,54 +44,6 @@ def _photos_html(gallery_url: str, crop_url: str) -> str:
         )
     return "<div class='photos'>" + _ph(gallery_url) + _ph(crop_url) + "</div>"
 
-# def _row_html(rec, media_url, is_supervisor, confirm_url):
-#     st = rec.student
-#     h = escape(getattr(st, "h_code", ""))
-#     name = escape(st.full_name() if hasattr(st, "full_name") else "")
-#     grade = escape(getattr(st, "get_grade_display", lambda: getattr(st, "grade", "") or "—")())
-#     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
-#     score = f"{float(rec.best_score or 0.0):.2f}"
-#     cam = escape(getattr(rec.best_camera, "name", "") or "-")
-#     eligible_html = "<span class='badge g'>LUNCH</span>" if getattr(st, "has_lunch", False) else "<span class='badge r'>No Lunch</span>"
-#     ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
-#     pc = int(getattr(rec, "pass_count", 1) or 1)
-#     badge_class = "badge r" if pc >= 2 else "badge g"
-#     if getattr(rec, "confirmed", False):
-#         confirm_html = "<span class='badge g'>✔ Confirmed</span>"
-#     elif is_supervisor:
-#         confirm_html = (
-#             f"<button hx-post='{confirm_url}' "
-#             f"hx-vals='{{\"id\": {rec.id}}}' "
-#             f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
-#         )
-#     else:
-#         confirm_html = "—"
-#
-#     # photos
-#     crop = getattr(rec, "best_crop", "") or ""
-#     crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
-#     gallery_url = ""
-#     try:
-#         if hasattr(st, "gallery_photo_relurl"):
-#             u = st.gallery_photo_relurl()
-#             gallery_url = u or ""
-#     except Exception:
-#         gallery_url = ""
-#     img_html = _photos_html(gallery_url, crop_url)
-#
-#     return (
-#         f"<tr>"
-#         f"<td>{img_html}</td>"
-#         f"<td><b>{h}</b><br/><span class='small'>{name}</span><br/><span class='small'>{grade}</span></td>"
-#         f"<td>{per_name}</td>"
-#         f"<td>{cam}</td>"
-#         f"<td>{eligible_html}</td>"
-#         f"<td>{confirm_html}</td>"
-#         f"<td><span class='{badge_class}'>{pc}</span></td>"
-#         f"<td>{score}</td>"
-#         f"<td class='small'>{ts}</td>"
-#         f"</tr>"
-#     )
 
 def _row_html(rec, media_url, is_supervisor, confirm_url):
     from django.utils import timezone
@@ -177,8 +131,31 @@ def _is_lunch_supervisor(user) -> bool:
 def lunch_page(request):
     if not _is_lunch_supervisor(request.user):
         return HttpResponseForbidden("Requires lunch_supervisor")
-    return render(request, "attendance/dash/lunch.html")
 
+    # Precompute default lists for the toolbar (controlled vocabulary tag = 'lunch')
+    lunch_tag = DashboardTag.objects.filter(slug=DashboardTag.LUNCH).first()
+    default_periods = []
+    default_cameras = []
+    if lunch_tag:
+        default_periods = list(
+            PeriodTemplate.objects.filter(usage_tags=lunch_tag).order_by("order").values_list("name", flat=True)
+        )
+        now = timezone.now()
+        default_cameras = list(
+            Camera.objects
+            .filter(usage_tags=lunch_tag, is_active=True)
+            # .exclude(pause_until__gt=now)
+            .order_by("name")
+            .values_list("name", flat=True)
+        )
+    ctx = {
+        "default_periods": ",".join(default_periods),
+        "default_cameras": ",".join(default_cameras),
+        "show_empty_notice": (not default_periods or not default_cameras),
+    }
+    print(f"{ctx}")
+    # return render(request, "attendance/dash/lunch.html")
+    return render(request, "attendance/dash/lunch.html", ctx)
 
 @login_required
 @require_GET
@@ -194,9 +171,17 @@ def lunch_stream_rows(request):
           .select_related("student", "period__template", "best_camera")
           .all())
 
-    # Period filter
-    period_param = request.GET.get("period", "lunch-pri,lunch-sec")
+    # # Period filter
+    # period_param = request.GET.get("period", "lunch-pri,lunch-sec")
+
+    # Period filter — default to 'lunch'-tagged PeriodTemplates if empty
+    period_param = request.GET.get("period", "")
     parts = [p.strip() for p in (period_param or "").split(",") if p.strip()]
+    if not parts:
+        tag = DashboardTag.objects.filter(slug=DashboardTag.LUNCH).first()
+        if tag:
+            parts = list(PeriodTemplate.objects.filter(usage_tags=tag).values_list("name", flat=True))
+
     if parts:
         q = Q()
         for p in parts:
@@ -212,6 +197,25 @@ def lunch_stream_rows(request):
             for c in cams:
                 cam_q |= Q(best_camera__name__iexact=c)
             qs = qs.filter(cam_q)
+    else:
+        tag = DashboardTag.objects.filter(slug=DashboardTag.LUNCH).first()
+        if tag:
+            now = timezone.now()
+            cams = list(
+                Camera.objects.filter(usage_tags=tag, is_active=True)
+                .exclude(pause_until__gt=now)
+                .values_list("name", flat=True)
+            )
+            if cams:
+                cam_q = Q()
+                for c in cams:
+                    cam_q |= Q(best_camera__name__iexact=c)
+                qs = qs.filter(cam_q)
+
+    # If neither a request filter nor tagged defaults exist → show nothing.
+    if (not request.GET.get("period") and not parts) or (not request.GET.get("camera") and not camera_param and not locals().get("cams")):
+        qs = qs.none()
+
 
     # Eligible
     if request.GET.get("eligible_only") in ("1", "true", "True", "yes"):

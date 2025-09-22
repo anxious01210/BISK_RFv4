@@ -7,6 +7,31 @@ from django.conf import settings
 from pathlib import Path
 
 
+class DashboardTag(models.Model):
+    """
+    Controlled vocabulary for dashboard scoping (e.g., 'lunch', 'bus', 'assembly').
+    Use the 'slug' value in code/filters; 'name' is for display.
+    """
+    LUNCH = "lunch"
+    BUS = "bus"
+    ASSEMBLY = "assembly"
+    SLUG_CHOICES = [
+        (LUNCH, "Lunch"),
+        (BUS, "Bus"),
+        (ASSEMBLY, "Assembly"),
+    ]
+
+    name = models.CharField(max_length=64)
+    slug = models.SlugField(max_length=32, choices=SLUG_CHOICES, unique=True, db_index=True)
+
+    class Meta:
+        verbose_name = "Dashboard tag"
+        verbose_name_plural = "Dashboard tags"
+
+    def __str__(self):
+        return f"{self.name} ({self.slug})"
+
+
 class Student(models.Model):
     GRADE_CHOICES = [
         ("KG1", "Kindergarten 1"), ("KG2", "Kindergarten 2"),
@@ -73,6 +98,13 @@ class PeriodTemplate(models.Model):
     )
     end_time = models.TimeField(
         help_text="Local end time of the period (HH:MM)."
+    )
+    # NEW: controlled tags
+    usage_tags = models.ManyToManyField(
+        "attendance.DashboardTag",
+        blank=True,
+        related_name="period_templates",
+        help_text="Dashboards that should include this period"
     )
     weekdays_mask = models.PositiveSmallIntegerField(
         default=31,  # Mon–Fri by default
