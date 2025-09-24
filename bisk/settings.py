@@ -124,12 +124,30 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 REST_FRAMEWORK = {
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+        "rest_framework.authentication.BasicAuthentication",
+        # add TokenAuthentication here if you use it
+    ],
     "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 50,
 }
+if not DEBUG:
+    REST_FRAMEWORK["DEFAULT_RENDERER_CLASSES"] = ["rest_framework.renderers.JSONRenderer"]
+
+# Use the Admin login page for everyone, then let "/" decide the landing page
+LOGIN_URL = "/admin/login/"
+# # Use DRF’s session login, and always bounce back to "/" where root_redirect decides per-role
+# LOGIN_URL = "/api-auth/login/"
+LOGIN_REDIRECT_URL = "/"
+LOGOUT_REDIRECT_URL = "/"
 
 RUN_APSCHEDULER = False  # we’ll enable later; cron fallback will still work
+
 # Heartbeat endpoint used by runner processes
 # RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8000/api/runner/heartbeat/"
 

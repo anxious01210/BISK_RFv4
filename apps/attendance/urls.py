@@ -23,7 +23,6 @@ urlpatterns = [
     # NEW — Lunch Supervisor panel
     path("dash/lunch/", views.lunch_page, name="lunch_page"),
     path("dash/lunch/stream/", views.lunch_stream_rows, name="lunch_stream_rows"),
-    path("dash/lunch/confirm/", views.confirm_record, name="confirm_record"),
     # MJPEG stream endpoint (staff-only via the view)
     path("stream/live/<str:session>.mjpg", stream_views.mjpeg_stream, name="att_mjpeg_stream"),
     # synthetic publisher controls

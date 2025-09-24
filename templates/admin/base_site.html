@@ -1,9 +1,12 @@
 {% extends "admin/base.html" %}
 {% load i18n %}
 {% block branding %}
-{#    {{ block.super }}#}
-    <h1 id="site-name"><a href="/admin/">{{ site_header }}</a></h1>
-    <a class="button" href="{% url 'admin_system' %}" style="float:right;margin-right:16px">
-        {% trans "System status" %}
-    </a>
+  {#    {{ block.super }}#}
+  <h1 id="site-name"><a href="/admin/">{{ site_header }}</a></h1>
+  <a class="button" href="{% url 'admin_system' %}" style="float:right;margin-right:16px">
+    {% trans "System status" %}
+  </a>
+  <a class="button" href="/dash/lunch/" style="float:right;margin-right:8px">
+    {% trans "Lunch dashboard" %}
+  </a>
 {% endblock %}

@@ -63,11 +63,28 @@
           font-size: 12px;
           opacity: .8;
       }
+
       /* Center label text vertically beside its control in the toolbar */
       .sticky-head .small label {
           display: inline-flex;
           align-items: center;
           gap: 6px;
+      }
+
+      .logout-btn {
+          float: right;
+          background: #222;
+          color: #fff;
+          padding: 6px 10px;
+          border-radius: 6px;
+          border: 1px solid #333;
+          text-decoration: none;
+          font-size: 12px;
+          cursor: pointer;
+      }
+
+      .logout-btn:hover {
+          background: #2a2a2a;
       }
 
       /* --- Lunch photo previews --- */
@@ -181,6 +198,13 @@
 <body>
 
 <div class="sticky-head">
+  <!-- Logout via Django admin's logout view (POST). Sends user back to "/" afterward. -->
+{#  <form method="post" action="{% url 'admin:logout' %}" style="float:right;margin-left:10px;">#}
+  <form method="post" action="{% url 'portal_logout' %}" style="float:right;margin-left:10px;">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="/" />
+    <button type="submit" class="logout-btn" title="Sign out">Log out</button>
+  </form>
   <strong>Lunch — Live</strong>
   <span id="live-counts" class="small" style="margin-left:8px;"></span>
   <div class="small" style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">

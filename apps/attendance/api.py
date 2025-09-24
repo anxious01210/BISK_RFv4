@@ -20,7 +20,30 @@ from .services import ingest_match
 from django.db.models import Q
 import base64
 import re
+from rest_framework.permissions import BasePermission
 
+# class IsApiUserOrStaff(BasePermission):
+#     """
+#     Allow only authenticated staff OR members of the 'api_user' group.
+#     """
+#     def has_permission(self, request, view):
+#         u = request.user
+#         return bool(u and u.is_authenticated and (u.is_staff or u.groups.filter(name="api_user").exists()))
+
+class IsApiUserOrAdmin(BasePermission):
+    """
+    Allow only:
+      - superusers, OR
+      - members of 'supervisor' group (admin-level), OR
+      - members of 'api_user' group
+    """
+    def has_permission(self, request, view):
+        u = request.user
+        if not (u and u.is_authenticated):
+            return False
+        if u.is_superuser or u.groups.filter(name="supervisor").exists():
+            return True
+        return u.groups.filter(name="api_user").exists()
 
 class CharInFilter(df.BaseInFilter, df.CharFilter):
     """Accept comma-separated values (or repeated params) and apply SQL IN."""
@@ -250,7 +273,9 @@ class AttendanceRecordFilter(FilterHelpOnLabel):
 
 
 class AttendanceRecordViewSet(viewsets.ReadOnlyModelViewSet):
-    permission_classes = [permissions.IsAuthenticated]
+    # permission_classes = [permissions.IsAuthenticated]
+    # permission_classes = [IsApiUserOrStaff]
+    permission_classes = [IsApiUserOrAdmin]
     serializer_class = AttendanceRecordSerializer
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = AttendanceRecordFilter
