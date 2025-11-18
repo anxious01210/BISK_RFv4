@@ -186,7 +186,7 @@ class AttendanceRecord(models.Model):
     )
     pass_count = models.PositiveIntegerField(default=1)  # new
     last_pass_at = models.DateTimeField(blank=True, null=True, db_index=True)  # new
-    confirmed = models.BooleanField(                       # NEW
+    confirmed = models.BooleanField(  # NEW
         default=False,
         db_index=True,
         help_text="Manually marked by a lunch supervisor as verified."  # NEW
@@ -231,7 +231,7 @@ class RecognitionSettings(models.Model):
             "last_seen/best_seen. Prevents duplicate ‘pops’ when a person stays in view."
         ),
     )
-    pass_gap_window_sec = models.PositiveIntegerField(     # NEW
+    pass_gap_window_sec = models.PositiveIntegerField(  # NEW
         default=120,
         help_text=(
             "Gap in seconds to count a *new pass* for pass_count. "
@@ -478,3 +478,64 @@ class FaceEmbedding(models.Model):
 
     def __str__(self):
         return f"{self.student.h_code} • dim={self.dim} • {'on' if self.is_active else 'off'}"
+
+
+class LunchSubscription(models.Model):
+    TYPE_ANNUAL = "annual"
+    TYPE_MONTHLY = "monthly"
+    TYPE_OTHER = "other"
+
+    TYPE_CHOICES = [
+        (TYPE_ANNUAL, "Annual"),
+        (TYPE_MONTHLY, "Monthly"),
+        (TYPE_OTHER, "Other"),
+    ]
+
+    STATUS_ACTIVE = "active"
+    STATUS_CANCELLED = "cancelled"
+    STATUS_EXPIRED = "expired"
+
+    STATUS_CHOICES = [
+        (STATUS_ACTIVE, "Active"),
+        (STATUS_CANCELLED, "Cancelled"),
+        (STATUS_EXPIRED, "Expired"),
+    ]
+
+    student = models.ForeignKey(
+        "attendance.Student",
+        on_delete=models.CASCADE,
+        related_name="lunch_subscriptions",
+    )
+    plan_type = models.CharField(
+        max_length=20,
+        choices=TYPE_CHOICES,
+        default=TYPE_MONTHLY,
+        help_text="Annual / monthly / other – mainly for reporting.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_ACTIVE,
+        db_index=True,
+    )
+    start_date = models.DateField(db_index=True)
+    end_date = models.DateField(db_index=True)
+
+    notes = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["student", "status", "start_date", "end_date"]),
+        ]
+        ordering = ["student", "start_date"]
+
+    def __str__(self):
+        return f"{self.student.h_code} {self.plan_type} [{self.start_date} → {self.end_date}]"
+
+    def is_active_on(self, day):
+        return (
+                self.status == self.STATUS_ACTIVE
+                and self.start_date <= day <= self.end_date
+        )

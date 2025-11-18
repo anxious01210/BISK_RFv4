@@ -18,6 +18,7 @@ from uuid import uuid4
 
 from .models import (
     Student,
+    LunchSubscription,
     PeriodTemplate,
     PeriodOccurrence,
     AttendanceRecord,
@@ -27,19 +28,20 @@ from .models import (
     DashboardTag,
 )
 from .services import roll_periods
+from apps.attendance.utils.lunch import recalc_lunch_flags_for_students
 
 import urllib.request
 import requests
 
 from django.http import HttpResponse, HttpResponseBadRequest, QueryDict
-from apps.attendance.models import Student
+
 from apps.attendance.utils.media_paths import DIRS, student_gallery_dir, ensure_media_tree
 from apps.attendance.utils.embeddings import enroll_student_from_folder, set_det_size
 from apps.attendance.utils.facescore import score_images  # ROI + cascade scorer
 
 from django.core.management import call_command
 from import_export import resources, fields
-from import_export.widgets import BooleanWidget
+from import_export.widgets import BooleanWidget, ForeignKeyWidget
 from import_export.admin import ImportExportMixin
 from import_export.formats import base_formats
 
@@ -51,6 +53,14 @@ _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
 _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) and _THUMBS_N > 0 else "K Used images")
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
+
+
+class LunchSubscriptionInline(admin.TabularInline):
+    model = LunchSubscription
+    extra = 1  # one empty row by default
+    fields = ("plan_type", "status", "start_date", "end_date", "notes")
+    autocomplete_fields = ("student",)  # optional, but harmless
+    show_change_link = True
 
 
 def _score_to_color_and_text(raw_score: float):
@@ -127,6 +137,7 @@ def _coerce_raw01(value):
         x = 1.0
     return x
 
+
 def _first_image_rel(h_code: str) -> str | None:
     """
     Return MEDIA-relative path of the first image found directly under:
@@ -145,6 +156,7 @@ def _first_image_rel(h_code: str) -> str | None:
             rel = os.path.relpath(p, settings.MEDIA_ROOT)
             return rel.replace(os.sep, "/")
     return None
+
 
 # def _first_image_rel(h_code: str) -> str | None:
 #     folder = student_gallery_dir(h_code)
@@ -257,6 +269,7 @@ def build_embeddings_pkl_action(modeladmin, request, queryset):
     except Exception as e:
         messages.error(request, f"PKL build failed: {e}")
 
+
 # NEW: simple admin for controlled vocabulary
 @admin.register(DashboardTag)
 class DashboardTagAdmin(admin.ModelAdmin):
@@ -264,20 +277,36 @@ class DashboardTagAdmin(admin.ModelAdmin):
     list_editable = ("slug",)
     search_fields = ("name", "slug")
 
+
 @admin.register(Student)
 class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
     list_display = ("h_code", "is_active", "full_name", "grade", "gallery_count", "gallery_thumb", "has_lunch",
                     "has_bus")
     search_fields = ("h_code", "first_name", "middle_name", "last_name")
     list_filter = ("is_active",)
+    inlines = [LunchSubscriptionInline]
     actions = [
         sort_gallery_intake_action,  # move only
         sort_gallery_intake_crop_keep_action,  # crop + keep raw
         sort_gallery_intake_crop_discard_action,  # crop + discard raw (enhanced)
-        enroll_from_folder_action, build_embeddings_pkl_action
+        enroll_from_folder_action, build_embeddings_pkl_action,
+        "action_recalc_lunch_for_selected",
     ]
 
     change_list_template = "admin/attendance/student/change_list.html"
+
+    def action_recalc_lunch_for_selected(self, request, queryset):
+        """
+        Admin action: recalc Student.has_lunch only for the selected students.
+        """
+        eligible, total = recalc_lunch_flags_for_students(qs=queryset, verbose=False)
+        self.message_user(
+            request,
+            f"Recalculated lunch eligibility for {total} student(s); {eligible} currently eligible.",
+            level=messages.INFO,
+        )
+
+    action_recalc_lunch_for_selected.short_description = "Recalculate lunch eligibility for selected students"
 
     # resource_class = StudentResource
 
@@ -366,9 +395,76 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
     gallery_thumb.short_description = "Thumb"
 
 
+class LunchSubscriptionResource(resources.ModelResource):
+    # This field maps CSV column "h_code" → LunchSubscription.student FK via Student.h_code
+    student_h_code = fields.Field(
+        column_name="h_code",
+        attribute="student",
+        widget=ForeignKeyWidget(Student, "h_code"),
+    )
+
+    class Meta:
+        model = LunchSubscription
+        # Fields to import/export
+        fields = (
+            "id",  # optional, handy for export
+            "student_h_code",  # maps to h_code in CSV
+            "plan_type",
+            "status",
+            "start_date",
+            "end_date",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+        export_order = (
+            "id",
+            "student_h_code",
+            "plan_type",
+            "status",
+            "start_date",
+            "end_date",
+            "notes",
+            "created_at",
+            "updated_at",
+        )
+
+
+@admin.register(LunchSubscription)
+class LunchSubscriptionAdmin(ImportExportMixin, admin.ModelAdmin):
+    resource_class = LunchSubscriptionResource
+
+    list_display = ("student", "plan_type", "status", "start_date", "end_date", "active_today_flag", "notes")
+    list_filter = ("plan_type", "status", "start_date", "end_date")
+    search_fields = ("student__h_code", "student__first_name", "student__last_name", "notes")
+
+    def active_today_flag(self, obj):
+        from django.utils import timezone
+        today = timezone.localdate()
+        return obj.is_active_on(today)
+
+    active_today_flag.boolean = True
+    active_today_flag.short_description = "Active today?"
+
+
+# @admin.register(LunchSubscription)
+# class LunchSubscriptionAdmin(admin.ModelAdmin):
+#     list_display = ("student", "plan_type", "status", "start_date", "end_date", "active_today_flag")
+#     list_filter = ("plan_type", "status", "start_date", "end_date")
+#     search_fields = ("student__h_code", "student__first_name", "student__last_name")
+#
+#     def active_today_flag(self, obj):
+#         from django.utils import timezone
+#         today = timezone.localdate()
+#         return obj.is_active_on(today)
+#
+#     active_today_flag.boolean = True
+#     active_today_flag.short_description = "Active today?"
+
+
 @admin.register(PeriodTemplate)
 class PeriodTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled", )
+    list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled",)
     list_filter = ("usage_tags",)
     search_fields = ("name",)
     filter_horizontal = ("usage_tags",)

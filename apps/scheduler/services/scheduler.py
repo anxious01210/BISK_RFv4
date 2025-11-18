@@ -77,6 +77,31 @@ def start_background_scheduler():
         replace_existing=True,
     )
 
+    # --- Hard-coded daily lunch eligibility recalc times (HH:MM, 24h) ---
+    # You can adjust these times later or move them into settings/DB.
+    _LUNCH_RECALC_TIMES = ("08:00", "10:00", "12:00")  # example: 3:00 and 6:45 every day
+
+    for idx, spec in enumerate(_LUNCH_RECALC_TIMES):
+        try:
+            hour_str, minute_str = spec.split(":")
+            hour = int(hour_str)
+            minute = int(minute_str)
+        except Exception:
+            log.error("Invalid LUNCH_RECALC time spec: %r", spec)
+            continue
+
+        sched.add_job(
+            _run_lunch_recalc,
+            trigger="cron",
+            hour=hour,
+            minute=minute,
+            id=f"bisk_lunch_recalc_{idx}",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=3600,  # tolerate being up to 1h late
+            replace_existing=True,
+        )
+
     sched.start()
     log.info("BISK enforcer APScheduler started: interval=%ss tz=%s pid=%s",
              interval, tz, os.getpid())
@@ -95,3 +120,16 @@ def start_background_scheduler():
         release_enforcer_lock()
         log.info("BISK enforcer APScheduler stopped")
     return True
+
+
+def _run_lunch_recalc():
+    """
+    Daily job: recalc Student.has_lunch for all students based on LunchSubscription.
+    Runs inside the same APScheduler instance as the camera enforcer.
+    """
+    try:
+        from apps.attendance.utils.lunch import recalc_lunch_flags_all
+        eligible, total = recalc_lunch_flags_all(verbose=False)
+        log.info("Lunch eligibility recalc: %s eligible out of %s students.", eligible, total)
+    except Exception as e:
+        log.exception("Lunch eligibility recalc failed: %s", e)
