@@ -33,13 +33,14 @@ class DashboardTag(models.Model):
 
 
 class Student(models.Model):
-    GRADE_CHOICES = [
-        ("KG1", "Kindergarten 1"), ("KG2", "Kindergarten 2"),
-        ("G1", "Grade 1"), ("G2", "Grade 2"), ("G3", "Grade 3"),
-        ("G4", "Grade 4"), ("G5", "Grade 5"), ("G6", "Grade 6"),
-        ("G7", "Grade 7"), ("G8", "Grade 8"), ("G9", "Grade 9"),
-        ("G10", "Grade 10"), ("G11", "Grade 11"), ("G12", "Grade 12"),
-    ]
+    # GRADE_CHOICES = [
+    #     ("KG1", "Kindergarten 1"), ("KG2", "Kindergarten 2"),
+    #     ("G1", "Grade 1"), ("G2", "Grade 2"), ("G3", "Grade 3"),
+    #     ("G4", "Grade 4"), ("G5", "Grade 5"), ("G6", "Grade 6"),
+    #     ("G7", "Grade 7"), ("G8", "Grade 8"), ("G9", "Grade 9"),
+    #     ("G10", "Grade 10"), ("G11", "Grade 11"), ("G12", "Grade 12"),
+    # ]
+    # grade = models.CharField(max_length=32, choices=GRADE_CHOICES, blank=True, null=True, db_index=True)
     h_code = models.CharField(max_length=32, unique=True,
                               help_text="Human/School code (unique student identifier, e.g., H123456).")
     is_active = models.BooleanField(default=True)
@@ -48,8 +49,13 @@ class Student(models.Model):
     first_name = models.CharField(max_length=100, blank=True, default="", help_text="Given name.")
     middle_name = models.CharField(max_length=100, blank=True, default="", help_text="Middle name(s), if any.")
     last_name = models.CharField(max_length=100, blank=True, default="", help_text="Family name / surname.")
+    GENDER_CHOICES = [
+        ("MALE", "male"),
+        ("FEMALE", "female")
+    ]
+    gender = models.CharField(max_length=6, choices=GENDER_CHOICES, blank=True, null=True, db_index=True)
 
-    grade = models.CharField(max_length=8, choices=GRADE_CHOICES, blank=True, null=True, db_index=True)
+    grade = models.CharField(max_length=32, blank=True, null=True, db_index=True)
     has_lunch = models.BooleanField(default=True, db_index=True)
     has_bus = models.BooleanField(default=False, db_index=True)
 

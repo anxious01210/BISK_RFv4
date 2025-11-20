@@ -47,6 +47,9 @@ from import_export.formats import base_formats
 
 from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme  # if you need
+from django.db import transaction
+from django.db.models import Case, When, Value, IntegerField
+
 
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
@@ -371,17 +374,71 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
         }
         return render(request, "admin/attendance/student/upload_inbox.html", ctx)
 
+    # def gallery_count(self, obj):
+    #     folder = student_gallery_dir(obj.h_code)
+    #     if not os.path.isdir(folder):
+    #         return 0
+    #     total = 0
+    #     for name in os.listdir(folder):
+    #         if os.path.splitext(name)[1].lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+    #             total += 1
+    #     return total
+    #
+    # gallery_count.short_description = "Images"
+
+    def get_queryset(self, request):
+        """
+        Annotate each student with _gallery_count so we can sort on it.
+        This scans the filesystem once per student list view (same work
+        we were already doing in gallery_count, but centralized).
+        """
+        qs = super().get_queryset(request)
+
+        # build {pk: count} using the same logic as gallery_count
+        counts_by_pk = {}
+        for pk, h_code in qs.values_list("pk", "h_code"):
+            folder = student_gallery_dir(h_code)
+            count = 0
+            if os.path.isdir(folder):
+                for name in os.listdir(folder):
+                    if os.path.splitext(name)[1].lower() in IMG_EXTS:
+                        count += 1
+            counts_by_pk[pk] = count
+
+        if not counts_by_pk:
+            return qs
+
+        whens = [
+            When(pk=pk, then=Value(cnt))
+            for pk, cnt in counts_by_pk.items()
+        ]
+
+        return qs.annotate(
+            _gallery_count=Case(
+                *whens,
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+        )
+
     def gallery_count(self, obj):
+        # Prefer the annotated value when present (changelist)
+        annotated = getattr(obj, "_gallery_count", None)
+        if annotated is not None:
+            return annotated
+
+        # Fallback (e.g. on detail page) – original logic
         folder = student_gallery_dir(obj.h_code)
         if not os.path.isdir(folder):
             return 0
         total = 0
         for name in os.listdir(folder):
-            if os.path.splitext(name)[1].lower() in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
-                total += 1
+                if os.path.splitext(name)[1].lower() in IMG_EXTS:
+                    total += 1
         return total
 
     gallery_count.short_description = "Images"
+    gallery_count.admin_order_field = "_gallery_count"
 
     def gallery_thumb(self, obj):
         rel = _first_image_rel(obj.h_code)

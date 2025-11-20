@@ -46,6 +46,16 @@ class Camera(models.Model):
         related_name="cameras",
         help_text="Dashboards that should include this camera"
     )
+    # NEW: Attendance period linkage (optional)
+    period_templates = models.ManyToManyField(
+        "attendance.PeriodTemplate",
+        blank=True,
+        related_name="cameras",
+        help_text=(
+            "If set, this camera only auto-runs when at least one of these "
+            "periods has an active PeriodOccurrence covering the current time."
+        ),
+    )
 
     @property
     def is_paused(self):

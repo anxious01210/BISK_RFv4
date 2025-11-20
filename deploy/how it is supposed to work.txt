@@ -1,0 +1,31 @@
+It now:
+
+Fixes /srv/<project> ownership to your chosen user.
+
+Creates media/upload_tmp and sets correct owner.
+
+Creates PostgreSQL DB/user (or sqlite/mysql) and writes the DB config into settings.py.
+
+Writes ALLOWED_HOSTS including:
+
+127.0.0.1, localhost
+
+dev domain
+
+prod domain
+
+and the base .onlyfordev.uk-style root domain (auto-derived).
+
+Sets STATIC_ROOT = BASE_DIR / "staticfiles" and MEDIA_ROOT = BASE_DIR / "media".
+
+Runs python manage.py collectstatic and chown -R <user>:<user> staticfiles.
+
+Generates nginx configs that serve:
+
+/static/ from /srv/<project>/staticfiles/
+
+/media/ from /srv/<project>/media/
+
+Disables the default nginx site and reloads nginx.
+
+Creates and restarts the *-gunicorn.service (plus optional enforcer/heartbeat/apscheduler services and timer).

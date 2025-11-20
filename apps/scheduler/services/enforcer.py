@@ -12,6 +12,7 @@ from apps.scheduler.models import (
     CameraResourceOverride,
 )
 from pathlib import Path
+from apps.attendance.models import PeriodOccurrence
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -107,7 +108,9 @@ def _choose_resources(camera):
     gpu_memory_fraction, gpu_target_util_percent, max_fps_cap, det_set_max.
     """
     # Global defaults
-    grs = GlobalResourceSettings.get_solo() if hasattr(GlobalResourceSettings, "get_solo") else GlobalResourceSettings.objects.order_by("pk").first()
+    grs = GlobalResourceSettings.get_solo() if hasattr(GlobalResourceSettings,
+                                                       "get_solo") else GlobalResourceSettings.objects.order_by(
+        "pk").first()
     res = {
         "device": None, "hwaccel": None, "gpu_index": None,
         "cpu_affinity": None, "cpu_nice": None,
@@ -127,10 +130,10 @@ def _choose_resources(camera):
     }
     if grs and getattr(grs, "is_active", True):
         res["use_global"] = True
-        for k in ("device","hwaccel","gpu_index","cpu_affinity","cpu_nice",
-                  "gpu_memory_fraction","gpu_target_util_percent","cpu_quota_percent",
+        for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
+                  "gpu_memory_fraction", "gpu_target_util_percent", "cpu_quota_percent",
                   # NEW (global defaults)
-                  "model_tag","pipe_mjpeg_q","crop_format","crop_jpeg_quality",
+                  "model_tag", "pipe_mjpeg_q", "crop_format", "crop_jpeg_quality",
                   "quality_version"):
             v = getattr(grs, k, None)
             if v not in (None, "", []): res[k] = v
@@ -145,16 +148,19 @@ def _choose_resources(camera):
     cro = CameraResourceOverride.objects.filter(camera=camera).first()
     if cro and getattr(cro, "is_active", False):
         res["use_cro"] = True
-        for k in ("device","hwaccel","gpu_index","cpu_affinity","cpu_nice",
-                  "gpu_memory_fraction","gpu_target_util_percent","cpu_quota_percent",
+        for k in ("device", "hwaccel", "gpu_index", "cpu_affinity", "cpu_nice",
+                  "gpu_memory_fraction", "gpu_target_util_percent", "cpu_quota_percent",
                   # NEW (per-camera overrides)
-                  "model_tag","pipe_mjpeg_q","crop_format","crop_jpeg_quality",
-                  "min_face_px","quality_version","save_debug_unmatched","max_fps","det_set_max"):
+                  "model_tag", "pipe_mjpeg_q", "crop_format", "crop_jpeg_quality",
+                  "min_face_px", "quality_version", "save_debug_unmatched", "max_fps", "det_set_max"):
             v = getattr(cro, k, None)
             if v not in (None, "", []):
-                if k == "max_fps": res["max_fps_cap"] = v
-                elif k == "det_set_max": res["det_set_max"] = str(v)
-                else: res[k] = v
+                if k == "max_fps":
+                    res["max_fps_cap"] = v
+                elif k == "det_set_max":
+                    res["det_set_max"] = str(v)
+                else:
+                    res[k] = v
 
     return res
 
@@ -343,7 +349,6 @@ def _start(camera, profile):
     if min_score is not None:
         cmd += ["--min_score", str(min_score)]
     if model_tag:
-
         cmd += ["--model", str(model_tag)]
 
     # 5) Placement ONLY from normalized resources (res_eff)
@@ -579,6 +584,32 @@ class EnforceResult:
     pruned_count: int = 0
 
 
+def _camera_allowed_by_periods(camera, now):
+    """
+    Attendance-aware gating.
+
+    - If the camera has no period_templates linked, return True (no restriction).
+    - If it has linked PeriodTemplates, only allow it to run when at least one
+      PeriodOccurrence is active for those templates at `now`.
+    """
+    # Some cases (tests / stubs) may pass objects without this attribute.
+    m2m = getattr(camera, "period_templates", None)
+    if m2m is None:
+        return True
+
+    # If there are no linked templates, behave like old behaviour.
+    if not m2m.exists():
+        return True
+
+    # There *are* linked templates: require an active occurrence.
+    return PeriodOccurrence.objects.filter(
+        template__in=m2m.all(),
+        is_school_day=True,
+        start_dt__lte=now,
+        end_dt__gte=now,
+    ).exists()
+
+
 def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> EnforceResult:
     """
     Idempotent enforcer. If `policies` passed, only those policies are considered;
@@ -626,6 +657,12 @@ def enforce_schedules(policies: Optional[Iterable[SchedulePolicy]] = None) -> En
                         if pu and now >= pu:
                             cam.pause_until = None
                             cam.save(update_fields=["pause_until"])
+                        # NEW: attendance-based gating
+                        if not _camera_allowed_by_periods(cam, now_local):
+                            # Camera is tied to specific PeriodTemplates, but
+                            # no active PeriodOccurrence covers `now_local`.
+                            # Skip adding this camera/profile pair.
+                            continue
                         desired.add((cam.id, w.profile_id))
 
         # Keep only the newest row per (camera, profile); mark others dead and try to stop them.

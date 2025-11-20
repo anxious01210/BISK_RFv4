@@ -1,0 +1,36 @@
+sudo systemctl daemon-reload
+sudo systemctl restart bisk_rfv4-prod-gunicorn.service
+sudo systemctl status bisk_rfv4-prod-gunicorn.service
+
+
+-------------------------------------
+
+sudo systemctl restart bisk_rfv4-prod-enforcer.service
+sudo systemctl restart bisk_rfv4-prod-heartbeat.service
+
+
+-----------------------------------------
+python manage.py shell << 'PY'
+from django.utils import timezone
+from apps.attendance.models import PeriodOccurrence
+from apps.attendance.services import _resolve_occurrences
+
+now = timezone.localtime()
+print("Now local:", now)
+
+active_qs = PeriodOccurrence.objects.filter(
+    is_school_day=True,
+    start_dt__lte=now,
+    end_dt__gte=now,
+)
+print("Active PeriodOccurrences right now:", active_qs.count())
+for occ in active_qs.select_related("template")[:10]:
+    print(" -", occ.id, occ.template.name, occ.date, occ.start_dt, "→", occ.end_dt)
+
+winners = _resolve_occurrences(now)
+print("\n_resolve_occurrences(now) returned:", len(winners))
+for occ in winners:
+    print(" * winner:", occ.id, occ.template.name, occ.date, occ.start_dt, "→", occ.end_dt)
+PY
+
+--------------------------------------------
