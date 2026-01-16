@@ -42,8 +42,9 @@ from apps.attendance.utils.facescore import score_images  # ROI + cascade scorer
 from django.core.management import call_command
 from import_export import resources, fields
 from import_export.widgets import BooleanWidget, ForeignKeyWidget
-from import_export.admin import ImportExportMixin
+from import_export.admin import ImportExportMixin, ExportMixin
 from import_export.formats import base_formats
+from .resources import AttendanceRecordResource
 
 from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme  # if you need
@@ -58,13 +59,68 @@ IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
 
 
-class LunchSubscriptionInline(admin.TabularInline):
-    model = LunchSubscription
-    extra = 1  # one empty row by default
-    fields = ("plan_type", "status", "start_date", "end_date", "notes")
-    autocomplete_fields = ("student",)  # optional, but harmless
-    show_change_link = True
+# class LunchSubscriptionInline(admin.TabularInline):
+#     model = LunchSubscription
+#     extra = 1  # one empty row by default
+#     fields = ("plan_type", "status", "start_date", "end_date", "notes")
+#     autocomplete_fields = ("student",)  # optional, but harmless
+#     show_change_link = True
 
+# class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
+#     model = LunchSubscription
+#     extra = 0
+#
+#     # Built-in: shows a normal “change” link (not popup)
+#     show_change_link = True
+#
+#     # Add our popup link column
+#     readonly_fields = ("edit_popup",)
+#     fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
+#
+#     def edit_popup(self, obj):
+#         if not obj or not obj.pk:
+#             return "—"
+#         url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
+#         popup_url = f"{url}?_popup=1"
+#         return format_html(
+#             '<a href="{}" onclick="window.open(this.href, \'lsub_{}\', '
+#             '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
+#             'Edit (popup)</a>',
+#             popup_url,
+#             obj.pk,
+#         )
+#
+#     edit_popup.short_description = "Edit"
+
+class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
+    model = LunchSubscription
+    extra = 0
+    can_delete = False
+    show_change_link = False  # we’ll use our own popup link
+
+    # What columns to show in the inline
+    fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
+    readonly_fields = fields  # ✅ makes everything read-only
+
+    def edit_popup(self, obj):
+        if not obj or not obj.pk:
+            return "—"
+        url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
+        popup_url = f"{url}?_popup=1"
+        return format_html(
+            '<a class="button" href="{}" onclick="window.open(this.href, \'lsub_{}\', '
+            '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
+            'Edit (popup)</a>',
+            popup_url,
+            obj.pk,
+        )
+    edit_popup.short_description = "Edit"
+
+    def has_add_permission(self, request, obj=None):
+        return False  # ✅ prevents adding inline rows
+
+    def has_delete_permission(self, request, obj=None):
+        return False  # ✅ prevents delete checkbox
 
 def _score_to_color_and_text(raw_score: float):
     s = float(raw_score or 0.0)
@@ -557,7 +613,8 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 
 
 @admin.register(AttendanceRecord)
-class AttendanceRecordAdmin(admin.ModelAdmin):
+class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
+    resource_class = AttendanceRecordResource
     date_hierarchy = "best_seen"
     # list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
     list_display = (
@@ -579,7 +636,13 @@ class AttendanceRecordAdmin(admin.ModelAdmin):
         "lunch_eligible_at_time",
         "lunch_reason_code",
     )
-    search_fields = ("student__h_code", "student__full_name")
+    # search_fields = ("student__h_code", "student__full_name")
+    search_fields = (
+        "student__h_code",
+        "student__first_name",
+        "student__middle_name",
+        "student__last_name",
+    )
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
 

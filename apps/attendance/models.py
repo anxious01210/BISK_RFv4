@@ -5,6 +5,7 @@ from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.conf import settings
 from pathlib import Path
+from django.core.exceptions import ValidationError
 
 
 class DashboardTag(models.Model):
@@ -607,7 +608,11 @@ class LunchSubscription(models.Model):
         db_index=True,
     )
     start_date = models.DateField(db_index=True)
-    end_date = models.DateField(db_index=True)
+    end_date = models.DateField(
+        db_index=True, help_text=(
+            "Tip: If you are adjusting TWO subscriptions to remove an overlap, "
+            "save after editing the first one, then edit the second and save.")
+    )
 
     notes = models.CharField(max_length=200, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -627,3 +632,38 @@ class LunchSubscription(models.Model):
                 self.status == self.STATUS_ACTIVE
                 and self.start_date <= day <= self.end_date
         )
+
+    # def clean(self):
+    #     super().clean()
+    #
+    #     if self.start_date and self.end_date and self.end_date < self.start_date:
+    #         raise ValidationError({"end_date": "End date cannot be earlier than start date."})
+
+    def clean(self):
+        super().clean()
+
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValidationError({"end_date": "End date cannot be earlier than start date."})
+
+        # Overlap check only when saving an ACTIVE subscription
+        if self.status == self.STATUS_ACTIVE and self.student_id and self.start_date and self.end_date:
+            clash = LunchSubscription.objects.filter(
+                student_id=self.student_id,
+                status=self.STATUS_ACTIVE,
+            ).exclude(pk=self.pk).filter(
+                start_date__lte=self.end_date,
+                end_date__gte=self.start_date,
+            ).exists()
+
+            if clash:
+                raise ValidationError(
+                    "Overlapping ACTIVE subscription exists for this student in the selected date range."
+                )
+
+    # Optional: only enforce date validity for ACTIVE (but usually enforce always)
+    # if self.status == self.STATUS_ACTIVE and self.end_date < self.start_date:
+    #     raise ValidationError({"end_date": "Active subscription must have end_date >= start_date."})
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        return super().save(*args, **kwargs)
