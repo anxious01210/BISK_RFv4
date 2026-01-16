@@ -115,16 +115,16 @@
       }
 
       .photo {
-          width: 96px;
-          height: 96px;
+          min-width: 140px;
+          min-height: 160px;
           object-fit: cover;
           border-radius: 6px;
           background: #111;
       }
 
       .ph-empty {
-          width: 96px;
-          height: 96px;
+          width: 160px;
+          height: 160px;
           border-radius: 6px;
           background: #222;
       }
@@ -149,8 +149,7 @@
           max-width: min(90vw, 1100px);
           max-height: 90vh;
           background: #111;
-          {#padding: 14px;#}
-          padding: 28px;
+      {#padding: 14px;#} padding: 28px;
           border-radius: 10px;
       }
 
@@ -164,8 +163,7 @@
 
       .img-modal .open {
           position: absolute;
-          {#right: 42px;#}
-          left: 1px;
+      {#right: 42px;#} left: 1px;
           top: 1px;
           text-decoration: none;
           background: rgba(119, 94, 76, 0.67);
@@ -193,10 +191,39 @@
           margin-right: 4px;
       }
 
-      /* ---- TABLE ROW HEIGHT ---- */
+      /* ---- TABLE ROW HEIGHT ----
       table tr td {
           vertical-align: middle;
-          padding: 10px 8px; /* ⬅️ increases row height */
+          padding: 10px 8px;
+      }*/
+
+      /* Make the table distribute width evenly/responsively */
+      table {
+          width: 100%;
+          table-layout: fixed; /* ✅ key: fixed layout so columns share space */
+      }
+
+      /* Let cells shrink and not force columns wider */
+      th, td {
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+      }
+
+      /* Photos column: limit it so it doesn't steal space */
+      th.col-photos, td.col-photos {
+          width: 340px; /* adjust: 260–340 depending on photo size */
+      }
+
+      /* Student column: keep it readable but not huge
+      th.col-student, td.col-student {
+          width: 200px;
+      }*/
+
+      /* Allow wrapping only in "Times" if you want it multi-line */
+      td.col-times {
+          white-space: normal;
+          line-height: 1.2;
       }
   </style>
 </head>
@@ -322,18 +349,31 @@
 {% endif %}
 
 <table>
+  {#    <colgroup>#}
+  {#    <col style="width: 340px;">   <!-- Photos -->#}
+  {#    <col style="width: 220px;">   <!-- Student -->#}
+  {#    <col style="width: 140px;">   <!-- Period -->#}
+  {#    <col style="width: 120px;">   <!-- Camera -->#}
+  {#    <col style="width: 110px;">   <!-- Eligible -->#}
+  {#    <col style="width: 120px;">   <!-- Confirm -->#}
+  {#    <col style="width: 80px;">    <!-- Pass -->#}
+  {#    <col style="width: 80px;">    <!-- Score -->#}
+  {#    <col style="width: 160px;">   <!-- Times -->#}
+  {#    <col style="width: 110px;">   <!-- Last pass -->#}
+  {#  </colgroup>#}
   <thead>
   <tr>
-    <th>Photos</th>
-    <th>Student</th>
-    <th>Period</th>
-    <th>Camera</th>
-    <th>Eligible</th>
-    <th>Confirm</th>
-    <th>Pass</th>
-    <th>Score</th>
-    <th>Times</th>
-    <th>Last pass</th>
+    <th class="col-photos">Photos</th>
+    <th class="col-student">Student</th>
+    <th class="col-period">Period</th>
+    <th class="col-camera">Camera</th>
+    <th class="col-eligible">Eligible</th>
+    <th class="col-confirm">Confirm</th>
+    <th class="col-pass">Pass</th>
+    <th class="col-score">Score</th>
+    <th class="col-times">Times</th>
+    <th class="col-lastpass">Last pass</th>
+
   </tr>
   </thead>
   <tbody id="rows"></tbody>
