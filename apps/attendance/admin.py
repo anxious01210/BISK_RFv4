@@ -559,15 +559,50 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(admin.ModelAdmin):
     date_hierarchy = "best_seen"
-    list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
-    list_filter = ("period__template", "best_camera",)
+    # list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
+    list_display = (
+        "student_col",
+        "score_col",
+        "period_col",
+        "best_camera",
+        "best_seen",
+        "lunch_eligible_at_time",
+        "confirmed",
+        "lunch_reason_code",
+        "face_preview",
+    )
+    # list_filter = ("period__template", "best_camera",)
+    list_filter = (
+        "period__template",
+        "best_camera",
+        "confirmed",
+        "lunch_eligible_at_time",
+        "lunch_reason_code",
+    )
     search_fields = ("student__h_code", "student__full_name")
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
 
-    readonly_fields = ("student", "period", "first_seen", "last_seen", "best_seen", "best_camera",
-                       "best_crop_preview", "best_crop_url", "best_score", "sightings", "status")
+    # readonly_fields = ("student", "period", "first_seen", "last_seen", "best_seen", "best_camera",
+    #                    "best_crop_preview", "best_crop_url", "best_score", "sightings", "status")
+    readonly_fields = (
+        "student",
+        "period",
+        "first_seen",
+        "last_seen",
+        "best_seen",
+        "best_camera",
+        "best_crop_preview",
+        "best_crop_url",
+        "best_score",
+        "sightings",
+        "status",
+        "lunch_subscription",
+        "lunch_eligible_at_time",
+    )
     exclude = ("best_crop",)
+    # Optional: allow supervisors to quickly confirm + set reason from the list
+    # list_editable = ("confirmed", "lunch_reason_code")
 
     def _image_url(self, path: str | None) -> str | None:
         """

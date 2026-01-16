@@ -197,10 +197,92 @@ class AttendanceRecord(models.Model):
         db_index=True,
         help_text="Manually marked by a lunch supervisor as verified."  # NEW
     )
+    lunch_eligible_at_time = models.BooleanField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Snapshot: whether the student was eligible for lunch on this record's best_seen date. "
+            "Saved at record creation time for audit/reporting."
+        ),
+    )
+
+    # If eligible, store which subscription made them eligible.
+    # PROTECT prevents deleting a subscription that was relied on by historical attendance.
+    lunch_subscription = models.ForeignKey(
+        "attendance.LunchSubscription",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="attendance_records",
+        help_text="Subscription that made this record eligible (snapshot).",
+    )
+
+    # Lightweight dropdown (reason code) + optional notes (mainly for supervisor overrides).
+    REASON_NONE = ""
+    REASON_PAID_NOT_ENTERED = "paid_not_entered"
+    REASON_MANAGER_APPROVED = "manager_approved"
+    REASON_GUEST = "guest"
+    REASON_OTHER = "other"
+
+    LUNCH_REASON_CHOICES = [
+        (REASON_NONE, "—"),
+        (REASON_PAID_NOT_ENTERED, "Paid but not entered yet"),
+        (REASON_MANAGER_APPROVED, "Manager approved / exception"),
+        (REASON_GUEST, "Guest / visitor"),
+        (REASON_OTHER, "Other"),
+    ]
+
+    lunch_reason_code = models.CharField(
+        max_length=32,
+        blank=True,
+        default=REASON_NONE,
+        choices=LUNCH_REASON_CHOICES,
+        db_index=True,
+        help_text="Reason code when lunch confirmation needs explanation (esp. overrides).",
+    )
+
+    lunch_reason_notes = models.CharField(
+        max_length=200,
+        blank=True,
+        default="",
+        help_text="Optional notes to clarify the reason.",
+    )
 
     class Meta:
         unique_together = [("student", "period")]
         indexes = [models.Index(fields=["student", "period"])]
+
+    def save(self, *args, **kwargs):
+        """
+        Fill lunch snapshot fields once (audit-safe).
+
+        - Auto-compute ONLY when lunch_eligible_at_time is NULL.
+        - If a supervisor/admin sets it explicitly, we keep that.
+        """
+        if self.lunch_eligible_at_time is None:
+            try:
+                day = timezone.localdate(self.best_seen) if self.best_seen else timezone.localdate()
+
+                sub = LunchSubscription.objects.filter(
+                    student_id=self.student_id,
+                    status=LunchSubscription.STATUS_ACTIVE,
+                    start_date__lte=day,
+                    end_date__gte=day,
+                ).order_by("start_date", "id").first()
+
+                if sub:
+                    self.lunch_eligible_at_time = True
+                    self.lunch_subscription = sub
+                else:
+                    self.lunch_eligible_at_time = False
+                    self.lunch_subscription = None
+
+            except Exception:
+                # Fail safe: never block attendance writes
+                self.lunch_eligible_at_time = False
+
+        super().save(*args, **kwargs)
 
 
 class AttendanceEvent(models.Model):

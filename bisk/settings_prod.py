@@ -26,7 +26,13 @@ SECRET_KEY = 'django-insecure-md1r9447^$2n&fef8smsfzo_t34b%vu1(fjlmrmrf9=kz!(nf-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", "192.168.1.25", "10.120.0.111", "10.120.0.234"]
+ALLOWED_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", "192.168.1.25", "10.120.0.111", ".onlyfordev.uk", "10.120.0.80"]
+CSRF_TRUSTED_ORIGINS = [
+    "https://bisk-prod.onlyfordev.uk",
+    # if you want to allow all subdomains of onlyfordev.uk:
+    # "https://*.onlyfordev.uk",
+]
+
 
 # Application definition
 
@@ -91,9 +97,12 @@ WSGI_APPLICATION = 'bisk.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "bisk",
-        "USER": "bisk",
-        "PASSWORD": "DiagonalDB1!",
+        # "NAME": "bisk",
+        # "USER": "bisk",
+        # "PASSWORD": "DiagonalDB1!",
+        "NAME": "bisk_rfv4_db",
+        "USER": "bisk_rfv4_user",
+        "PASSWORD": "bisk_rfv4_pass",
         "HOST": "127.0.0.1",
         "PORT": "5432",
         "CONN_MAX_AGE": 60,
@@ -149,7 +158,7 @@ LOGOUT_REDIRECT_URL = "/"
 RUN_APSCHEDULER = False  # we’ll enable later; cron fallback will still work
 
 # Heartbeat endpoint used by runner processes
-# RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8000/api/runner/heartbeat/"
+# RUNNER_HEARTBEAT_URL = "http://127.0.0.1:8001/api/runner/heartbeat/"
 
 # Use the standard Ubuntu locations
 FFPROBE_PATH = "/usr/bin/ffprobe"
@@ -167,7 +176,7 @@ if os.environ.get("BISK_STRICT_BINARIES", "1") == "1":
         if not os.path.exists(_p):
             raise RuntimeError(f"Required binary not found: {_p}")
 
-RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8000/api/runner/heartbeat/")
+RUNNER_HEARTBEAT_URL = os.getenv("BISK_HEARTBEAT_URL", "http://127.0.0.1:8001/api/runner/heartbeat/")
 RUNNER_HEARTBEAT_KEY = os.getenv("BISK_HEARTBEAT_KEY", "dev-key-change-me")  # set long random in prod
 
 # Internationalization
