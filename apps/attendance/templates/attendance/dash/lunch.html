@@ -90,14 +90,10 @@
       /* --- Lunch photo previews --- */
       .photos {
           display: flex;
-          gap: 6px;
+          gap: 10px;
           align-items: center;
       }
 
-      .ph {
-          position: relative;
-          display: inline-block;
-      }
 
       .ph .open {
           position: absolute;
@@ -119,17 +115,18 @@
       }
 
       .photo {
-          width: 54px;
-          height: 54px;
+          width: 96px;
+          height: 96px;
           object-fit: cover;
           border-radius: 6px;
+          background: #111;
       }
 
       .ph-empty {
-          width: 54px;
-          height: 54px;
+          width: 96px;
+          height: 96px;
           border-radius: 6px;
-          background: #333;
+          background: #222;
       }
 
       /* --- Image modal --- */
@@ -152,7 +149,8 @@
           max-width: min(90vw, 1100px);
           max-height: 90vh;
           background: #111;
-          padding: 14px;
+          {#padding: 14px;#}
+          padding: 28px;
           border-radius: 10px;
       }
 
@@ -166,10 +164,11 @@
 
       .img-modal .open {
           position: absolute;
-          right: 42px;
-          top: 10px;
+          {#right: 42px;#}
+          left: 1px;
+          top: 1px;
           text-decoration: none;
-          background: rgba(255, 255, 255, .12);
+          background: rgba(119, 94, 76, 0.67);
           color: #fff;
           padding: 6px 8px;
           border-radius: 6px;
@@ -177,10 +176,10 @@
 
       .img-modal .close-modal {
           position: absolute;
-          right: 10px;
-          top: 10px;
+          right: 1px;
+          top: 1px;
           border: 0;
-          background: rgba(255, 255, 255, .12);
+          background: rgba(187, 44, 44, 0.61);
           color: #fff;
           width: 32px;
           height: 32px;
@@ -193,16 +192,22 @@
           opacity: .65;
           margin-right: 4px;
       }
+
+      /* ---- TABLE ROW HEIGHT ---- */
+      table tr td {
+          vertical-align: middle;
+          padding: 10px 8px; /* ⬅️ increases row height */
+      }
   </style>
 </head>
 <body>
 
 <div class="sticky-head">
   <!-- Logout via Django admin's logout view (POST). Sends user back to "/" afterward. -->
-{#  <form method="post" action="{% url 'admin:logout' %}" style="float:right;margin-left:10px;">#}
+  {#  <form method="post" action="{% url 'admin:logout' %}" style="float:right;margin-left:10px;">#}
   <form method="post" action="{% url 'portal_logout' %}" style="float:right;margin-left:10px;">
     {% csrf_token %}
-    <input type="hidden" name="next" value="/" />
+    <input type="hidden" name="next" value="/"/>
     <button type="submit" class="logout-btn" title="Sign out">Log out</button>
   </form>
   <strong>Lunch — Live</strong>

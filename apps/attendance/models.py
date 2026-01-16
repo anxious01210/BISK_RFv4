@@ -607,7 +607,10 @@ class LunchSubscription(models.Model):
         default=STATUS_ACTIVE,
         db_index=True,
     )
-    start_date = models.DateField(db_index=True)
+    start_date = models.DateField(
+        db_index=True,
+        # help_text="Edit subscriptions using the popup link. Use separate subscriptions for non-overlapping paid periods."
+    )
     end_date = models.DateField(
         db_index=True, help_text=(
             "Tip: If you are adjusting TWO subscriptions to remove an overlap, "

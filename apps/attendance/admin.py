@@ -66,41 +66,16 @@ ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
 #     autocomplete_fields = ("student",)  # optional, but harmless
 #     show_change_link = True
 
-# class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
-#     model = LunchSubscription
-#     extra = 0
-#
-#     # Built-in: shows a normal “change” link (not popup)
-#     show_change_link = True
-#
-#     # Add our popup link column
-#     readonly_fields = ("edit_popup",)
-#     fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
-#
-#     def edit_popup(self, obj):
-#         if not obj or not obj.pk:
-#             return "—"
-#         url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
-#         popup_url = f"{url}?_popup=1"
-#         return format_html(
-#             '<a href="{}" onclick="window.open(this.href, \'lsub_{}\', '
-#             '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
-#             'Edit (popup)</a>',
-#             popup_url,
-#             obj.pk,
-#         )
-#
-#     edit_popup.short_description = "Edit"
-
 class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
     model = LunchSubscription
     extra = 0
-    can_delete = False
-    show_change_link = False  # we’ll use our own popup link
 
-    # What columns to show in the inline
+    # Built-in: shows a normal “change” link (not popup)
+    show_change_link = True
+
+    # Add our popup link column
+    readonly_fields = ("edit_popup",)
     fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
-    readonly_fields = fields  # ✅ makes everything read-only
 
     def edit_popup(self, obj):
         if not obj or not obj.pk:
@@ -108,13 +83,38 @@ class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
         url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
         popup_url = f"{url}?_popup=1"
         return format_html(
-            '<a class="button" href="{}" onclick="window.open(this.href, \'lsub_{}\', '
+            '<a href="{}" onclick="window.open(this.href, \'lsub_{}\', '
             '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
             'Edit (popup)</a>',
             popup_url,
             obj.pk,
         )
+
     edit_popup.short_description = "Edit"
+
+# class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
+#     model = LunchSubscription
+#     extra = 0
+#     can_delete = False
+#     show_change_link = False  # we’ll use our own popup link
+#
+#     # What columns to show in the inline
+#     fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
+#     readonly_fields = fields  # ✅ makes everything read-only
+#
+#     def edit_popup(self, obj):
+#         if not obj or not obj.pk:
+#             return "—"
+#         url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
+#         popup_url = f"{url}?_popup=1"
+#         return format_html(
+#             '<a class="button" href="{}" onclick="window.open(this.href, \'lsub_{}\', '
+#             '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
+#             'Edit (popup)</a>',
+#             popup_url,
+#             obj.pk,
+#         )
+#     edit_popup.short_description = "Edit"
 
     def has_add_permission(self, request, obj=None):
         return False  # ✅ prevents adding inline rows
