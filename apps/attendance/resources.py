@@ -1,6 +1,7 @@
 # apps/attendance/resources.py
 from import_export import resources, fields
 from import_export.widgets import ForeignKeyWidget
+from django.core.exceptions import ValidationError
 
 from .models import AttendanceRecord, Student, PeriodOccurrence, LunchSubscription
 from apps.cameras.models import Camera
@@ -54,3 +55,22 @@ class AttendanceRecordResource(resources.ModelResource):
             "lunch_subscription_id",
         )
         fields = export_order
+
+class StudentResource(resources.ModelResource):
+    class Meta:
+        model = Student
+        import_id_fields = ("h_code",)
+        skip_unchanged = True
+        report_skipped = True
+
+    def before_import_row(self, row, **kwargs):
+        raw = row.get("h_code", "")
+        if raw is None:
+            raw = ""
+        raw = str(raw)
+        raw = raw.replace("\ufeff", "")   # BOM
+        raw = raw.replace("\u00a0", " ")  # NBSP
+        raw = raw.strip().upper()
+        if not raw:
+            raise ValidationError("h_code is empty")
+        row["h_code"] = raw

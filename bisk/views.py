@@ -6,6 +6,31 @@ from django.shortcuts import render
 from django.utils import timezone
 from apps.scheduler.models import RunnerHeartbeat
 from apps.cameras.models import Camera
+from datetime import datetime
+
+
+def portal_home(request):
+    u = request.user
+
+    can_admin = (
+            u.is_authenticated and (
+            u.is_superuser
+            or u.groups.filter(name="supervisor").exists()
+            or u.is_staff
+    )
+    )
+    can_lunch = u.is_authenticated and (
+            u.groups.filter(name="lunch_supervisor").exists()
+            or can_admin
+    )
+    can_system = u.is_authenticated and can_admin  # adjust if you want broader access
+
+    return render(request, "core/home.html", {
+        "year": datetime.now().year,
+        "can_admin": can_admin,
+        "can_lunch": can_lunch,
+        "can_system": can_system,
+    })
 
 
 @staff_member_required

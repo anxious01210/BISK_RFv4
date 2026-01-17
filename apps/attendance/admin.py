@@ -44,7 +44,7 @@ from import_export import resources, fields
 from import_export.widgets import BooleanWidget, ForeignKeyWidget
 from import_export.admin import ImportExportMixin, ExportMixin
 from import_export.formats import base_formats
-from .resources import AttendanceRecordResource
+from .resources import AttendanceRecordResource, StudentResource
 
 from django.template.loader import render_to_string
 from django.utils.http import url_has_allowed_host_and_scheme  # if you need
@@ -58,6 +58,11 @@ _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) a
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
 
+# class LunchSubscriptionInline(admin.TabularInline):
+#     model = LunchSubscription
+#     extra = 1
+#     show_change_link = True
+#     fields = ("plan_type", "status", "start_date", "end_date", "notes")
 
 # class LunchSubscriptionInline(admin.TabularInline):
 #     model = LunchSubscription
@@ -116,8 +121,8 @@ class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
 #         )
 #     edit_popup.short_description = "Edit"
 
-    def has_add_permission(self, request, obj=None):
-        return False  # ✅ prevents adding inline rows
+    # def has_add_permission(self, request, obj=None):
+    #     return False  # ✅ prevents adding inline rows
 
     def has_delete_permission(self, request, obj=None):
         return False  # ✅ prevents delete checkbox
@@ -339,11 +344,12 @@ class DashboardTagAdmin(admin.ModelAdmin):
 
 @admin.register(Student)
 class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
-    list_display = ("h_code", "is_active", "full_name", "grade", "gallery_count", "gallery_thumb", "has_lunch",
+    list_display = ("h_code", "is_active", "full_name", "gender", "grade", "gallery_count", "gallery_thumb", "has_lunch",
                     "has_bus")
     search_fields = ("h_code", "first_name", "middle_name", "last_name")
-    list_filter = ("is_active",)
+    list_filter = ("is_active", "has_lunch", "gender", "grade",)
     inlines = [LunchSubscriptionInline]
+    readonly_fields = ("has_lunch", "has_bus")
     actions = [
         sort_gallery_intake_action,  # move only
         sort_gallery_intake_crop_keep_action,  # crop + keep raw
@@ -367,7 +373,7 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
 
     action_recalc_lunch_for_selected.short_description = "Recalculate lunch eligibility for selected students"
 
-    # resource_class = StudentResource
+    resource_class = StudentResource
 
     # URL: /admin/attendance/student/upload-inbox/
     def get_urls(self):
@@ -508,8 +514,42 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
     gallery_thumb.short_description = "Thumb"
 
 
+# class LunchSubscriptionResource(resources.ModelResource):
+#     # This field maps CSV column "h_code" → LunchSubscription.student FK via Student.h_code
+#     student_h_code = fields.Field(
+#         column_name="h_code",
+#         attribute="student",
+#         widget=ForeignKeyWidget(Student, "h_code"),
+#     )
+#
+#     class Meta:
+#         model = LunchSubscription
+#         # Fields to import/export
+#         fields = (
+#             "id",  # optional, handy for export
+#             "student_h_code",  # maps to h_code in CSV
+#             "plan_type",
+#             "status",
+#             "start_date",
+#             "end_date",
+#             "notes",
+#             "created_at",
+#             "updated_at",
+#         )
+#         export_order = (
+#             "id",
+#             "student_h_code",
+#             "plan_type",
+#             "status",
+#             "start_date",
+#             "end_date",
+#             "notes",
+#             "created_at",
+#             "updated_at",
+#         )
+
 class LunchSubscriptionResource(resources.ModelResource):
-    # This field maps CSV column "h_code" → LunchSubscription.student FK via Student.h_code
+    # CSV column "h_code" -> LunchSubscription.student via Student.h_code
     student_h_code = fields.Field(
         column_name="h_code",
         attribute="student",
@@ -518,19 +558,9 @@ class LunchSubscriptionResource(resources.ModelResource):
 
     class Meta:
         model = LunchSubscription
-        # Fields to import/export
+
+        # ✅ Important: don't import created_at/updated_at (they should be DB-managed)
         fields = (
-            "id",  # optional, handy for export
-            "student_h_code",  # maps to h_code in CSV
-            "plan_type",
-            "status",
-            "start_date",
-            "end_date",
-            "notes",
-            "created_at",
-            "updated_at",
-        )
-        export_order = (
             "id",
             "student_h_code",
             "plan_type",
@@ -538,18 +568,38 @@ class LunchSubscriptionResource(resources.ModelResource):
             "start_date",
             "end_date",
             "notes",
-            "created_at",
-            "updated_at",
         )
+
+        export_order = fields
+
+        # Optional but recommended: treat these as the "identity" so re-import updates instead of duplicates
+        import_id_fields = ("student_h_code", "start_date", "end_date")
+        skip_unchanged = True
+        report_skipped = True
+
+    def before_import_row(self, row, **kwargs):
+        # Normalize h_code from CSV (removes hidden chars/spaces)
+        raw = row.get("h_code", "")
+        if raw is None:
+            raw = ""
+        raw = str(raw)
+
+        # replace common invisible problems
+        raw = raw.replace("\ufeff", "")   # BOM
+        raw = raw.replace("\u00a0", " ")  # NBSP
+        raw = raw.strip().upper()
+
+        row["h_code"] = raw
 
 
 @admin.register(LunchSubscription)
 class LunchSubscriptionAdmin(ImportExportMixin, admin.ModelAdmin):
     resource_class = LunchSubscriptionResource
+    autocomplete_fields = ["student"]   # <-- this replaces the dropdown with a search box
 
     list_display = ("student", "plan_type", "status", "start_date", "end_date", "active_today_flag", "notes")
     list_filter = ("plan_type", "status", "start_date", "end_date")
-    search_fields = ("student__h_code", "student__first_name", "student__last_name", "notes")
+    search_fields = ("student__h_code", "student__first_name", "student__middle_name", "student__last_name", "notes")
 
     def active_today_flag(self, obj):
         from django.utils import timezone
@@ -894,7 +944,7 @@ def reenroll_embeddings_action(modeladmin, request, queryset):
 class FaceEmbeddingAdmin(admin.ModelAdmin):
     change_list_template = "admin/attendance/faceembedding/change_list.html"  # <-- add this
     list_display = (
-        "student_link", "crops_opt_in", "is_active", "dim",
+        "student_link","student_full_name", "crops_opt_in", "is_active", "dim",
         "last_enrolled_at", "last_used_k", "last_used_det_size",
         "images_used", "avg_used_score", "thumbs_with_chips",
         "provider_short", "arcface_model",
@@ -903,7 +953,7 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     list_display_links = ("student_link",)
     ordering = ("-last_enrolled_at", "-created_at",)
     list_filter = ("is_active", "dim", "provider", "arcface_model", "last_used_det_size",)
-    search_fields = ("student__h_code", "embedding_sha256",)
+    search_fields = ("student__h_code", "student__first_name", "student__middle_name", "student__last_name", "embedding_sha256",)
     list_editable = ["crops_opt_in", ]
     actions = [reenroll_embeddings_action, activate_embeddings, deactivate_embeddings, export_embeddings_csv]
 
@@ -1034,6 +1084,11 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
         return format_html("<b>{}</b>", getattr(obj.student, "h_code", "-"))
 
     student_link.short_description = "Student"
+
+    def student_full_name(self, obj):
+        return format_html("<b>{}</b>", getattr(obj.student, "first_name", "-") + " " + getattr(obj.student, "middle_name", "-") + " " + getattr(obj.student, "last_name", "-"))
+
+    student_full_name.short_description = "Full Name"
 
     def avg_used_score(self, obj):
         det = getattr(obj, "used_images_detail", None) or []

@@ -43,7 +43,7 @@ def portal_logout(request):
 # Only allow superusers OR members of "supervisor" to open /admin/
 def _admin_has_permission(self, request):
     u = request.user
-    return u.is_active and (u.is_superuser or u.groups.filter(name="supervisor").exists())
+    return u.is_active and (u.is_staff or u.is_superuser or u.groups.filter(name="supervisor").exists())
 
 
 admin.site.has_permission = MethodType(_admin_has_permission, admin.site)
@@ -53,7 +53,8 @@ def root_redirect(request):
     u = request.user
     # Anonymous → Admin login, but come back to "/" so we can route by role after auth
     if not u.is_authenticated:
-        return redirect(f"{settings.LOGIN_URL}?next=/")
+        # return redirect(f"{settings.LOGIN_URL}?next=/")
+        return redirect("/home/")
     # 1) staff/superuser/supervisor → admin
     if u.is_superuser or u.groups.filter(name="supervisor").exists():
         return redirect("/admin/")
@@ -65,7 +66,7 @@ def root_redirect(request):
         return redirect("/api/attendance/records/")
     # 4) fallback
     # return redirect("/dash/lunch/")
-    return redirect("")
+    return redirect("/home/")
 
 
 urlpatterns = [
@@ -75,6 +76,7 @@ urlpatterns = [
     path("admin/system/", admin.site.admin_view(admin_system), name="admin_system"),
     path("api-auth/", include("rest_framework.urls")),  # DRF session login/logout
     path("logout/", portal_logout, name="portal_logout"),
+    path("home/", core_views.portal_home, name="portal_home"),
     path("", include(("apps.attendance.urls", "attendance"), namespace="attendance")),
     # path("api/attendance/records/", include(("apps.attendance.urls", "attendance"), namespace="attendance")),
     # path("admin/system/enforce-now/", sched_api.enforce_now, name="enforce_now") if hasattr(sched_api,
@@ -102,6 +104,7 @@ urlpatterns = [
     path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),
     path("dashboard/cameras/", core_views.cameras_dashboard, name="cameras-dashboard"),
     # path("attendance/", include(("apps.attendance.urls", "attendance"), namespace="attendance")),
+    path("accounts/", include("django.contrib.auth.urls")),
 ]
 
 # urlpatterns = [

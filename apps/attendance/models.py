@@ -57,7 +57,7 @@ class Student(models.Model):
     gender = models.CharField(max_length=6, choices=GENDER_CHOICES, blank=True, null=True, db_index=True)
 
     grade = models.CharField(max_length=32, blank=True, null=True, db_index=True)
-    has_lunch = models.BooleanField(default=True, db_index=True)
+    has_lunch = models.BooleanField(default=False, db_index=True)
     has_bus = models.BooleanField(default=False, db_index=True)
 
     # --- helper: derive face_gallery first image (no ImageField yet) ---
