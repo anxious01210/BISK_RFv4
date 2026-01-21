@@ -24,13 +24,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-md1r9447^$2n&fef8smsfzo_t34b%vu1(fjlmrmrf9=kz!(nf-'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = False
 
 ALLOWED_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", "192.168.1.27", "10.120.0.111", "10.120.0.234"]
 
 # Application definition
 
 INSTALLED_APPS = [
+    "whitenoise.runserver_nostatic",  # optional, safe
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -53,6 +54,7 @@ INSTALLED_APPS += [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -192,6 +194,7 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'  # for collectstatic in prod
 STATICFILES_DIRS = [
     BASE_DIR / 'static',  # python manage.py findstatic attendance/crop_modal.js -v 2
 ]
+STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 
 MEDIA_URL = "/media/"
 MEDIA_ROOT = BASE_DIR / "media"
