@@ -135,7 +135,7 @@ class CameraAdmin(admin.ModelAdmin):
 
     )
 
-    list_display = ("name", "location", "is_active", "script_type_default", "prefer_camera_over_profile",
+    list_display = ("name", "rtsp_url", "location", "is_active", "script_type_default", "prefer_camera_over_profile",
                     "target_fps_req", "det_set_req", "pause_until", "snapshot_thumb",)
     list_editable = ("is_active", "pause_until", "prefer_camera_over_profile",)
     search_fields = ("name", "location")

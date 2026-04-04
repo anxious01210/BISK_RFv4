@@ -625,35 +625,128 @@ class LunchSubscriptionAdmin(ImportExportMixin, admin.ModelAdmin):
 #     active_today_flag.short_description = "Active today?"
 
 
+# @admin.register(PeriodTemplate)
+# class PeriodTemplateAdmin(admin.ModelAdmin):
+#     list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled",)
+#     list_filter = ("usage_tags",)
+#     search_fields = ("name",)
+#     filter_horizontal = ("usage_tags",)
+#     list_editable = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled",)
+#     # actions = ["action_generate_next_7_days"]
+#     actions = ["action_generate_next_1_day", "action_generate_next_7_days", "action_generate_next_15_days",]
+#
+#     @admin.action(description="Generate Period Occurrences for next 1 day")
+#     def action_generate_next_1_day(self, request, queryset):
+#         """
+#         Uses your existing roll_periods(days=1). It already respects template flags,
+#         weekday masks, and grace. We call it once (global) for simplicity.
+#         """
+#         created_total = roll_periods(days=1)
+#         messages.success(request, f"Generated {created_total} occurrences (next 1 day).")
+#
+#     @admin.action(description="Generate Period Occurrences for next 7 days")
+#     def action_generate_next_7_days(self, request, queryset):
+#         """
+#         Uses your existing roll_periods(days=7). It already respects template flags,
+#         weekday masks, and grace. We call it once (global) for simplicity.
+#         """
+#         created_total = roll_periods(days=7)
+#         messages.success(request, f"Generated {created_total} occurrences (next 7 days).")
+#
+#     @admin.action(description="Generate Period Occurrences for next 15 days")
+#     def action_generate_next_15_days(self, request, queryset):
+#         """
+#         Uses your existing roll_periods(days=15). It already respects template flags,
+#         weekday masks, and grace. We call it once (global) for simplicity.
+#         """
+#         created_total = roll_periods(days=15)
+#         messages.success(request, f"Generated {created_total} occurrences (next 15 days).")
+#
+#     # Keep your custom URL/view so you can click an admin link to roll 7 days.
+#     def get_urls(self):
+#         urls = super().get_urls()
+#         extra = [path("roll-1d/", self.admin_site.admin_view(self.roll_1d_view), name="attendance_roll_1d")]
+#         return extra + urls
+#
+#     def roll_1d_view(self, request):
+#         created = roll_periods(days=1)
+#         messages.success(request, f"Generated {created} occurrences (next 1 days).")
+#         return redirect("admin:attendance_periodtemplate_changelist")
+#
+#     def get_urls(self):
+#         urls = super().get_urls()
+#         extra = [path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d")]
+#         return extra + urls
+#
+#     def roll_7d_view(self, request):
+#         created = roll_periods(days=7)
+#         messages.success(request, f"Generated {created} occurrences (next 7 days).")
+#         return redirect("admin:attendance_periodtemplate_changelist")
+#
+#     def get_urls(self):
+#         urls = super().get_urls()
+#         extra = [path("roll-15d/", self.admin_site.admin_view(self.roll_15d_view), name="attendance_roll_15d")]
+#         return extra + urls
+#
+#     def roll_15d_view(self, request):
+#         created = roll_periods(days=15)
+#         messages.success(request, f"Generated {created} occurrences (next 15 days).")
+#         return redirect("admin:attendance_periodtemplate_changelist")
+
 @admin.register(PeriodTemplate)
 class PeriodTemplateAdmin(admin.ModelAdmin):
-    list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled",)
+    list_display = ("id", "name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
     list_filter = ("usage_tags",)
     search_fields = ("name",)
     filter_horizontal = ("usage_tags",)
 
-    actions = ["action_generate_next_7_days"]
+    list_display_links = ("id",)
+    list_editable = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled")
+
+    actions = [
+        "action_generate_next_1_day",
+        "action_generate_next_7_days",
+        "action_generate_next_15_days",
+    ]
+
+    @admin.action(description="Generate Period Occurrences for next 1 day")
+    def action_generate_next_1_day(self, request, queryset):
+        created_total = roll_periods(days=1)
+        messages.success(request, f"Generated {created_total} occurrences (next 1 day).")
 
     @admin.action(description="Generate Period Occurrences for next 7 days")
     def action_generate_next_7_days(self, request, queryset):
-        """
-        Uses your existing roll_periods(days=7). It already respects template flags,
-        weekday masks, and grace. We call it once (global) for simplicity.
-        """
         created_total = roll_periods(days=7)
         messages.success(request, f"Generated {created_total} occurrences (next 7 days).")
 
-    # Keep your custom URL/view so you can click an admin link to roll 7 days.
+    @admin.action(description="Generate Period Occurrences for next 15 days")
+    def action_generate_next_15_days(self, request, queryset):
+        created_total = roll_periods(days=15)
+        messages.success(request, f"Generated {created_total} occurrences (next 15 days).")
+
     def get_urls(self):
         urls = super().get_urls()
-        extra = [path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d")]
+        extra = [
+            path("roll-1d/", self.admin_site.admin_view(self.roll_1d_view), name="attendance_roll_1d"),
+            path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d"),
+            path("roll-15d/", self.admin_site.admin_view(self.roll_15d_view), name="attendance_roll_15d"),
+        ]
         return extra + urls
+
+    def roll_1d_view(self, request):
+        created = roll_periods(days=1)
+        messages.success(request, f"Generated {created} occurrences (next 1 day).")
+        return redirect("admin:attendance_periodtemplate_changelist")
 
     def roll_7d_view(self, request):
         created = roll_periods(days=7)
         messages.success(request, f"Generated {created} occurrences (next 7 days).")
         return redirect("admin:attendance_periodtemplate_changelist")
 
+    def roll_15d_view(self, request):
+        created = roll_periods(days=15)
+        messages.success(request, f"Generated {created} occurrences (next 15 days).")
+        return redirect("admin:attendance_periodtemplate_changelist")
 
 @admin.register(PeriodOccurrence)
 class PeriodOccurrenceAdmin(admin.ModelAdmin):

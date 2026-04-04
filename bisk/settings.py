@@ -24,7 +24,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-md1r9447^$2n&fef8smsfzo_t34b%vu1(fjlmrmrf9=kz!(nf-'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ["0.0.0.0", "127.0.0.1", "localhost", "192.168.1.27", "10.120.0.111", "10.120.0.234"]
 
@@ -91,13 +91,23 @@ WSGI_APPLICATION = 'bisk.wsgi.application'
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
 DATABASES = {
+    # "default": {
+    #     "ENGINE": "django.db.backends.postgresql",
+    #     "NAME": "bisk",
+    #     "USER": "bisk",
+    #     "PASSWORD": "DiagonalDB1!",
+    #     "HOST": "127.0.0.1",
+    #     "PORT": "5432",
+    #     "CONN_MAX_AGE": 60,
+    #     "OPTIONS": {"sslmode": "prefer"},
+    # },
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "bisk",
-        "USER": "bisk",
-        "PASSWORD": "DiagonalDB1!",
-        "HOST": "127.0.0.1",
-        "PORT": "5432",
+        "NAME": os.getenv("DB_NAME", "bisk_dev"),
+        "USER": os.getenv("DB_USER", "bisk"),
+        "PASSWORD": os.getenv("DB_PASSWORD", "DiagonalDB1!"),
+        "HOST": os.getenv("DB_HOST", "127.0.0.1"),
+        "PORT": os.getenv("DB_PORT", "5432"),
         "CONN_MAX_AGE": 60,
         "OPTIONS": {"sslmode": "prefer"},
     },

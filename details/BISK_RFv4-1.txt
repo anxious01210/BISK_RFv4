@@ -1,0 +1,560 @@
+rio@GP73:~$ cd /home/rio/PycharmProjects
+rio@GP73:~/PycharmProjects$ rsync -a --exclude='.venv' --exclude='media' --exclude='__pycache__' BISK_RFv4/ BISK_RFv4-1/
+rio@GP73:~/PycharmProjects$ ls
+ 100                                                    'Ex from v4'
+'100 Days of Code'                                       extras
+'100 Days of Code - The Complete Python Pro Bootcamp'    oop-coffee-machine-start
+'100 Days of Code - The Complete Python Pro Bootcamp1'   oop-coffee-machine-start.zip
+ BISK_RFv4                                               PythonProject
+ BISK_RFv4-1                                             quiz-game-start
+'BISK_RFv4 (Copy)'                                       quiz-game-start.zip
+ BISK_RFv4-feat-file-manager.zip                         workflow
+ CoffeeMachine                                           workflow_automation
+rio@GP73:~/PycharmProjects$ cd BISK_RFv4-1/
+rio@GP73:~/PycharmProjects/BISK_RFv4-1$ git status
+On branch main
+Your branch is up to date with 'origin/main'.
+
+nothing to commit, working tree clean
+rio@GP73:~/PycharmProjects/BISK_RFv4-1$ git checkout -b feature/wallet-pricing-discounts
+Switched to a new branch 'feature/wallet-pricing-discounts'
+rio@GP73:~/PycharmProjects/BISK_RFv4-1$ python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip wheel
+pip install -r requirements.txt
+Requirement already satisfied: pip in ./.venv/lib/python3.12/site-packages (24.0)
+Collecting pip
+  Downloading pip-26.0.1-py3-none-any.whl.metadata (4.7 kB)
+Collecting wheel
+  Downloading wheel-0.46.3-py3-none-any.whl.metadata (2.4 kB)
+Collecting packaging>=24.0 (from wheel)
+  Downloading packaging-26.0-py3-none-any.whl.metadata (3.3 kB)
+Downloading pip-26.0.1-py3-none-any.whl (1.8 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.8/1.8 MB 2.4 MB/s eta 0:00:00
+Downloading wheel-0.46.3-py3-none-any.whl (30 kB)
+Downloading packaging-26.0-py3-none-any.whl (74 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 74.4/74.4 kB 1.5 MB/s eta 0:00:00
+Installing collected packages: pip, packaging, wheel
+  Attempting uninstall: pip
+    Found existing installation: pip 24.0
+    Uninstalling pip-24.0:
+      Successfully uninstalled pip-24.0
+Successfully installed packaging-26.0 pip-26.0.1 wheel-0.46.3
+Collecting albucore==0.0.24 (from -r requirements.txt (line 1))
+  Using cached albucore-0.0.24-py3-none-any.whl.metadata (5.3 kB)
+Collecting albumentations==2.0.8 (from -r requirements.txt (line 2))
+  Using cached albumentations-2.0.8-py3-none-any.whl.metadata (43 kB)
+Collecting annotated-types==0.7.0 (from -r requirements.txt (line 3))
+  Using cached annotated_types-0.7.0-py3-none-any.whl.metadata (15 kB)
+Collecting APScheduler==3.10.4 (from -r requirements.txt (line 4))
+  Using cached APScheduler-3.10.4-py3-none-any.whl.metadata (5.7 kB)
+Collecting asgiref==3.9.1 (from -r requirements.txt (line 5))
+  Using cached asgiref-3.9.1-py3-none-any.whl.metadata (9.3 kB)
+Collecting certifi==2025.8.3 (from -r requirements.txt (line 6))
+  Using cached certifi-2025.8.3-py3-none-any.whl.metadata (2.4 kB)
+Collecting charset-normalizer==3.4.3 (from -r requirements.txt (line 7))
+  Using cached charset_normalizer-3.4.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (36 kB)
+Collecting coloredlogs==15.0.1 (from -r requirements.txt (line 8))
+  Using cached coloredlogs-15.0.1-py2.py3-none-any.whl.metadata (12 kB)
+Collecting contourpy==1.3.3 (from -r requirements.txt (line 9))
+  Using cached contourpy-1.3.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.5 kB)
+Collecting cycler==0.12.1 (from -r requirements.txt (line 10))
+  Using cached cycler-0.12.1-py3-none-any.whl.metadata (3.8 kB)
+Collecting Cython==3.1.3 (from -r requirements.txt (line 11))
+  Using cached cython-3.1.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (4.7 kB)
+Collecting diff-match-patch==20241021 (from -r requirements.txt (line 12))
+  Using cached diff_match_patch-20241021-py3-none-any.whl.metadata (5.5 kB)
+Collecting Django==5.2.5 (from -r requirements.txt (line 13))
+  Using cached django-5.2.5-py3-none-any.whl.metadata (4.1 kB)
+Collecting django-apscheduler==0.6.2 (from -r requirements.txt (line 14))
+  Using cached django_apscheduler-0.6.2-py3-none-any.whl.metadata (15 kB)
+Collecting django-filter==24.3 (from -r requirements.txt (line 15))
+  Using cached django_filter-24.3-py3-none-any.whl.metadata (5.2 kB)
+Collecting django-import-export==4.3.9 (from -r requirements.txt (line 16))
+  Using cached django_import_export-4.3.9-py3-none-any.whl.metadata (12 kB)
+Collecting djangorestframework==3.15.2 (from -r requirements.txt (line 17))
+  Using cached djangorestframework-3.15.2-py3-none-any.whl.metadata (10 kB)
+Collecting easydict==1.13 (from -r requirements.txt (line 18))
+  Using cached easydict-1.13-py3-none-any.whl.metadata (4.2 kB)
+Collecting et_xmlfile==2.0.0 (from -r requirements.txt (line 19))
+  Using cached et_xmlfile-2.0.0-py3-none-any.whl.metadata (2.7 kB)
+Collecting flatbuffers==25.2.10 (from -r requirements.txt (line 20))
+  Using cached flatbuffers-25.2.10-py2.py3-none-any.whl.metadata (875 bytes)
+Collecting fonttools==4.59.1 (from -r requirements.txt (line 21))
+  Using cached fonttools-4.59.1-cp312-cp312-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl.metadata (108 kB)
+Collecting humanfriendly==10.0 (from -r requirements.txt (line 22))
+  Using cached humanfriendly-10.0-py2.py3-none-any.whl.metadata (9.2 kB)
+Collecting idna==3.10 (from -r requirements.txt (line 23))
+  Using cached idna-3.10-py3-none-any.whl.metadata (10 kB)
+Collecting imageio==2.37.0 (from -r requirements.txt (line 24))
+  Using cached imageio-2.37.0-py3-none-any.whl.metadata (5.2 kB)
+Collecting insightface==0.7.3 (from -r requirements.txt (line 25))
+  Using cached insightface-0.7.3-cp312-cp312-linux_x86_64.whl
+Collecting joblib==1.5.1 (from -r requirements.txt (line 26))
+  Using cached joblib-1.5.1-py3-none-any.whl.metadata (5.6 kB)
+Collecting kiwisolver==1.4.9 (from -r requirements.txt (line 27))
+  Using cached kiwisolver-1.4.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (6.3 kB)
+Collecting lazy_loader==0.4 (from -r requirements.txt (line 28))
+  Using cached lazy_loader-0.4-py3-none-any.whl.metadata (7.6 kB)
+Collecting matplotlib==3.10.5 (from -r requirements.txt (line 29))
+  Using cached matplotlib-3.10.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (11 kB)
+Collecting mpmath==1.3.0 (from -r requirements.txt (line 30))
+  Using cached mpmath-1.3.0-py3-none-any.whl.metadata (8.6 kB)
+Collecting networkx==3.5 (from -r requirements.txt (line 31))
+  Using cached networkx-3.5-py3-none-any.whl.metadata (6.3 kB)
+Collecting numpy==2.2.6 (from -r requirements.txt (line 32))
+  Using cached numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (62 kB)
+Collecting nvidia-ml-py==12.575.51 (from -r requirements.txt (line 33))
+  Using cached nvidia_ml_py-12.575.51-py3-none-any.whl.metadata (9.3 kB)
+Collecting onnx==1.18.0 (from -r requirements.txt (line 34))
+  Using cached onnx-1.18.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.9 kB)
+Collecting onnxruntime-gpu==1.22.0 (from -r requirements.txt (line 35))
+  Using cached onnxruntime_gpu-1.22.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (5.1 kB)
+Collecting opencv-python==4.12.0.88 (from -r requirements.txt (line 36))
+  Using cached opencv_python-4.12.0.88-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (19 kB)
+Collecting openpyxl==3.1.5 (from -r requirements.txt (line 37))
+  Using cached openpyxl-3.1.5-py2.py3-none-any.whl.metadata (2.5 kB)
+Collecting packaging==25.0 (from -r requirements.txt (line 38))
+  Using cached packaging-25.0-py3-none-any.whl.metadata (3.3 kB)
+Collecting pillow==11.3.0 (from -r requirements.txt (line 39))
+  Using cached pillow-11.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl.metadata (9.0 kB)
+Collecting pip-check==3.1 (from -r requirements.txt (line 40))
+  Using cached pip_check-3.1-py3-none-any.whl.metadata (6.1 kB)
+Collecting prettytable==3.16.0 (from -r requirements.txt (line 41))
+  Using cached prettytable-3.16.0-py3-none-any.whl.metadata (33 kB)
+Collecting protobuf==6.32.0 (from -r requirements.txt (line 42))
+  Using cached protobuf-6.32.0-cp39-abi3-manylinux2014_x86_64.whl.metadata (593 bytes)
+Collecting psutil==7.0.0 (from -r requirements.txt (line 43))
+  Using cached psutil-7.0.0-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (22 kB)
+Collecting psycopg==3.2.9 (from -r requirements.txt (line 44))
+  Using cached psycopg-3.2.9-py3-none-any.whl.metadata (4.5 kB)
+Collecting psycopg-binary==3.2.9 (from -r requirements.txt (line 45))
+  Using cached psycopg_binary-3.2.9-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.9 kB)
+Collecting pydantic==2.11.7 (from -r requirements.txt (line 46))
+  Using cached pydantic-2.11.7-py3-none-any.whl.metadata (67 kB)
+Collecting pydantic_core==2.33.2 (from -r requirements.txt (line 47))
+  Using cached pydantic_core-2.33.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (6.8 kB)
+Collecting pynvml==12.0.0 (from -r requirements.txt (line 48))
+  Using cached pynvml-12.0.0-py3-none-any.whl.metadata (5.4 kB)
+Collecting pyparsing==3.2.3 (from -r requirements.txt (line 49))
+  Using cached pyparsing-3.2.3-py3-none-any.whl.metadata (5.0 kB)
+Collecting python-dateutil==2.9.0.post0 (from -r requirements.txt (line 50))
+  Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl.metadata (8.4 kB)
+Collecting pytz==2025.2 (from -r requirements.txt (line 51))
+  Using cached pytz-2025.2-py2.py3-none-any.whl.metadata (22 kB)
+Collecting PyYAML==6.0.2 (from -r requirements.txt (line 52))
+  Using cached PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (2.1 kB)
+Collecting redis==6.4.0 (from -r requirements.txt (line 53))
+  Using cached redis-6.4.0-py3-none-any.whl.metadata (10 kB)
+Collecting requests==2.32.5 (from -r requirements.txt (line 54))
+  Using cached requests-2.32.5-py3-none-any.whl.metadata (4.9 kB)
+Collecting scikit-image==0.25.2 (from -r requirements.txt (line 55))
+  Using cached scikit_image-0.25.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (14 kB)
+Collecting scikit-learn==1.7.1 (from -r requirements.txt (line 56))
+  Using cached scikit_learn-1.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (11 kB)
+Collecting scipy==1.16.1 (from -r requirements.txt (line 57))
+  Using cached scipy-1.16.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl.metadata (61 kB)
+Collecting simsimd==6.5.1 (from -r requirements.txt (line 58))
+  Using cached simsimd-6.5.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl.metadata (70 kB)
+Collecting six==1.17.0 (from -r requirements.txt (line 59))
+  Using cached six-1.17.0-py2.py3-none-any.whl.metadata (1.7 kB)
+Collecting sqlparse==0.5.3 (from -r requirements.txt (line 60))
+  Using cached sqlparse-0.5.3-py3-none-any.whl.metadata (3.9 kB)
+Collecting stringzilla==3.12.6 (from -r requirements.txt (line 61))
+  Using cached stringzilla-3.12.6-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_28_x86_64.whl.metadata (80 kB)
+Collecting sympy==1.14.0 (from -r requirements.txt (line 62))
+  Using cached sympy-1.14.0-py3-none-any.whl.metadata (12 kB)
+Collecting tablib==3.8.0 (from -r requirements.txt (line 63))
+  Using cached tablib-3.8.0-py3-none-any.whl.metadata (3.8 kB)
+Collecting terminaltables==3.1.10 (from -r requirements.txt (line 64))
+  Using cached terminaltables-3.1.10-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting threadpoolctl==3.6.0 (from -r requirements.txt (line 65))
+  Using cached threadpoolctl-3.6.0-py3-none-any.whl.metadata (13 kB)
+Collecting tifffile==2025.6.11 (from -r requirements.txt (line 66))
+  Using cached tifffile-2025.6.11-py3-none-any.whl.metadata (32 kB)
+Collecting tqdm==4.67.1 (from -r requirements.txt (line 67))
+  Using cached tqdm-4.67.1-py3-none-any.whl.metadata (57 kB)
+Collecting typing-inspection==0.4.1 (from -r requirements.txt (line 68))
+  Using cached typing_inspection-0.4.1-py3-none-any.whl.metadata (2.6 kB)
+Collecting typing_extensions==4.14.1 (from -r requirements.txt (line 69))
+  Using cached typing_extensions-4.14.1-py3-none-any.whl.metadata (3.0 kB)
+Collecting tzlocal==5.3.1 (from -r requirements.txt (line 70))
+  Using cached tzlocal-5.3.1-py3-none-any.whl.metadata (7.6 kB)
+Collecting urllib3==2.5.0 (from -r requirements.txt (line 71))
+  Using cached urllib3-2.5.0-py3-none-any.whl.metadata (6.5 kB)
+Collecting wcwidth==0.2.13 (from -r requirements.txt (line 72))
+  Using cached wcwidth-0.2.13-py2.py3-none-any.whl.metadata (14 kB)
+Collecting xlrd==2.0.2 (from -r requirements.txt (line 73))
+  Using cached xlrd-2.0.2-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting xlwt==1.3.0 (from -r requirements.txt (line 74))
+  Using cached xlwt-1.3.0-py2.py3-none-any.whl.metadata (3.5 kB)
+Collecting opencv-python-headless>=4.9.0.80 (from albucore==0.0.24->-r requirements.txt (line 1))
+  Downloading opencv_python_headless-4.13.0.92-cp37-abi3-manylinux_2_28_x86_64.whl.metadata (19 kB)
+Using cached albucore-0.0.24-py3-none-any.whl (15 kB)
+Using cached albumentations-2.0.8-py3-none-any.whl (369 kB)
+Using cached annotated_types-0.7.0-py3-none-any.whl (13 kB)
+Using cached APScheduler-3.10.4-py3-none-any.whl (59 kB)
+Using cached asgiref-3.9.1-py3-none-any.whl (23 kB)
+Using cached certifi-2025.8.3-py3-none-any.whl (161 kB)
+Using cached charset_normalizer-3.4.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (151 kB)
+Using cached coloredlogs-15.0.1-py2.py3-none-any.whl (46 kB)
+Using cached contourpy-1.3.3-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (362 kB)
+Using cached cycler-0.12.1-py3-none-any.whl (8.3 kB)
+Using cached cython-3.1.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (3.3 MB)
+Using cached diff_match_patch-20241021-py3-none-any.whl (43 kB)
+Using cached django-5.2.5-py3-none-any.whl (8.3 MB)
+Using cached django_apscheduler-0.6.2-py3-none-any.whl (24 kB)
+Using cached django_filter-24.3-py3-none-any.whl (95 kB)
+Using cached django_import_export-4.3.9-py3-none-any.whl (148 kB)
+Using cached djangorestframework-3.15.2-py3-none-any.whl (1.1 MB)
+Using cached easydict-1.13-py3-none-any.whl (6.8 kB)
+Using cached et_xmlfile-2.0.0-py3-none-any.whl (18 kB)
+Using cached flatbuffers-25.2.10-py2.py3-none-any.whl (30 kB)
+Using cached fonttools-4.59.1-cp312-cp312-manylinux1_x86_64.manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_5_x86_64.whl (4.9 MB)
+Using cached humanfriendly-10.0-py2.py3-none-any.whl (86 kB)
+Using cached idna-3.10-py3-none-any.whl (70 kB)
+Using cached imageio-2.37.0-py3-none-any.whl (315 kB)
+Using cached joblib-1.5.1-py3-none-any.whl (307 kB)
+Using cached kiwisolver-1.4.9-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.5 MB)
+Using cached lazy_loader-0.4-py3-none-any.whl (12 kB)
+Using cached matplotlib-3.10.5-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (8.7 MB)
+Using cached mpmath-1.3.0-py3-none-any.whl (536 kB)
+Using cached networkx-3.5-py3-none-any.whl (2.0 MB)
+Using cached numpy-2.2.6-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (16.5 MB)
+Using cached nvidia_ml_py-12.575.51-py3-none-any.whl (47 kB)
+Using cached onnx-1.18.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (17.6 MB)
+Using cached onnxruntime_gpu-1.22.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (283.2 MB)
+Using cached opencv_python-4.12.0.88-cp37-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (67.0 MB)
+Using cached openpyxl-3.1.5-py2.py3-none-any.whl (250 kB)
+Using cached packaging-25.0-py3-none-any.whl (66 kB)
+Using cached pillow-11.3.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl (6.6 MB)
+Using cached pip_check-3.1-py3-none-any.whl (8.8 kB)
+Using cached prettytable-3.16.0-py3-none-any.whl (33 kB)
+Using cached protobuf-6.32.0-cp39-abi3-manylinux2014_x86_64.whl (322 kB)
+Using cached psutil-7.0.0-cp36-abi3-manylinux_2_12_x86_64.manylinux2010_x86_64.manylinux_2_17_x86_64.manylinux2014_x86_64.whl (277 kB)
+Using cached psycopg-3.2.9-py3-none-any.whl (202 kB)
+Using cached psycopg_binary-3.2.9-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (4.4 MB)
+Using cached pydantic-2.11.7-py3-none-any.whl (444 kB)
+Using cached pydantic_core-2.33.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (2.0 MB)
+Using cached pynvml-12.0.0-py3-none-any.whl (26 kB)
+Using cached pyparsing-3.2.3-py3-none-any.whl (111 kB)
+Using cached python_dateutil-2.9.0.post0-py2.py3-none-any.whl (229 kB)
+Using cached pytz-2025.2-py2.py3-none-any.whl (509 kB)
+Using cached PyYAML-6.0.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (767 kB)
+Using cached redis-6.4.0-py3-none-any.whl (279 kB)
+Using cached requests-2.32.5-py3-none-any.whl (64 kB)
+Using cached urllib3-2.5.0-py3-none-any.whl (129 kB)
+Using cached scikit_image-0.25.2-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (15.0 MB)
+Using cached scikit_learn-1.7.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (9.5 MB)
+Using cached scipy-1.16.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (35.2 MB)
+Using cached simsimd-6.5.1-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl (1.1 MB)
+Using cached six-1.17.0-py2.py3-none-any.whl (11 kB)
+Using cached sqlparse-0.5.3-py3-none-any.whl (44 kB)
+Using cached stringzilla-3.12.6-cp312-cp312-manylinux_2_5_x86_64.manylinux1_x86_64.manylinux_2_28_x86_64.whl (308 kB)
+Using cached sympy-1.14.0-py3-none-any.whl (6.3 MB)
+Using cached tablib-3.8.0-py3-none-any.whl (47 kB)
+Using cached terminaltables-3.1.10-py2.py3-none-any.whl (15 kB)
+Using cached threadpoolctl-3.6.0-py3-none-any.whl (18 kB)
+Using cached tifffile-2025.6.11-py3-none-any.whl (230 kB)
+Using cached tqdm-4.67.1-py3-none-any.whl (78 kB)
+Using cached typing_inspection-0.4.1-py3-none-any.whl (14 kB)
+Using cached typing_extensions-4.14.1-py3-none-any.whl (43 kB)
+Using cached tzlocal-5.3.1-py3-none-any.whl (18 kB)
+Using cached wcwidth-0.2.13-py2.py3-none-any.whl (34 kB)
+Using cached xlrd-2.0.2-py2.py3-none-any.whl (96 kB)
+Using cached xlwt-1.3.0-py2.py3-none-any.whl (99 kB)
+Downloading opencv_python_headless-4.13.0.92-cp37-abi3-manylinux_2_28_x86_64.whl (60.4 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 60.4/60.4 MB 5.8 MB/s  0:00:10
+Installing collected packages: xlwt, wcwidth, stringzilla, simsimd, pytz, nvidia-ml-py, mpmath, flatbuffers, easydict, xlrd, urllib3, tzlocal, typing_extensions, tqdm, threadpoolctl, terminaltables, tablib, sympy, sqlparse, six, redis, PyYAML, pyparsing, pynvml, psycopg-binary, psutil, protobuf, prettytable, pillow, packaging, numpy, networkx, kiwisolver, joblib, idna, humanfriendly, fonttools, et_xmlfile, diff-match-patch, Cython, cycler, charset-normalizer, certifi, asgiref, annotated-types, typing-inspection, tifffile, scipy, requests, python-dateutil, pydantic_core, psycopg, pip-check, openpyxl, opencv-python-headless, opencv-python, onnx, lazy_loader, imageio, Django, contourpy, coloredlogs, APScheduler, scikit-learn, scikit-image, pydantic, onnxruntime-gpu, matplotlib, djangorestframework, django-import-export, django-filter, django-apscheduler, albucore, albumentations, insightface
+  Attempting uninstall: packaging
+    Found existing installation: packaging 26.0
+    Uninstalling packaging-26.0:
+      Successfully uninstalled packaging-26.0
+Successfully installed APScheduler-3.10.4 Cython-3.1.3 Django-5.2.5 PyYAML-6.0.2 albucore-0.0.24 albumentations-2.0.8 annotated-types-0.7.0 asgiref-3.9.1 certifi-2025.8.3 charset-normalizer-3.4.3 coloredlogs-15.0.1 contourpy-1.3.3 cycler-0.12.1 diff-match-patch-20241021 django-apscheduler-0.6.2 django-filter-24.3 django-import-export-4.3.9 djangorestframework-3.15.2 easydict-1.13 et_xmlfile-2.0.0 flatbuffers-25.2.10 fonttools-4.59.1 humanfriendly-10.0 idna-3.10 imageio-2.37.0 insightface-0.7.3 joblib-1.5.1 kiwisolver-1.4.9 lazy_loader-0.4 matplotlib-3.10.5 mpmath-1.3.0 networkx-3.5 numpy-2.2.6 nvidia-ml-py-12.575.51 onnx-1.18.0 onnxruntime-gpu-1.22.0 opencv-python-4.12.0.88 opencv-python-headless-4.13.0.92 openpyxl-3.1.5 packaging-25.0 pillow-11.3.0 pip-check-3.1 prettytable-3.16.0 protobuf-6.32.0 psutil-7.0.0 psycopg-3.2.9 psycopg-binary-3.2.9 pydantic-2.11.7 pydantic_core-2.33.2 pynvml-12.0.0 pyparsing-3.2.3 python-dateutil-2.9.0.post0 pytz-2025.2 redis-6.4.0 requests-2.32.5 scikit-image-0.25.2 scikit-learn-1.7.1 scipy-1.16.1 simsimd-6.5.1 six-1.17.0 sqlparse-0.5.3 stringzilla-3.12.6 sympy-1.14.0 tablib-3.8.0 terminaltables-3.1.10 threadpoolctl-3.6.0 tifffile-2025.6.11 tqdm-4.67.1 typing-inspection-0.4.1 typing_extensions-4.14.1 tzlocal-5.3.1 urllib3-2.5.0 wcwidth-0.2.13 xlrd-2.0.2 xlwt-1.3.0
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ cat /etc/bisk/bisk.env
+DJANGO_SETTINGS_MODULE=bisk.settings
+
+# choose ONE runner while testing to avoid heavy load/duplication
+BISK_RUNNER_IMPL=ffmpeg            # (lighter, single-camera runner) 
+# BISK_RUNNER_IMPL=ffmpeg_all      # (heavier, multi-camera orchestrator)
+
+BISK_HEARTBEAT_URL=http://127.0.0.1:8000/api/runner/heartbeat/
+BISK_PREFER_SUBSTREAM=1
+ENFORCER_LOCK_FILE=/run/bisk/enforcer.lock
+
+# keep BLAS threads small
+OMP_NUM_THREADS=1
+OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1
+
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo mkdir -p /etc/bisk1
+sudo cp /etc/bisk/bisk.env /etc/bisk1/bisk.env
+sudo cp /etc/bisk/bisk-enforcer.env /etc/bisk1/bisk-enforcer.env
+sudo chown -R root:root /etc/bisk1
+sudo chmod -R 640 /etc/bisk1
+[sudo] password for rio: 
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ mkdir -p /home/rio/db_dumps
+pg_dump -h 127.0.0.1 -U bisk -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+Password: 
+pg_dump: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "bisk"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "bisk"
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -P Diagonal1!DB -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+bash: !DB: event not found
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -P "Diagonal1!DB" -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+bash: !DB: event not found
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -P 'Diagonal1!DB' -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+/usr/lib/postgresql/16/bin/pg_dump: invalid option -- 'P'
+pg_dump: hint: Try "pg_dump --help" for more information.
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -p 'Diagonal1!DB' -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+pg_dump: error: invalid integer value "Diagonal1!DB" for connection option "port"
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -P 'Diagonal1\!DB' -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+/usr/lib/postgresql/16/bin/pg_dump: invalid option -- 'P'
+pg_dump: hint: Try "pg_dump --help" for more information.
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+Password: 
+pg_dump: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "bisk"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "bisk"
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_dump -h 127.0.0.1 -U bisk -d bisk -Fc -f /home/rio/db_dumps/bisk_prod_to_dev.dump
+Password: 
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ ls /home/rio/db_dumps/bisk_prod_to_dev.dump
+/home/rio/db_dumps/bisk_prod_to_dev.dump
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ ls -lh /home/rio/db_dumps/bisk_prod_to_dev.dump
+-rw-rw-r-- 1 rio rio 3.2M Mar 17 14:45 /home/rio/db_dumps/bisk_prod_to_dev.dump
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo -u postgres psql
+[sudo] password for rio: 
+psql (16.13 (Ubuntu 16.13-0ubuntu0.24.04.1))
+Type "help" for help.
+
+postgres=# CREATE DATABASE bisk_dev
+    WITH
+    OWNER = bisk
+    ENCODING = 'UTF8'
+    TEMPLATE = template0
+    LC_COLLATE = 'en_US.UTF-8'
+    LC_CTYPE = 'en_US.UTF-8';
+
+GRANT ALL PRIVILEGES ON DATABASE bisk_dev TO bisk;
+\l+ bisk_dev
+\q
+CREATE DATABASE
+GRANT
+                                                                      List of databases
+   Name   | Owner | Encoding | Locale Provider |   Collate   |    Ctype    | ICU Locale | ICU Rules | Access privileges |  Size   | Tablespace | Description 
+----------+-------+----------+-----------------+-------------+-------------+------------+-----------+-------------------+---------+------------+-------------
+ bisk_dev | bisk  | UTF8     | libc            | en_US.UTF-8 | en_US.UTF-8 |            |           | =Tc/bisk         +| 7361 kB | pg_default | 
+          |       |          |                 |             |             |            |           | bisk=CTc/bisk     |         |            | 
+(1 row)
+
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ pg_restore -h 127.0.0.1 -U bisk -d bisk_dev --clean --if-exists --no-owner --no-privileges /home/rio/db_dumps/bisk_prod_to_dev.dump
+Password: 
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ psql -h 127.0.0.1 -U bisk -d bisk_dev -c "\dt"
+Password for user bisk: 
+                       List of relations
+ Schema |                 Name                 | Type  | Owner 
+--------+--------------------------------------+-------+-------
+ public | attendance_attendanceevent           | table | bisk
+ public | attendance_attendancerecord          | table | bisk
+ public | attendance_dashboardtag              | table | bisk
+ public | attendance_faceembedding             | table | bisk
+ public | attendance_lunchsubscription         | table | bisk
+ public | attendance_periodoccurrence          | table | bisk
+ public | attendance_periodtemplate            | table | bisk
+ public | attendance_periodtemplate_usage_tags | table | bisk
+ public | attendance_recognitionsettings       | table | bisk
+ public | attendance_student                   | table | bisk
+ public | auth_group                           | table | bisk
+ public | auth_group_permissions               | table | bisk
+ public | auth_permission                      | table | bisk
+ public | auth_user                            | table | bisk
+ public | auth_user_groups                     | table | bisk
+ public | auth_user_user_permissions           | table | bisk
+ public | cameras_camera                       | table | bisk
+ public | cameras_camera_period_templates      | table | bisk
+ public | cameras_camera_usage_tags            | table | bisk
+ public | django_admin_log                     | table | bisk
+ public | django_content_type                  | table | bisk
+ public | django_migrations                    | table | bisk
+ public | django_session                       | table | bisk
+ public | scheduler_cameraresourceoverride     | table | bisk
+ public | scheduler_globalresourcesettings     | table | bisk
+ public | scheduler_runnerheartbeat            | table | bisk
+ public | scheduler_runningprocess             | table | bisk
+ public | scheduler_scheduleexception          | table | bisk
+ public | scheduler_schedulepolicy             | table | bisk
+ public | scheduler_schedulepolicy_cameras     | table | bisk
+ public | scheduler_schedulewindow             | table | bisk
+ public | scheduler_streamprofile              | table | bisk
+(32 rows)
+
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ psql -h 127.0.0.1 -U bisk -d bisk_dev -c "SELECT count(*) FROM django_migrations;"
+Password for user bisk: 
+ count 
+-------
+    74
+(1 row)
+
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ ls /etc/bisk1
+ls: cannot open directory '/etc/bisk1': Permission denied
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ ls /etc/bisk
+bisk-enforcer.env  bisk.env
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ ls /etc/bisk
+bisk/  bisk1/ 
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo ls /etc/bisk1
+bisk-enforcer.env  bisk.env
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo cat /etc/bisk1/bisk-enforcer.env
+# Environment for bisk-enforcer.service
+DJANGO_SETTINGS_MODULE=bisk.settings
+# Ensure service (and CLI) use the same shared lock path:
+BISK_RUNNER_IMPL=ffmpeg_all
+BISK_HEARTBEAT_URL=http://127.0.0.1:8000/api/runner/heartbeat/
+BISK_HEARTBEAT_KEY=dev-key-change-me
+BISK_PREFER_SUBSTREAM=0
+ENFORCER_LOCK_FILE=/run/bisk/enforcer.lock
+OMP_NUM_THREADS=1
+OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1
+# Add more app-specific env here (e.g., TZ=Asia/Baghdad)
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo cat /etc/bisk1/bisk.env
+DJANGO_SETTINGS_MODULE=bisk.settings
+
+# choose ONE runner while testing to avoid heavy load/duplication
+BISK_RUNNER_IMPL=ffmpeg            # (lighter, single-camera runner) 
+# BISK_RUNNER_IMPL=ffmpeg_all      # (heavier, multi-camera orchestrator)
+
+BISK_HEARTBEAT_URL=http://127.0.0.1:8000/api/runner/heartbeat/
+BISK_PREFER_SUBSTREAM=1
+ENFORCER_LOCK_FILE=/run/bisk/enforcer.lock
+
+# keep BLAS threads small
+OMP_NUM_THREADS=1
+OPENBLAS_NUM_THREADS=1
+MKL_NUM_THREADS=1
+
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo nano /etc/bisk1/bisk-enforcer.env
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo nano /etc/bisk1/bisk.env
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo cat /etc/bisk1/bisk-enforcer.env
+DJANGO_SETTINGS_MODULE=bisk.settings
+
+DB_NAME=bisk_dev
+DB_USER=bisk
+DB_PASSWORD=DiagonalDB1!
+DB_HOST=127.0.0.1
+DB_PORT=5432
+
+BISK_HEARTBEAT_URL=http://127.0.0.1:8001/api/runner/heartbeat/
+BISK_HEARTBEAT_KEY=dev-key-change-me-bisk1
+BISK_RUNNER_IMPL=ffmpeg_all
+BISK_STRICT_BINARIES=1
+
+ENFORCER_LOCK_FILE=/run/bisk1/enforcer.lock
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo cat /etc/bisk1/bisk.env
+DJANGO_SETTINGS_MODULE=bisk.settings
+
+DB_NAME=bisk_dev
+DB_USER=bisk
+DB_PASSWORD=DiagonalDB1!
+DB_HOST=127.0.0.1
+DB_PORT=5432
+
+BISK_HEARTBEAT_URL=http://127.0.0.1:8001/api/runner/heartbeat/
+BISK_HEARTBEAT_KEY=dev-key-change-me-bisk1
+BISK_RUNNER_IMPL=ffmpeg_all
+BISK_STRICT_BINARIES=1
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ sudo chown root:root /etc/bisk1/bisk.env /etc/bisk1/bisk-enforcer.env
+sudo chmod 640 /etc/bisk1/bisk.env /etc/bisk1/bisk-enforcer.env
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ 
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ cd /home/rio/PycharmProjects/BISK_RFv4-1
+mkdir -p media/logs/systemd
+mkdir -p media/logs/diag_bundles
+mkdir -p media/snapshots
+mkdir -p staticfiles
+mkdir -p media/upload_tmp
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ chown -R rio:rio /home/rio/PycharmProjects/BISK_RFv4-1
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ export $(sudo xargs -d '\n' -a /etc/bisk1/bisk.env)
+python manage.py showmigrations
+Traceback (most recent call last):
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/manage.py", line 22, in <module>
+    main()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/manage.py", line 18, in main
+    execute_from_command_line(sys.argv)
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/core/management/__init__.py", line 442, in execute_from_command_line
+    utility.execute()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/core/management/__init__.py", line 416, in execute
+    django.setup()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/__init__.py", line 24, in setup
+    apps.populate(settings.INSTALLED_APPS)
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/apps/registry.py", line 91, in populate
+    app_config = AppConfig.create(entry)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/apps/config.py", line 193, in create
+    import_module(entry)
+  File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'whitenoise'
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ export $(sudo xargs -d '\n' -a /etc/bisk1/bisk.env)
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ python manage.py showmigrations
+Traceback (most recent call last):
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/manage.py", line 22, in <module>
+    main()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/manage.py", line 18, in main
+    execute_from_command_line(sys.argv)
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/core/management/__init__.py", line 442, in execute_from_command_line
+    utility.execute()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/core/management/__init__.py", line 416, in execute
+    django.setup()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/__init__.py", line 24, in setup
+    apps.populate(settings.INSTALLED_APPS)
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/apps/registry.py", line 91, in populate
+    app_config = AppConfig.create(entry)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/apps/config.py", line 193, in create
+    import_module(entry)
+  File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'whitenoise'
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ python manage.py dbshell
+Traceback (most recent call last):
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/manage.py", line 22, in <module>
+    main()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/manage.py", line 18, in main
+    execute_from_command_line(sys.argv)
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/core/management/__init__.py", line 442, in execute_from_command_line
+    utility.execute()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/core/management/__init__.py", line 416, in execute
+    django.setup()
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/__init__.py", line 24, in setup
+    apps.populate(settings.INSTALLED_APPS)
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/apps/registry.py", line 91, in populate
+    app_config = AppConfig.create(entry)
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/rio/PycharmProjects/BISK_RFv4-1/.venv/lib/python3.12/site-packages/django/apps/config.py", line 193, in create
+    import_module(entry)
+  File "/usr/lib/python3.12/importlib/__init__.py", line 90, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1310, in _find_and_load_unlocked
+  File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+  File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1324, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'whitenoise'
+(.venv) rio@GP73:~/PycharmProjects/BISK_RFv4-1$ 
+
