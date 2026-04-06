@@ -19,8 +19,8 @@ def portal_home(request):
             or u.is_staff
     )
     )
-    can_lunch = u.is_authenticated and (
-            u.groups.filter(name="lunch_supervisor").exists()
+    can_meal = u.is_authenticated and (
+            u.groups.filter(name="meal_supervisor").exists()
             or can_admin
     )
     can_system = u.is_authenticated and can_admin  # adjust if you want broader access
@@ -28,7 +28,7 @@ def portal_home(request):
     return render(request, "core/home.html", {
         "year": datetime.now().year,
         "can_admin": can_admin,
-        "can_lunch": can_lunch,
+        "can_meal": can_meal,
         "can_system": can_system,
     })
 

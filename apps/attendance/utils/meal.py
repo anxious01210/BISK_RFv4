@@ -1,17 +1,17 @@
-# apps/attendance/utils/lunch.py
+# apps/attendance/utils/meal.py
 from django.utils import timezone
-from apps.attendance.models import Student, LunchSubscription
+from apps.attendance.models import Student, MealSubscription
 
 
-def recalc_lunch_flags_for_students(qs=None, today=None, verbose=False):
+def recalc_meal_flags_for_students(qs=None, today=None, verbose=False):
     """
-    Sync Student.has_lunch based on LunchSubscription for the given queryset.
+    Sync Student.has_meal based on MealSubscription for the given queryset.
     If qs is None, all students are processed.
 
     Logic:
-      has_lunch = True  if there is at least one ACTIVE subscription
+      has_meal = True  if there is at least one ACTIVE subscription
                          where start_date <= today <= end_date.
-      has_lunch = False otherwise.
+      has_meal = False otherwise.
     """
     if today is None:
         today = timezone.localdate()
@@ -26,8 +26,8 @@ def recalc_lunch_flags_for_students(qs=None, today=None, verbose=False):
 
     # Subscriptions that make a student eligible today.
     active_ids = set(
-        LunchSubscription.objects.filter(
-            status=LunchSubscription.STATUS_ACTIVE,
+        MealSubscription.objects.filter(
+            status=MealSubscription.STATUS_ACTIVE,
             start_date__lte=today,
             end_date__gte=today,
             student_id__in=student_ids,
@@ -35,22 +35,22 @@ def recalc_lunch_flags_for_students(qs=None, today=None, verbose=False):
     )
 
     # First, mark all in this set as False…
-    Student.objects.filter(id__in=student_ids).update(has_lunch=False)
+    Student.objects.filter(id__in=student_ids).update(has_meal=False)
     # …then mark only the eligible ones as True.
     if active_ids:
-        Student.objects.filter(id__in=active_ids).update(has_lunch=True)
+        Student.objects.filter(id__in=active_ids).update(has_meal=True)
 
     if verbose:
-        print(f"[lunch] Recalculated {len(student_ids)} students; {len(active_ids)} eligible on {today}.")
+        print(f"[meal] Recalculated {len(student_ids)} students; {len(active_ids)} eligible on {today}.")
 
     return len(active_ids), len(student_ids)
 
 
-def recalc_lunch_flags_all(today=None, verbose=False):
+def recalc_meal_flags_all(today=None, verbose=False):
     """
     Convenience wrapper for 'all students'.
     """
-    return recalc_lunch_flags_for_students(
+    return recalc_meal_flags_for_students(
         qs=Student.objects.all(),
         today=today,
         verbose=verbose,

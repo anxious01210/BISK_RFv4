@@ -20,10 +20,10 @@ urlpatterns = [
     path("api/attendance/ingest/", IngestView.as_view(), name="attendance_ingest"),
     path("api/attendance/enroll/", EnrollView.as_view(), name="attendance_enroll"),
     path("api/attendance/gallery/", GalleryView.as_view(), name="attendance_gallery"),
-    # NEW — Lunch Supervisor panel
-    path("dash/lunch/", views.lunch_page, name="lunch_page"),
-    path("dash/lunch/stream/", views.lunch_stream_rows, name="lunch_stream_rows"),
-    path("dash/lunch/confirm/", views.confirm_record, name="confirm_record"),
+    # NEW — Meal Supervisor panel
+    path("dash/meal/", views.meal_page, name="meal_page"),
+    path("dash/meal/stream/", views.meal_stream_rows, name="meal_stream_rows"),
+    path("dash/meal/confirm/", views.confirm_record, name="confirm_record"),
     # MJPEG stream endpoint (staff-only via the view)
     path("stream/live/<str:session>.mjpg", stream_views.mjpeg_stream, name="att_mjpeg_stream"),
     # synthetic publisher controls

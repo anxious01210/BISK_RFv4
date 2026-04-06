@@ -18,8 +18,8 @@
         <td>{{ r.student.full_name }}</td>
         <td>{{ r.student.grade|default:"—" }}</td>
 
-        <td>{% if r.student.has_lunch %}<span class="badge g">Eligible</span>{% else %}
-            <span class="badge r">No Lunch</span>{% endif %}</td>
+        <td>{% if r.student.has_meal %}<span class="badge g">Eligible</span>{% else %}
+            <span class="badge r">No Meal</span>{% endif %}</td>
 
         <td>{% if r.pass_count|default:1 >= 2 %}<span class="badge r">{{ r.pass_count|default:1 }}</span>
         {% else %}<span class="badge g">{{ r.pass_count|default:1 }}</span>{% endif %}</td>

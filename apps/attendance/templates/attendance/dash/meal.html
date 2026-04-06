@@ -3,7 +3,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Lunch — Live</title>
+  <title>Meal — Live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <style>
@@ -87,7 +87,7 @@
           background: #2a2a2a;
       }
 
-      /* --- Lunch photo previews --- */
+      /* --- Meal photo previews --- */
       .photos {
           display: flex;
           gap: 10px;
@@ -206,7 +206,7 @@
     <input type="hidden" name="next" value="/"/>
     <button type="submit" class="logout-btn" title="Sign out">Log out</button>
   </form>
-  <strong>Lunch — Live</strong>
+  <strong>Meal — Live</strong>
   <span id="live-counts" class="small" style="margin-left:8px;"></span>
   <div class="small" style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
     <label>Mode
@@ -313,7 +313,7 @@
 {% if show_empty_notice %}
   <div class="notice"
        style="margin:8px 0; padding:8px; background:#fff8db; border:1px solid #f1e8a8; border-radius:6px;">
-    No PeriodTemplates/Cameras tagged with <b>lunch</b>. Set tags in Admin and reload.
+    No PeriodTemplates/Cameras tagged with <b>meal</b>. Set tags in Admin and reload.
   </div>
 {% endif %}
 
@@ -348,8 +348,8 @@
 </table>
 
 <!-- HTMX driver -->
-<div id="lunch-driver"
-     hx-get="{% url 'attendance:lunch_stream_rows' %}"
+<div id="meal-driver"
+     hx-get="{% url 'attendance:meal_stream_rows' %}"
   {#     hx-trigger="load, refresh, every 2s"#}
      hx-trigger="refresh"
      hx-include="#params"
@@ -364,7 +364,7 @@
     const $ = (id) => document.getElementById(id);
 
     // elements we use a lot
-    const driver = $('lunch-driver');
+    const driver = $('meal-driver');
     const rowsBody = $('rows');
     const liveCnt = $('live-counts');
 
@@ -433,7 +433,7 @@
       }
 
       // DEBUG (optional): see what we hydrated
-      console.groupCollapsed("[lunch] hydrateFromDefaults");
+      console.groupCollapsed("[meal] hydrateFromDefaults");
       console.log("periods:", defaultsPeriods);
       console.log("cameras:", defaultsCameras);
       console.groupEnd();
@@ -443,7 +443,7 @@
       sel.addEventListener("change", () => {
         const vals = Array.from(sel.options).filter(o => o.selected).map(o => o.value);
         periodHid.value = vals.join(",");
-        htmx.trigger(document.getElementById("lunch-driver"), "refresh");
+        htmx.trigger(document.getElementById("meal-driver"), "refresh");
       });
 
       const cameraHid = document.getElementById("camera");
@@ -451,12 +451,12 @@
         cameraInp.addEventListener("change", () => {
           cameraHid.value = (cameraInp.value || "")
             .split(",").map(s => s.trim()).filter(Boolean).join(",");
-          htmx.trigger(document.getElementById("lunch-driver"), "refresh");
+          htmx.trigger(document.getElementById("meal-driver"), "refresh");
         });
       }
 
       // Kick an initial load using these hydrated values
-      htmx.trigger(document.getElementById("lunch-driver"), "refresh");
+      htmx.trigger(document.getElementById("meal-driver"), "refresh");
     })();
 
 
@@ -500,7 +500,7 @@
     }
 
     // ---------- persistence for page size ----------
-    const LS_KEY = 'lunch.page_size';
+    const LS_KEY = 'meal.page_size';
     const savedSize = localStorage.getItem(LS_KEY);
     if (savedSize && [...pageSizeSel.options].some(o => o.value === savedSize)) {
       pageSizeSel.value = savedSize;
@@ -662,7 +662,7 @@
         if (trig) {
           try {
             const data = JSON.parse(trig);
-            if (data['lunch:last_ts']) afterTsHid.value = data['lunch:last_ts'];
+            if (data['meal:last_ts']) afterTsHid.value = data['meal:last_ts'];
           } catch {
           }
         } else {
@@ -687,8 +687,8 @@
       if (!trig) return;
       try {
         const data = JSON.parse(trig);
-        if (data['lunch:page'] && data['lunch:pages']) {
-          const p = data['lunch:page'], P = data['lunch:pages'];
+        if (data['meal:page'] && data['meal:pages']) {
+          const p = data['meal:page'], P = data['meal:pages'];
           pageInfo.textContent = `Page ${p} of ${P}`;
           prevBtn.disabled = (p <= 1);
           nextBtn.disabled = (p >= P);

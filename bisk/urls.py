@@ -58,14 +58,14 @@ def root_redirect(request):
     # 1) staff/superuser/supervisor → admin
     if u.is_superuser or u.groups.filter(name="supervisor").exists():
         return redirect("/admin/")
-    # 2) lunch supervisors (non-staff or staff) → lunch dashboard
-    if u.groups.filter(name="lunch_supervisor").exists():
-        return redirect("/dash/lunch/")
+    # 2) meal supervisors (non-staff or staff) → meal dashboard
+    if u.groups.filter(name="meal_supervisor").exists():
+        return redirect("/dash/meal/")
     # 3) api users → records endpoint
     if u.groups.filter(name="api_user").exists():
         return redirect("/api/attendance/records/")
     # 4) fallback
-    # return redirect("/dash/lunch/")
+    # return redirect("/dash/meal/")
     return redirect("/home/")
 
 

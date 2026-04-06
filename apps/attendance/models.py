@@ -10,14 +10,14 @@ from django.core.exceptions import ValidationError
 
 class DashboardTag(models.Model):
     """
-    Controlled vocabulary for dashboard scoping (e.g., 'lunch', 'bus', 'assembly').
+    Controlled vocabulary for dashboard scoping (e.g., 'meal', 'bus', 'assembly').
     Use the 'slug' value in code/filters; 'name' is for display.
     """
-    LUNCH = "lunch"
+    MEAL = "meal"
     BUS = "bus"
     ASSEMBLY = "assembly"
     SLUG_CHOICES = [
-        (LUNCH, "Lunch"),
+        (MEAL, "Meal"),
         (BUS, "Bus"),
         (ASSEMBLY, "Assembly"),
     ]
@@ -57,7 +57,7 @@ class Student(models.Model):
     gender = models.CharField(max_length=6, choices=GENDER_CHOICES, blank=True, null=True, db_index=True)
 
     grade = models.CharField(max_length=32, blank=True, null=True, db_index=True)
-    has_lunch = models.BooleanField(default=False, db_index=True)
+    has_meal = models.BooleanField(default=False, db_index=True)
     has_bus = models.BooleanField(default=False, db_index=True)
 
     # --- helper: derive face_gallery first image (no ImageField yet) ---
@@ -239,7 +239,7 @@ class RecognitionSettings(models.Model):
             "Gap in seconds to count a *new pass* for pass_count. "
             "Used to increment AttendanceRecord.pass_count when the same student reappears "
             "after this gap within the same period. Typical 60–240."
-            "We meant to use it for the LUNCH periods for the student waiting in queue, e.x. lunch-pri & lunch-sec"
+            "We meant to use it for the MEAL periods for the student waiting in queue, e.x. meal-pri & meal-sec"
         ),
     )
     min_improve_delta = models.FloatField(
@@ -482,7 +482,7 @@ class FaceEmbedding(models.Model):
         return f"{self.student.h_code} • dim={self.dim} • {'on' if self.is_active else 'off'}"
 
 
-class LunchSubscription(models.Model):
+class MealSubscription(models.Model):
     TYPE_ANNUAL = "annual"
     TYPE_MONTHLY = "monthly"
     TYPE_OTHER = "other"
@@ -506,7 +506,7 @@ class LunchSubscription(models.Model):
     student = models.ForeignKey(
         "attendance.Student",
         on_delete=models.CASCADE,
-        related_name="lunch_subscriptions",
+        related_name="meal_subscriptions",
     )
     plan_type = models.CharField(
         max_length=20,
@@ -514,8 +514,8 @@ class LunchSubscription(models.Model):
         default=TYPE_MONTHLY,
         help_text="Annual / monthly / other – mainly for reporting.",
     )
-    lunch_profile = models.ForeignKey(
-        "attendance.LunchProfile",
+    meal_profile = models.ForeignKey(
+        "attendance.MealProfile",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
@@ -571,7 +571,7 @@ class LunchSubscription(models.Model):
 
         # Overlap check only when saving an ACTIVE subscription
         if self.status == self.STATUS_ACTIVE and self.student_id and self.start_date and self.end_date:
-            clash = LunchSubscription.objects.filter(
+            clash = MealSubscription.objects.filter(
                 student_id=self.student_id,
                 status=self.STATUS_ACTIVE,
             ).exclude(pk=self.pk).filter(
@@ -745,7 +745,7 @@ class DiscountRule(models.Model):
         return f"{self.discount_profile.name} / {self.rule_type}"
 
 
-class LunchProfile(models.Model):
+class MealProfile(models.Model):
     MODE_DATE_RANGE = "date_range"
     MODE_WALLET = "wallet"
 
@@ -772,7 +772,7 @@ class LunchProfile(models.Model):
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="lunch_profiles",
+        related_name="meal_profiles",
     )
 
     insufficient_funds_mode = models.CharField(
@@ -802,30 +802,30 @@ class LunchProfile(models.Model):
         return self.name
 
 
-class LunchProfilePeriod(models.Model):
-    lunch_profile = models.ForeignKey(
-        "attendance.LunchProfile",
+class MealProfilePeriod(models.Model):
+    meal_profile = models.ForeignKey(
+        "attendance.MealProfile",
         on_delete=models.CASCADE,
         related_name="period_prices",
     )
     period_template = models.ForeignKey(
         "attendance.PeriodTemplate",
         on_delete=models.PROTECT,
-        related_name="lunch_profile_prices",
+        related_name="meal_profile_prices",
     )
     price_iqd = models.IntegerField(default=0)
     is_enabled = models.BooleanField(default=True)
     notes = models.CharField(max_length=200, blank=True, default="")
 
     class Meta:
-        unique_together = [("lunch_profile", "period_template")]
-        ordering = ["lunch_profile__name", "period_template__order"]
+        unique_together = [("meal_profile", "period_template")]
+        ordering = ["meal_profile__name", "period_template__order"]
 
     def __str__(self):
-        return f"{self.lunch_profile.name} / {self.period_template.name} = {self.price_iqd} IQD"
+        return f"{self.meal_profile.name} / {self.period_template.name} = {self.price_iqd} IQD"
 
 
-class LunchRecord(models.Model):
+class MealRecord(models.Model):
     MODE_NONE = ""
     MODE_DATE_RANGE = "date_range"
     MODE_WALLET = "wallet"
@@ -857,23 +857,23 @@ class LunchRecord(models.Model):
     attendance_record = models.OneToOneField(
         "attendance.AttendanceRecord",
         on_delete=models.CASCADE,
-        related_name="lunch_record",
+        related_name="meal_record",
     )
 
-    lunch_subscription = models.ForeignKey(
-        "attendance.LunchSubscription",
+    meal_subscription = models.ForeignKey(
+        "attendance.MealSubscription",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="lunch_records",
+        related_name="meal_records",
     )
 
-    lunch_profile = models.ForeignKey(
-        "attendance.LunchProfile",
+    meal_profile = models.ForeignKey(
+        "attendance.MealProfile",
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="lunch_records",
+        related_name="meal_records",
     )
 
     eligible_at_time = models.BooleanField(null=True, blank=True, db_index=True)
@@ -905,7 +905,7 @@ class LunchRecord(models.Model):
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="lunch_charge_records",
+        related_name="meal_charge_records",
     )
 
     wallet_refund_transaction = models.ForeignKey(
@@ -913,7 +913,7 @@ class LunchRecord(models.Model):
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="lunch_refund_records",
+        related_name="meal_refund_records",
     )
 
     reason_code = models.CharField(max_length=32, blank=True, default="", db_index=True)
@@ -925,7 +925,7 @@ class LunchRecord(models.Model):
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="confirmed_lunch_records",
+        related_name="confirmed_meal_records",
     )
 
     reversed_at = models.DateTimeField(null=True, blank=True)
@@ -934,7 +934,7 @@ class LunchRecord(models.Model):
         null=True,
         blank=True,
         on_delete=models.PROTECT,
-        related_name="reversed_lunch_records",
+        related_name="reversed_meal_records",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -946,9 +946,9 @@ class LunchRecord(models.Model):
             models.Index(fields=["status", "mode_snapshot"]),
             models.Index(fields=["eligible_at_time"]),
             models.Index(fields=["confirmed_at"]),
-            models.Index(fields=["lunch_profile"]),
-            models.Index(fields=["lunch_subscription"]),
+            models.Index(fields=["meal_profile"]),
+            models.Index(fields=["meal_subscription"]),
         ]
 
     def __str__(self):
-        return f"LunchRecord for AttendanceRecord #{self.attendance_record_id}"
+        return f"MealRecord for AttendanceRecord #{self.attendance_record_id}"

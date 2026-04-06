@@ -3,7 +3,7 @@ from import_export import resources, fields
 from import_export.widgets import ForeignKeyWidget
 from django.core.exceptions import ValidationError
 
-from .models import AttendanceRecord, Student, PeriodOccurrence, LunchSubscription
+from .models import AttendanceRecord, Student, PeriodOccurrence, MealSubscription
 from apps.cameras.models import Camera
 
 
@@ -25,11 +25,11 @@ class AttendanceRecordResource(resources.ModelResource):
     best_score = fields.Field(attribute="best_score", column_name="Best score")
     confirmed = fields.Field(attribute="confirmed", column_name="Confirmed")
 
-    # Lunch snapshot fields (the important part)
-    lunch_eligible_at_time = fields.Field(attribute="lunch_eligible_at_time", column_name="Lunch eligible at time")
-    lunch_reason_code = fields.Field(attribute="lunch_reason_code", column_name="Lunch reason code")
-    lunch_reason_notes = fields.Field(attribute="lunch_reason_notes", column_name="Lunch reason notes")
-    lunch_subscription_id = fields.Field(attribute="lunch_subscription_id", column_name="Lunch subscription ID")
+    # Meal snapshot fields (the important part)
+    meal_eligible_at_time = fields.Field(attribute="meal_eligible_at_time", column_name="Meal eligible at time")
+    meal_reason_code = fields.Field(attribute="meal_reason_code", column_name="Meal reason code")
+    meal_reason_notes = fields.Field(attribute="meal_reason_notes", column_name="Meal reason notes")
+    meal_subscription_id = fields.Field(attribute="meal_subscription_id", column_name="Meal subscription ID")
 
     def dehydrate_student_full_name(self, obj):
         # Student.full_name is a METHOD, so we call it
@@ -48,11 +48,11 @@ class AttendanceRecordResource(resources.ModelResource):
             "best_camera_name",
             "best_seen",
             "best_score",
-            "lunch_eligible_at_time",
+            "meal_eligible_at_time",
             "confirmed",
-            "lunch_reason_code",
-            "lunch_reason_notes",
-            "lunch_subscription_id",
+            "meal_reason_code",
+            "meal_reason_notes",
+            "meal_subscription_id",
         )
         fields = export_order
 

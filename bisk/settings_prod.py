@@ -368,7 +368,7 @@ ATTENDANCE_COLOR_YELLOW = "#facc15"  # yellow-400
 ATTENDANCE_COLOR_ORANGE = "#f59e0b"  # orange-500
 ATTENDANCE_COLOR_RED = "#ef4444"  # red-500
 
-# For lunch Periods
+# For meal Periods
 PASS_GAP_SECONDS = 45  # between 30–60s as you prefer
 
 # --- Face crop archiving (for runner) ---

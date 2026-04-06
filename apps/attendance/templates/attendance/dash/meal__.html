@@ -3,7 +3,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>Lunch — Live</title>
+  <title>Meal — Live</title>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <style>
@@ -64,7 +64,7 @@
           opacity: .8;
       }
 
-      /* --- Lunch photo previews --- */
+      /* --- Meal photo previews --- */
       .photos {
           display: flex;
           gap: 6px;
@@ -175,7 +175,7 @@
 <body>
 
 <div class="sticky-head">
-  <strong>Lunch — Live</strong>
+  <strong>Meal — Live</strong>
   <span id="live-counts" class="small" style="margin-left:8px;"></span>
   <div class="small" style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
     <label>Mode
@@ -191,8 +191,8 @@
 
     <label>Periods
       <select id="periodSel" multiple size="2">
-        <option value="lunch-pri" selected>lunch-pri</option>
-        <option value="lunch-sec" selected>lunch-sec</option>
+        <option value="meal-pri" selected>meal-pri</option>
+        <option value="meal-sec" selected>meal-sec</option>
       </select>
     </label>
 
@@ -262,7 +262,7 @@
 <form id="params">
   <input type="hidden" name="mode" id="mode_input" value="latest">
   <input type="hidden" name="last_n" id="last_n" value="">
-  <input type="hidden" name="period" id="period" value="lunch-pri,lunch-sec">
+  <input type="hidden" name="period" id="period" value="meal-pri,meal-sec">
   <input type="hidden" name="camera" id="camera" value="">
   <input type="hidden" name="eligible_only" id="eligible_only" value="">
   <input type="hidden" name="min_score" id="min_score" value="">
@@ -293,8 +293,8 @@
 </table>
 
 <!-- HTMX driver -->
-<div id="lunch-driver"
-     hx-get="{% url 'attendance:lunch_stream_rows' %}"
+<div id="meal-driver"
+     hx-get="{% url 'attendance:meal_stream_rows' %}"
   {#     hx-trigger="load, refresh, every 2s"#}
      hx-trigger="refresh"
      hx-include="#params"
@@ -309,7 +309,7 @@
     const $ = (id) => document.getElementById(id);
 
     // elements we use a lot
-    const driver = $('lunch-driver');
+    const driver = $('meal-driver');
     const rowsBody = $('rows');
     const liveCnt = $('live-counts');
 
@@ -371,7 +371,7 @@
 
     function updatePeriods() {
       const vals = Array.from(periodSel.selectedOptions).map(o => o.value);
-      periodInp.value = vals.join(',') || 'lunch-pri,lunch-sec';
+      periodInp.value = vals.join(',') || 'meal-pri,meal-sec';
     }
 
     function updateEligible() {
@@ -391,7 +391,7 @@
     }
 
     // ---------- persistence for page size ----------
-    const LS_KEY = 'lunch.page_size';
+    const LS_KEY = 'meal.page_size';
     const savedSize = localStorage.getItem(LS_KEY);
     if (savedSize && [...pageSizeSel.options].some(o => o.value === savedSize)) {
       pageSizeSel.value = savedSize;
@@ -529,7 +529,7 @@
         if (trig) {
           try {
             const data = JSON.parse(trig);
-            if (data['lunch:last_ts']) afterTsHid.value = data['lunch:last_ts'];
+            if (data['meal:last_ts']) afterTsHid.value = data['meal:last_ts'];
           } catch {
           }
         } else {
@@ -549,8 +549,8 @@
       if (!trig) return;
       try {
         const data = JSON.parse(trig);
-        if (data['lunch:page'] && data['lunch:pages']) {
-          const p = data['lunch:page'], P = data['lunch:pages'];
+        if (data['meal:page'] && data['meal:pages']) {
+          const p = data['meal:page'], P = data['meal:pages'];
           pageInfo.textContent = `Page ${p} of ${P}`;
           prevBtn.disabled = (p <= 1);
           nextBtn.disabled = (p >= P);

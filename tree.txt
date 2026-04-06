@@ -44,11 +44,11 @@
 │   │   │   ├── 0020_attendancerecord_confirmed_and_more.py
 │   │   │   ├── 0021_dashboardtag_periodtemplate_usage_tags.py
 │   │   │   ├── 0022_alter_student_grade.py
-│   │   │   ├── 0022_lunchsubscription.py
-│   │   │   ├── 0023_merge_0022_alter_student_grade_0022_lunchsubscription.py
+│   │   │   ├── 0022_mealsubscription.py
+│   │   │   ├── 0023_merge_0022_alter_student_grade_0022_mealsubscription.py
 │   │   │   ├── 0024_alter_student_grade.py
 │   │   │   ├── 0025_student_gender_alter_student_grade.py
-│   │   │   ├── 0026_attendancerecord_lunch_eligible_at_time_and_more.py
+│   │   │   ├── 0026_attendancerecord_meal_eligible_at_time_and_more.py
 │   │   │   ├── 0027_alter_lunchsubscription_end_date_and_more.py
 │   │   │   ├── __init__.py
 │   │   │   └── __pycache__

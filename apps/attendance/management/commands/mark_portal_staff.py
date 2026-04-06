@@ -1,10 +1,10 @@
 from django.core.management.base import BaseCommand
 from django.contrib.auth.models import Group
 
-TARGET_GROUPS = ("api_user", "lunch_supervisor")
+TARGET_GROUPS = ("api_user", "meal_supervisor")
 
 class Command(BaseCommand):
-    help = "Mark members of api_user & lunch_supervisor as staff so they can use the Admin login page."
+    help = "Mark members of api_user & meal_supervisor as staff so they can use the Admin login page."
 
     def handle(self, *args, **opts):
         changed = 0

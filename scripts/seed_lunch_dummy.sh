@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Seed lunch AttendanceRecord data for testing (1 row per student×period)
+# Seed meal AttendanceRecord data for testing (1 row per student×period)
 # Usage:
-#   bash scripts/seed_lunch_dummy.sh ./manage.py Dept_01 Dept_02
+#   bash scripts/seed_meal_dummy.sh ./manage.py Dept_01 Dept_02
 #   # or with no camera args to use all cameras in DB:
-#   bash scripts/seed_lunch_dummy.sh ./manage.py
+#   bash scripts/seed_meal_dummy.sh ./manage.py
 set -euo pipefail
 
 MANAGE_PY="${1:-./manage.py}"
@@ -46,7 +46,7 @@ HCODES = [
 "H250013","H180126","H190018","H180125","H250029","H220284",
 "H210262","H210261","H210260","H250047","H250046","H210014"
 ]
-PERIOD_NAMES = ["lunch-pri","lunch-sec"]  # the view filters by template name. :contentReference[oaicite:2]{index=2}
+PERIOD_NAMES = ["meal-pri","meal-sec"]  # the view filters by template name. :contentReference[oaicite:2]{index=2}
 
 tz    = timezone.get_current_timezone()
 now   = timezone.localtime()
@@ -55,7 +55,7 @@ today = now.date()
 aware = lambda dt: timezone.make_aware(dt, tz)
 def at_local(h,m=0,s=0): return aware(datetime(today.year, today.month, today.day, h, m, s))
 
-# realistic lunch window for your UI times. :contentReference[oaicite:3]{index=3}
+# realistic meal window for your UI times. :contentReference[oaicite:3]{index=3}
 WINDOW_START = at_local(13, 0, 0)
 WINDOW_END   = at_local(13, 59, 0)
 clamp = lambda dt: max(WINDOW_START, min(WINDOW_END, dt))
@@ -94,7 +94,7 @@ with transaction.atomic():
     for i, h in enumerate(HCODES):
         st, _ = Student.objects.get_or_create(
             h_code=h,
-            defaults=dict(first_name=f"Student{h[-3:]}", last_name="Dummy", grade=9, has_lunch=True)
+            defaults=dict(first_name=f"Student{h[-3:]}", last_name="Dummy", grade=9, has_meal=True)
         )
         for p_name in PERIOD_NAMES:
             per = get_or_create_period_for_today(p_name)
@@ -141,9 +141,9 @@ print(f"[OK] upserted {upserted} AttendanceRecord row(s) (1 per student×period)
 PY
 
 
-# chmod +x scripts/seed_lunch_dummy.sh
+# chmod +x scripts/seed_meal_dummy.sh
 # Randomly choose between Dept_01 and Dept_02 for each row:
-  # bash scripts/seed_lunch_dummy.sh ./manage.py Dept_01 Dept_02
+  # bash scripts/seed_meal_dummy.sh ./manage.py Dept_01 Dept_02
 
 # Or, to use all cameras currently in your DB (no names needed):
-  # bash scripts/seed_lunch_dummy.sh ./manage.py
+  # bash scripts/seed_meal_dummy.sh ./manage.py

@@ -294,14 +294,14 @@
       </section>
     {% endif %}
 
-    {% if can_lunch %}
+    {% if can_meal %}
       <section class="card">
-        <span class="badge"><span class="dot b"></span> Lunch</span>
-        <h2 class="title">Lunch Dashboard</h2>
-        <p class="desc">Monitor lunch subscriptions, usage, and daily operations.</p>
+        <span class="badge"><span class="dot b"></span> Meal</span>
+        <h2 class="title">Meal Dashboard</h2>
+        <p class="desc">Monitor meal subscriptions, usage, and daily operations.</p>
         <div class="row">
-          <span class="path">/dash/lunch/</span>
-          <a class="btn" href="/dash/lunch/">Open Lunch <span class="arrow"></span></a>
+          <span class="path">/dash/meal/</span>
+          <a class="btn" href="/dash/meal/">Open Meal <span class="arrow"></span></a>
         </div>
       </section>
     {% endif %}
@@ -317,7 +317,7 @@
         </div>
       </section>
     {% endif %}
-    {% if not can_admin and not can_lunch and not can_system %}
+    {% if not can_admin and not can_meal and not can_system %}
       <section class="card" style="grid-column: span 12;">
         <span class="badge"><span class="dot"></span> Access</span>
 

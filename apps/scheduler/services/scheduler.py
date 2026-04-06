@@ -77,25 +77,25 @@ def start_background_scheduler():
         replace_existing=True,
     )
 
-    # --- Hard-coded daily lunch eligibility recalc times (HH:MM, 24h) ---
+    # --- Hard-coded daily meal eligibility recalc times (HH:MM, 24h) ---
     # You can adjust these times later or move them into settings/DB.
-    _LUNCH_RECALC_TIMES = ("08:00", "10:00", "12:00")  # example: 3:00 and 6:45 every day
+    _MEAL_RECALC_TIMES = ("08:00", "10:00", "12:00")  # example: 3:00 and 6:45 every day
 
-    for idx, spec in enumerate(_LUNCH_RECALC_TIMES):
+    for idx, spec in enumerate(_MEAL_RECALC_TIMES):
         try:
             hour_str, minute_str = spec.split(":")
             hour = int(hour_str)
             minute = int(minute_str)
         except Exception:
-            log.error("Invalid LUNCH_RECALC time spec: %r", spec)
+            log.error("Invalid MEAL_RECALC time spec: %r", spec)
             continue
 
         sched.add_job(
-            _run_lunch_recalc,
+            _run_meal_recalc,
             trigger="cron",
             hour=hour,
             minute=minute,
-            id=f"bisk_lunch_recalc_{idx}",
+            id=f"bisk_meal_recalc_{idx}",
             coalesce=True,
             max_instances=1,
             misfire_grace_time=3600,  # tolerate being up to 1h late
@@ -122,14 +122,14 @@ def start_background_scheduler():
     return True
 
 
-def _run_lunch_recalc():
+def _run_meal_recalc():
     """
-    Daily job: recalc Student.has_lunch for all students based on LunchSubscription.
+    Daily job: recalc Student.has_meal for all students based on MealSubscription.
     Runs inside the same APScheduler instance as the camera enforcer.
     """
     try:
-        from apps.attendance.utils.lunch import recalc_lunch_flags_all
-        eligible, total = recalc_lunch_flags_all(verbose=False)
-        log.info("Lunch eligibility recalc: %s eligible out of %s students.", eligible, total)
+        from apps.attendance.utils.meal import recalc_meal_flags_all
+        eligible, total = recalc_meal_flags_all(verbose=False)
+        log.info("Meal eligibility recalc: %s eligible out of %s students.", eligible, total)
     except Exception as e:
-        log.exception("Lunch eligibility recalc failed: %s", e)
+        log.exception("Meal eligibility recalc failed: %s", e)

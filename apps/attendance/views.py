@@ -6,7 +6,7 @@ from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
 from apps.cameras.models import Camera
-from .models import DashboardTag, PeriodTemplate, AttendanceRecord
+from .models import DashboardTag, PeriodTemplate, AttendanceRecord, MealRecord
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.html import escape
 from django.views.decorators.http import require_GET, require_POST
@@ -66,12 +66,14 @@ def _row_html(rec, media_url, is_supervisor, confirm_url):
     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
     score = f"{float(rec.best_score or 0.0):.2f}"
     cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    eligible_html = "<span class='badge g'>LUNCH</span>" if getattr(st, "has_lunch", False) else "<span class='badge r'>No Lunch</span>"
+    eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
     pc = int(getattr(rec, "pass_count", 1) or 1)
     badge_class = "badge r" if pc >= 2 else "badge g"
 
     # Confirm cell
-    if getattr(rec, "confirmed", False):
+    meal = getattr(rec, "meal_record", None)
+
+    if meal and meal.status == "confirmed":
         confirm_html = "<span class='badge g'>✔ Confirmed</span>"
     elif is_supervisor:
         confirm_html = (
@@ -123,27 +125,27 @@ def _row_html(rec, media_url, is_supervisor, confirm_url):
     )
 
 
-def _is_lunch_supervisor(user) -> bool:
-    return user.is_authenticated and user.groups.filter(name="lunch_supervisor").exists()
+def _is_meal_supervisor(user) -> bool:
+    return user.is_authenticated and user.groups.filter(name="meal_supervisor").exists()
 
 
 @login_required
-def lunch_page(request):
-    if not _is_lunch_supervisor(request.user):
-        return HttpResponseForbidden("Requires lunch_supervisor")
+def meal_page(request):
+    if not _is_meal_supervisor(request.user):
+        return HttpResponseForbidden("Requires meal_supervisor")
 
-    # Precompute default lists for the toolbar (controlled vocabulary tag = 'lunch')
-    lunch_tag = DashboardTag.objects.filter(slug=DashboardTag.LUNCH).first()
+    # Precompute default lists for the toolbar (controlled vocabulary tag = 'meal')
+    meal_tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
     default_periods = []
     default_cameras = []
-    if lunch_tag:
+    if meal_tag:
         default_periods = list(
-            PeriodTemplate.objects.filter(usage_tags=lunch_tag).order_by("order").values_list("name", flat=True)
+            PeriodTemplate.objects.filter(usage_tags=meal_tag).order_by("order").values_list("name", flat=True)
         )
         now = timezone.now()
         default_cameras = list(
             Camera.objects
-            .filter(usage_tags=lunch_tag, is_active=True)
+            .filter(usage_tags=meal_tag, is_active=True)
             # .exclude(pause_until__gt=now)
             .order_by("name")
             .values_list("name", flat=True)
@@ -154,31 +156,29 @@ def lunch_page(request):
         "show_empty_notice": (not default_periods or not default_cameras),
     }
     print(f"{ctx}")
-    # return render(request, "attendance/dash/lunch.html")
-    return render(request, "attendance/dash/lunch.html", ctx)
+    # return render(request, "attendance/dash/meal.html")
+    return render(request, "attendance/dash/meal.html", ctx)
 
 @login_required
 @require_GET
-def lunch_stream_rows(request):
-    if not _is_lunch_supervisor(request.user):
-        return HttpResponseForbidden("Requires lunch_supervisor")
+def meal_stream_rows(request):
+    if not _is_meal_supervisor(request.user):
+        return HttpResponseForbidden("Requires meal_supervisor")
 
-    is_supervisor = _is_lunch_supervisor(request.user)
+    is_supervisor = _is_meal_supervisor(request.user)
     confirm_url = reverse("attendance:confirm_record")
 
     # ----- base queryset and filters (shared) -----
-    qs = (AttendanceRecord.objects
-          .select_related("student", "period__template", "best_camera")
-          .all())
+    qs = (AttendanceRecord.objects.select_related("student", "period__template", "best_camera", "meal_record"))
 
     # # Period filter
-    # period_param = request.GET.get("period", "lunch-pri,lunch-sec")
+    # period_param = request.GET.get("period", "meal-pri,meal-sec")
 
-    # Period filter — default to 'lunch'-tagged PeriodTemplates if empty
+    # Period filter — default to 'meal'-tagged PeriodTemplates if empty
     period_param = request.GET.get("period", "")
     parts = [p.strip() for p in (period_param or "").split(",") if p.strip()]
     if not parts:
-        tag = DashboardTag.objects.filter(slug=DashboardTag.LUNCH).first()
+        tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
         if tag:
             parts = list(PeriodTemplate.objects.filter(usage_tags=tag).values_list("name", flat=True))
 
@@ -198,7 +198,7 @@ def lunch_stream_rows(request):
                 cam_q |= Q(best_camera__name__iexact=c)
             qs = qs.filter(cam_q)
     else:
-        tag = DashboardTag.objects.filter(slug=DashboardTag.LUNCH).first()
+        tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
         if tag:
             now = timezone.now()
             cams = list(
@@ -219,7 +219,7 @@ def lunch_stream_rows(request):
 
     # Eligible
     if request.GET.get("eligible_only") in ("1", "true", "True", "yes"):
-        qs = qs.filter(student__has_lunch=True)
+        qs = qs.filter(student__has_meal=True)
 
     # Min score
     try:
@@ -347,7 +347,7 @@ def lunch_stream_rows(request):
     # ------------- render rows -------------
     rows = []
     media_url = (settings.MEDIA_URL or "").rstrip("/")
-    is_supervisor = _is_lunch_supervisor(request.user)
+    is_supervisor = _is_meal_supervisor(request.user)
     confirm_url = reverse("attendance:confirm_record")
 
 
@@ -364,10 +364,10 @@ def lunch_stream_rows(request):
         if mode == "latest" and rows:
             last_ts = (qs[len(qs) - 1].best_seen if hasattr(qs, "__getitem__") else None)
             if last_ts:
-                headers["HX-Trigger"] = f'{{"lunch:last_ts": "{last_ts.astimezone().isoformat()}"}}'
+                headers["HX-Trigger"] = f'{{"meal:last_ts": "{last_ts.astimezone().isoformat()}"}}'
         elif totals:
             total, pages, page = totals
-            headers["HX-Trigger"] = f'{{"lunch:total": {total}, "lunch:pages": {pages}, "lunch:page": {page}}}'
+            headers["HX-Trigger"] = f'{{"meal:total": {total}, "meal:pages": {pages}, "meal:page": {page}}}'
     except Exception:
         pass
 
@@ -376,12 +376,12 @@ def lunch_stream_rows(request):
 
 
 
-# NEW: Lunch supervisor confirms a record
+# NEW: Meal supervisor confirms a record
 @login_required
 @require_POST
 def confirm_record(request):
-    if not _is_lunch_supervisor(request.user):
-        return HttpResponseForbidden("Requires lunch_supervisor")
+    if not _is_meal_supervisor(request.user):
+        return HttpResponseForbidden("Requires meal_supervisor")
 
     rid = request.POST.get("id") or request.POST.get("record_id")
     if not rid:
@@ -395,11 +395,25 @@ def confirm_record(request):
         return HttpResponse("Not found", status=404)
 
     # Mark confirmed
-    if not getattr(rec, "confirmed", False):
-        rec.confirmed = True
-        rec.save(update_fields=["confirmed"])
+    meal, created = MealRecord.objects.get_or_create(
+        attendance_record=rec,
+        defaults={
+            "status": MealRecord.STATUS_PENDING,
+        }
+    )
 
-    # Rebuild a single <tr> (same shape as lunch_stream_rows)
+    if meal.status != MealRecord.STATUS_CONFIRMED:
+        meal.status = MealRecord.STATUS_CONFIRMED
+        meal.confirmed_at = timezone.now()
+        meal.confirmed_by = request.user
+
+        # Basic snapshot (no wallet yet)
+        meal.mode_snapshot = MealRecord.MODE_DATE_RANGE
+        meal.eligible_at_time = rec.student.has_meal
+
+        meal.save()
+
+    # Rebuild a single <tr> (same shape as meal_stream_rows)
     st = rec.student
     media_url = (settings.MEDIA_URL or "").rstrip("/")
     h = escape(getattr(st, "h_code", ""))
@@ -407,8 +421,8 @@ def confirm_record(request):
     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
     score = f"{float(rec.best_score or 0.0):.2f}"
     cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    eligible_html = f"<span class='badge g'>LUNCH</span>" if getattr(st, 'has_lunch',
-                                                                     False) else f"<span class='badge r'>No Lunch</span>"
+    eligible_html = f"<span class='badge g'>MEAL</span>" if getattr(st, 'has_meal',
+                                                                     False) else f"<span class='badge r'>No Meal</span>"
     ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
     # ts = escape(rec.best_seen.astimezone().strftime("%Y-%m-%d %H:%M:%S"))
     pc = int(getattr(rec, "pass_count", 1) or 1)

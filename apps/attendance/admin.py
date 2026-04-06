@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from .models import (
     Student,
-    LunchSubscription,
+    MealSubscription,
     PeriodTemplate,
     PeriodOccurrence,
     AttendanceRecord,
@@ -30,12 +30,12 @@ from .models import (
     WalletTransaction,
     DiscountProfile,
     DiscountRule,
-    LunchProfile,
-    LunchProfilePeriod,
-    LunchRecord,
+    MealProfile,
+    MealProfilePeriod,
+    MealRecord,
 )
 from .services import roll_periods
-from apps.attendance.utils.lunch import recalc_lunch_flags_for_students
+from apps.attendance.utils.meal import recalc_meal_flags_for_students
 
 import urllib.request
 import requests
@@ -58,28 +58,28 @@ from django.utils.http import url_has_allowed_host_and_scheme  # if you need
 from django.db import transaction
 from django.db.models import Case, When, Value, IntegerField
 
-
 # Build a static label like "4 Used images" (falls back to "K Used images")
 _THUMBS_N = getattr(settings, "EMBEDDING_LIST_MAX_THUMBS", None)
 _THUMBS_TITLE = (f"{int(_THUMBS_N)} Used images" if isinstance(_THUMBS_N, int) and _THUMBS_N > 0 else "K Used images")
 IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".bmp")
 ALLOWED_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".gif"}  # adjust if needed
 
-# class LunchSubscriptionInline(admin.TabularInline):
-#     model = LunchSubscription
+
+# class MealSubscriptionInline(admin.TabularInline):
+#     model = MealSubscription
 #     extra = 1
 #     show_change_link = True
 #     fields = ("plan_type", "status", "start_date", "end_date", "notes")
 
-# class LunchSubscriptionInline(admin.TabularInline):
-#     model = LunchSubscription
+# class MealSubscriptionInline(admin.TabularInline):
+#     model = MealSubscription
 #     extra = 1  # one empty row by default
 #     fields = ("plan_type", "status", "start_date", "end_date", "notes")
 #     autocomplete_fields = ("student",)  # optional, but harmless
 #     show_change_link = True
 
-class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
-    model = LunchSubscription
+class MealSubscriptionInline(admin.TabularInline):  # or StackedInline
+    model = MealSubscription
     extra = 0
 
     # Built-in: shows a normal “change” link (not popup)
@@ -92,7 +92,7 @@ class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
     def edit_popup(self, obj):
         if not obj or not obj.pk:
             return "—"
-        url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
+        url = reverse("admin:attendance_mealsubscription_change", args=[obj.pk])
         popup_url = f"{url}?_popup=1"
         return format_html(
             '<a href="{}" onclick="window.open(this.href, \'lsub_{}\', '
@@ -104,35 +104,36 @@ class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
 
     edit_popup.short_description = "Edit"
 
-# class LunchSubscriptionInline(admin.TabularInline):  # or StackedInline
-#     model = LunchSubscription
-#     extra = 0
-#     can_delete = False
-#     show_change_link = False  # we’ll use our own popup link
-#
-#     # What columns to show in the inline
-#     fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
-#     readonly_fields = fields  # ✅ makes everything read-only
-#
-#     def edit_popup(self, obj):
-#         if not obj or not obj.pk:
-#             return "—"
-#         url = reverse("admin:attendance_lunchsubscription_change", args=[obj.pk])
-#         popup_url = f"{url}?_popup=1"
-#         return format_html(
-#             '<a class="button" href="{}" onclick="window.open(this.href, \'lsub_{}\', '
-#             '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
-#             'Edit (popup)</a>',
-#             popup_url,
-#             obj.pk,
-#         )
-#     edit_popup.short_description = "Edit"
+    # class MealSubscriptionInline(admin.TabularInline):  # or StackedInline
+    #     model = MealSubscription
+    #     extra = 0
+    #     can_delete = False
+    #     show_change_link = False  # we’ll use our own popup link
+    #
+    #     # What columns to show in the inline
+    #     fields = ("plan_type", "status", "start_date", "end_date", "notes", "edit_popup")
+    #     readonly_fields = fields  # ✅ makes everything read-only
+    #
+    #     def edit_popup(self, obj):
+    #         if not obj or not obj.pk:
+    #             return "—"
+    #         url = reverse("admin:attendance_mealsubscription_change", args=[obj.pk])
+    #         popup_url = f"{url}?_popup=1"
+    #         return format_html(
+    #             '<a class="button" href="{}" onclick="window.open(this.href, \'lsub_{}\', '
+    #             '\'height=800,width=1100,resizable=yes,scrollbars=yes\'); return false;">'
+    #             'Edit (popup)</a>',
+    #             popup_url,
+    #             obj.pk,
+    #         )
+    #     edit_popup.short_description = "Edit"
 
     # def has_add_permission(self, request, obj=None):
     #     return False  # ✅ prevents adding inline rows
 
     def has_delete_permission(self, request, obj=None):
         return False  # ✅ prevents delete checkbox
+
 
 def _score_to_color_and_text(raw_score: float):
     s = float(raw_score or 0.0)
@@ -351,34 +352,34 @@ class DashboardTagAdmin(admin.ModelAdmin):
 
 @admin.register(Student)
 class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
-    list_display = ("h_code", "is_active", "full_name", "gender", "grade", "gallery_count", "gallery_thumb", "has_lunch",
+    list_display = ("h_code", "is_active", "full_name", "gender", "grade", "gallery_count", "gallery_thumb", "has_meal",
                     "has_bus")
     search_fields = ("h_code", "first_name", "middle_name", "last_name")
-    list_filter = ("is_active", "has_lunch", "gender", "grade",)
-    inlines = [LunchSubscriptionInline]
-    readonly_fields = ("has_lunch", "has_bus")
+    list_filter = ("is_active", "has_meal", "gender", "grade",)
+    inlines = [MealSubscriptionInline]
+    readonly_fields = ("has_meal", "has_bus")
     actions = [
         sort_gallery_intake_action,  # move only
         sort_gallery_intake_crop_keep_action,  # crop + keep raw
         sort_gallery_intake_crop_discard_action,  # crop + discard raw (enhanced)
         enroll_from_folder_action, build_embeddings_pkl_action,
-        "action_recalc_lunch_for_selected",
+        "action_recalc_meal_for_selected",
     ]
 
     change_list_template = "admin/attendance/student/change_list.html"
 
-    def action_recalc_lunch_for_selected(self, request, queryset):
+    def action_recalc_meal_for_selected(self, request, queryset):
         """
-        Admin action: recalc Student.has_lunch only for the selected students.
+        Admin action: recalc Student.has_meal only for the selected students.
         """
-        eligible, total = recalc_lunch_flags_for_students(qs=queryset, verbose=False)
+        eligible, total = recalc_meal_flags_for_students(qs=queryset, verbose=False)
         self.message_user(
             request,
-            f"Recalculated lunch eligibility for {total} student(s); {eligible} currently eligible.",
+            f"Recalculated meal eligibility for {total} student(s); {eligible} currently eligible.",
             level=messages.INFO,
         )
 
-    action_recalc_lunch_for_selected.short_description = "Recalculate lunch eligibility for selected students"
+    action_recalc_meal_for_selected.short_description = "Recalculate meal eligibility for selected students"
 
     resource_class = StudentResource
 
@@ -502,8 +503,8 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
             return 0
         total = 0
         for name in os.listdir(folder):
-                if os.path.splitext(name)[1].lower() in IMG_EXTS:
-                    total += 1
+            if os.path.splitext(name)[1].lower() in IMG_EXTS:
+                total += 1
         return total
 
     gallery_count.short_description = "Images"
@@ -521,8 +522,8 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
     gallery_thumb.short_description = "Thumb"
 
 
-# class LunchSubscriptionResource(resources.ModelResource):
-#     # This field maps CSV column "h_code" → LunchSubscription.student FK via Student.h_code
+# class MealSubscriptionResource(resources.ModelResource):
+#     # This field maps CSV column "h_code" → MealSubscription.student FK via Student.h_code
 #     student_h_code = fields.Field(
 #         column_name="h_code",
 #         attribute="student",
@@ -530,7 +531,7 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
 #     )
 #
 #     class Meta:
-#         model = LunchSubscription
+#         model = MealSubscription
 #         # Fields to import/export
 #         fields = (
 #             "id",  # optional, handy for export
@@ -555,8 +556,8 @@ class StudentAdmin(ImportExportMixin, admin.ModelAdmin):
 #             "updated_at",
 #         )
 
-class LunchSubscriptionResource(resources.ModelResource):
-    # CSV column "h_code" -> LunchSubscription.student via Student.h_code
+class MealSubscriptionResource(resources.ModelResource):
+    # CSV column "h_code" -> MealSubscription.student via Student.h_code
     student_h_code = fields.Field(
         column_name="h_code",
         attribute="student",
@@ -564,7 +565,7 @@ class LunchSubscriptionResource(resources.ModelResource):
     )
 
     class Meta:
-        model = LunchSubscription
+        model = MealSubscription
 
         # ✅ Important: don't import created_at/updated_at (they should be DB-managed)
         fields = (
@@ -592,20 +593,29 @@ class LunchSubscriptionResource(resources.ModelResource):
         raw = str(raw)
 
         # replace common invisible problems
-        raw = raw.replace("\ufeff", "")   # BOM
+        raw = raw.replace("\ufeff", "")  # BOM
         raw = raw.replace("\u00a0", " ")  # NBSP
         raw = raw.strip().upper()
 
         row["h_code"] = raw
 
 
-@admin.register(LunchSubscription)
-class LunchSubscriptionAdmin(ImportExportMixin, admin.ModelAdmin):
-    resource_class = LunchSubscriptionResource
-    autocomplete_fields = ["student"]   # <-- this replaces the dropdown with a search box
+@admin.register(MealSubscription)
+class MealSubscriptionAdmin(ImportExportMixin, admin.ModelAdmin):
+    resource_class = MealSubscriptionResource
+    autocomplete_fields = ["student", "meal_profile"]  # <-- this replaces the dropdown with a search box
 
-    list_display = ("student", "plan_type", "status", "start_date", "end_date", "active_today_flag", "notes")
-    list_filter = ("plan_type", "status", "start_date", "end_date")
+    list_display = (
+        "student",
+        "plan_type",
+        "meal_profile",
+        "status",
+        "start_date",
+        "end_date",
+        "active_today_flag",
+        "notes",
+    )
+    list_filter = ("plan_type", "meal_profile", "status", "start_date", "end_date")
     search_fields = ("student__h_code", "student__first_name", "student__middle_name", "student__last_name", "notes")
 
     def active_today_flag(self, obj):
@@ -617,88 +627,207 @@ class LunchSubscriptionAdmin(ImportExportMixin, admin.ModelAdmin):
     active_today_flag.short_description = "Active today?"
 
 
-# @admin.register(LunchSubscription)
-# class LunchSubscriptionAdmin(admin.ModelAdmin):
-#     list_display = ("student", "plan_type", "status", "start_date", "end_date", "active_today_flag")
-#     list_filter = ("plan_type", "status", "start_date", "end_date")
-#     search_fields = ("student__h_code", "student__first_name", "student__last_name")
-#
-#     def active_today_flag(self, obj):
-#         from django.utils import timezone
-#         today = timezone.localdate()
-#         return obj.is_active_on(today)
-#
-#     active_today_flag.boolean = True
-#     active_today_flag.short_description = "Active today?"
+class MealProfilePeriodInline(admin.TabularInline):
+    model = MealProfilePeriod
+    extra = 0
+    fields = ("period_template", "price_iqd", "is_enabled", "notes")
+    autocomplete_fields = ("period_template",)
 
 
-# @admin.register(PeriodTemplate)
-# class PeriodTemplateAdmin(admin.ModelAdmin):
-#     list_display = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled",)
-#     list_filter = ("usage_tags",)
-#     search_fields = ("name",)
-#     filter_horizontal = ("usage_tags",)
-#     list_editable = ("name", "order", "start_time", "end_time", "weekdays_mask", "is_enabled",)
-#     # actions = ["action_generate_next_7_days"]
-#     actions = ["action_generate_next_1_day", "action_generate_next_7_days", "action_generate_next_15_days",]
-#
-#     @admin.action(description="Generate Period Occurrences for next 1 day")
-#     def action_generate_next_1_day(self, request, queryset):
-#         """
-#         Uses your existing roll_periods(days=1). It already respects template flags,
-#         weekday masks, and grace. We call it once (global) for simplicity.
-#         """
-#         created_total = roll_periods(days=1)
-#         messages.success(request, f"Generated {created_total} occurrences (next 1 day).")
-#
-#     @admin.action(description="Generate Period Occurrences for next 7 days")
-#     def action_generate_next_7_days(self, request, queryset):
-#         """
-#         Uses your existing roll_periods(days=7). It already respects template flags,
-#         weekday masks, and grace. We call it once (global) for simplicity.
-#         """
-#         created_total = roll_periods(days=7)
-#         messages.success(request, f"Generated {created_total} occurrences (next 7 days).")
-#
-#     @admin.action(description="Generate Period Occurrences for next 15 days")
-#     def action_generate_next_15_days(self, request, queryset):
-#         """
-#         Uses your existing roll_periods(days=15). It already respects template flags,
-#         weekday masks, and grace. We call it once (global) for simplicity.
-#         """
-#         created_total = roll_periods(days=15)
-#         messages.success(request, f"Generated {created_total} occurrences (next 15 days).")
-#
-#     # Keep your custom URL/view so you can click an admin link to roll 7 days.
-#     def get_urls(self):
-#         urls = super().get_urls()
-#         extra = [path("roll-1d/", self.admin_site.admin_view(self.roll_1d_view), name="attendance_roll_1d")]
-#         return extra + urls
-#
-#     def roll_1d_view(self, request):
-#         created = roll_periods(days=1)
-#         messages.success(request, f"Generated {created} occurrences (next 1 days).")
-#         return redirect("admin:attendance_periodtemplate_changelist")
-#
-#     def get_urls(self):
-#         urls = super().get_urls()
-#         extra = [path("roll-7d/", self.admin_site.admin_view(self.roll_7d_view), name="attendance_roll_7d")]
-#         return extra + urls
-#
-#     def roll_7d_view(self, request):
-#         created = roll_periods(days=7)
-#         messages.success(request, f"Generated {created} occurrences (next 7 days).")
-#         return redirect("admin:attendance_periodtemplate_changelist")
-#
-#     def get_urls(self):
-#         urls = super().get_urls()
-#         extra = [path("roll-15d/", self.admin_site.admin_view(self.roll_15d_view), name="attendance_roll_15d")]
-#         return extra + urls
-#
-#     def roll_15d_view(self, request):
-#         created = roll_periods(days=15)
-#         messages.success(request, f"Generated {created} occurrences (next 15 days).")
-#         return redirect("admin:attendance_periodtemplate_changelist")
+class DiscountRuleInline(admin.TabularInline):
+    model = DiscountRule
+    extra = 0
+    fields = (
+        "priority",
+        "rule_type",
+        "value_iqd",
+        "value_percent",
+        "period_template",
+        "min_same_day_confirmed_meals",
+        "is_active",
+        "notes",
+    )
+    autocomplete_fields = ("period_template",)
+
+
+class MealRecordInline(admin.StackedInline):
+    model = MealRecord
+    extra = 0
+    can_delete = False
+    fk_name = "attendance_record"
+
+    readonly_fields = (
+        "status",
+        "mode_snapshot",
+        "eligible_at_time",
+        "price_base_iqd",
+        "discount_iqd",
+        "final_charge_iqd",
+        "wallet_balance_before_iqd",
+        "wallet_balance_after_iqd",
+        "meal_subscription",
+        "meal_profile",
+        "wallet_transaction",
+        "wallet_refund_transaction",
+        "confirmed_at",
+        "confirmed_by",
+        "reversed_at",
+        "reversed_by",
+        "reason_code",
+        "reason_notes",
+        "created_at",
+        "updated_at",
+    )
+
+    fields = readonly_fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+@admin.register(DiscountProfile)
+class DiscountProfileAdmin(admin.ModelAdmin):
+    list_display = ("name", "is_active", "notes")
+    list_filter = ("is_active",)
+    search_fields = ("name", "notes")
+    inlines = [DiscountRuleInline]
+
+@admin.register(MealProfile)
+class MealProfileAdmin(admin.ModelAdmin):
+    list_display = (
+        "name",
+        "mode",
+        "discount_profile",
+        "insufficient_funds_mode",
+        "allow_supervisor_confirm",
+        "allow_supervisor_unconfirm",
+        "allow_supervisor_refund",
+        "is_active",
+    )
+    list_filter = (
+        "mode",
+        "insufficient_funds_mode",
+        "is_active",
+        "allow_supervisor_confirm",
+        "allow_supervisor_unconfirm",
+        "allow_supervisor_refund",
+    )
+    search_fields = ("name", "notes")
+    autocomplete_fields = ("discount_profile",)
+    inlines = [MealProfilePeriodInline]
+
+@admin.register(Wallet)
+class WalletAdmin(admin.ModelAdmin):
+    list_display = ("student", "balance_iqd", "is_active", "updated_at")
+    list_filter = ("is_active",)
+    search_fields = (
+        "student__h_code",
+        "student__first_name",
+        "student__middle_name",
+        "student__last_name",
+        "notes",
+    )
+    autocomplete_fields = ("student",)
+    readonly_fields = ("created_at", "updated_at")
+
+@admin.register(WalletTransaction)
+class WalletTransactionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "student",
+        "wallet",
+        "tx_type",
+        "amount_iqd",
+        "balance_before_iqd",
+        "balance_after_iqd",
+        "attendance_record",
+        "created_by",
+        "is_reversal",
+        "created_at",
+    )
+    list_filter = ("tx_type", "is_reversal", "created_at")
+    search_fields = (
+        "student__h_code",
+        "student__first_name",
+        "student__middle_name",
+        "student__last_name",
+        "reason_code",
+        "notes",
+    )
+    autocomplete_fields = (
+        "wallet",
+        "student",
+        "attendance_record",
+        "created_by",
+        "reversed_transaction",
+    )
+    readonly_fields = ("created_at",)
+
+@admin.register(MealRecord)
+class MealRecordAdmin(admin.ModelAdmin):
+    date_hierarchy = "confirmed_at"
+
+    list_display = (
+        "attendance_record",
+        "student_col",
+        "period_col",
+        "status",
+        "mode_snapshot",
+        "eligible_at_time",
+        "price_base_iqd",
+        "discount_iqd",
+        "final_charge_iqd",
+        "confirmed_at",
+        "confirmed_by",
+    )
+
+    list_filter = (
+        "status",
+        "mode_snapshot",
+        "eligible_at_time",
+        "meal_profile",
+        "meal_subscription",
+        "confirmed_at",
+    )
+
+    search_fields = (
+        "attendance_record__student__h_code",
+        "attendance_record__student__first_name",
+        "attendance_record__student__middle_name",
+        "attendance_record__student__last_name",
+        "reason_code",
+        "reason_notes",
+    )
+
+    autocomplete_fields = (
+        "attendance_record",
+        "meal_subscription",
+        "meal_profile",
+        "wallet_transaction",
+        "wallet_refund_transaction",
+        "confirmed_by",
+        "reversed_by",
+    )
+
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+    )
+
+    def student_col(self, obj):
+        st = obj.attendance_record.student
+        return f"{st.h_code} — {st.full_name()}"
+
+    student_col.short_description = "Student"
+
+    def period_col(self, obj):
+        rec = obj.attendance_record
+        if not rec.period or not rec.period.template:
+            return "—"
+        return rec.period.template.name
+
+    period_col.short_description = "Period"
+
+
 
 @admin.register(PeriodTemplate)
 class PeriodTemplateAdmin(admin.ModelAdmin):
@@ -755,6 +884,7 @@ class PeriodTemplateAdmin(admin.ModelAdmin):
         messages.success(request, f"Generated {created} occurrences (next 15 days).")
         return redirect("admin:attendance_periodtemplate_changelist")
 
+
 @admin.register(PeriodOccurrence)
 class PeriodOccurrenceAdmin(admin.ModelAdmin):
     list_display = ("template", "date", "start_dt", "end_dt", "is_school_day")
@@ -766,7 +896,7 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
     resource_class = AttendanceRecordResource
     date_hierarchy = "best_seen"
-    # list_display = ("student_col", "score_col", "period_col", "best_camera", "best_seen", "face_preview",)
+    inlines = [MealRecordInline]
     list_display = (
         "student_col",
         "score_col",
@@ -775,12 +905,10 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
         "best_seen",
         "face_preview",
     )
-    # list_filter = ("period__template", "best_camera",)
     list_filter = (
         "period__template",
         "best_camera",
     )
-    # search_fields = ("student__h_code", "student__full_name")
     search_fields = (
         "student__h_code",
         "student__first_name",
@@ -789,9 +917,6 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
     )
     ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
-
-    # readonly_fields = ("student", "period", "first_seen", "last_seen", "best_seen", "best_camera",
-    #                    "best_crop_preview", "best_crop_url", "best_score", "sightings", "status")
     readonly_fields = (
         "student",
         "period",
@@ -806,8 +931,9 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
         "status",
     )
     exclude = ("best_crop",)
+
     # Optional: allow supervisors to quickly confirm + set reason from the list
-    # list_editable = ("confirmed", "lunch_reason_code")
+    # list_editable = ("confirmed", "meal_reason_code")
 
     def _image_url(self, path: str | None) -> str | None:
         """
@@ -1042,7 +1168,7 @@ def reenroll_embeddings_action(modeladmin, request, queryset):
 class FaceEmbeddingAdmin(admin.ModelAdmin):
     change_list_template = "admin/attendance/faceembedding/change_list.html"  # <-- add this
     list_display = (
-        "student_link","student_full_name", "crops_opt_in", "is_active", "dim",
+        "student_link", "student_full_name", "crops_opt_in", "is_active", "dim",
         "last_enrolled_at", "last_used_k", "last_used_det_size",
         "images_used", "avg_used_score", "thumbs_with_chips",
         "provider_short", "arcface_model",
@@ -1051,7 +1177,8 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     list_display_links = ("student_link",)
     ordering = ("-last_enrolled_at", "-created_at",)
     list_filter = ("is_active", "dim", "provider", "arcface_model", "last_used_det_size",)
-    search_fields = ("student__h_code", "student__first_name", "student__middle_name", "student__last_name", "embedding_sha256",)
+    search_fields = ("student__h_code", "student__first_name", "student__middle_name", "student__last_name",
+                     "embedding_sha256",)
     list_editable = ["crops_opt_in", ]
     actions = [reenroll_embeddings_action, activate_embeddings, deactivate_embeddings, export_embeddings_csv]
 
@@ -1184,7 +1311,11 @@ class FaceEmbeddingAdmin(admin.ModelAdmin):
     student_link.short_description = "Student"
 
     def student_full_name(self, obj):
-        return format_html("<b>{}</b>", getattr(obj.student, "first_name", "-") + " " + getattr(obj.student, "middle_name", "-") + " " + getattr(obj.student, "last_name", "-"))
+        return format_html("<b>{}</b>",
+                           getattr(obj.student, "first_name", "-") + " " + getattr(obj.student, "middle_name",
+                                                                                   "-") + " " + getattr(obj.student,
+                                                                                                        "last_name",
+                                                                                                        "-"))
 
     student_full_name.short_description = "Full Name"
 
