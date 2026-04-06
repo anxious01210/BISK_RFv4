@@ -193,97 +193,10 @@ class AttendanceRecord(models.Model):
     )
     pass_count = models.PositiveIntegerField(default=1)  # new
     last_pass_at = models.DateTimeField(blank=True, null=True, db_index=True)  # new
-    confirmed = models.BooleanField(  # NEW
-        default=False,
-        db_index=True,
-        help_text="Manually marked by a lunch supervisor as verified."  # NEW
-    )
-    lunch_eligible_at_time = models.BooleanField(
-        null=True,
-        blank=True,
-        db_index=True,
-        help_text=(
-            "Snapshot: whether the student was eligible for lunch on this record's best_seen date. "
-            "Saved at record creation time for audit/reporting."
-        ),
-    )
-
-    # If eligible, store which subscription made them eligible.
-    # PROTECT prevents deleting a subscription that was relied on by historical attendance.
-    lunch_subscription = models.ForeignKey(
-        "attendance.LunchSubscription",
-        null=True,
-        blank=True,
-        on_delete=models.PROTECT,
-        related_name="attendance_records",
-        help_text="Subscription that made this record eligible (snapshot).",
-    )
-
-    # Lightweight dropdown (reason code) + optional notes (mainly for supervisor overrides).
-    REASON_NONE = ""
-    REASON_PAID_NOT_ENTERED = "paid_not_entered"
-    REASON_MANAGER_APPROVED = "manager_approved"
-    REASON_GUEST = "guest"
-    REASON_OTHER = "other"
-
-    LUNCH_REASON_CHOICES = [
-        (REASON_NONE, "—"),
-        (REASON_PAID_NOT_ENTERED, "Paid but not entered yet"),
-        (REASON_MANAGER_APPROVED, "Manager approved / exception"),
-        (REASON_GUEST, "Guest / visitor"),
-        (REASON_OTHER, "Other"),
-    ]
-
-    lunch_reason_code = models.CharField(
-        max_length=32,
-        blank=True,
-        default=REASON_NONE,
-        choices=LUNCH_REASON_CHOICES,
-        db_index=True,
-        help_text="Reason code when lunch confirmation needs explanation (esp. overrides).",
-    )
-
-    lunch_reason_notes = models.CharField(
-        max_length=200,
-        blank=True,
-        default="",
-        help_text="Optional notes to clarify the reason.",
-    )
 
     class Meta:
         unique_together = [("student", "period")]
         indexes = [models.Index(fields=["student", "period"])]
-
-    def save(self, *args, **kwargs):
-        """
-        Fill lunch snapshot fields once (audit-safe).
-
-        - Auto-compute ONLY when lunch_eligible_at_time is NULL.
-        - If a supervisor/admin sets it explicitly, we keep that.
-        """
-        if self.lunch_eligible_at_time is None:
-            try:
-                day = timezone.localdate(self.best_seen) if self.best_seen else timezone.localdate()
-
-                sub = LunchSubscription.objects.filter(
-                    student_id=self.student_id,
-                    status=LunchSubscription.STATUS_ACTIVE,
-                    start_date__lte=day,
-                    end_date__gte=day,
-                ).order_by("start_date", "id").first()
-
-                if sub:
-                    self.lunch_eligible_at_time = True
-                    self.lunch_subscription = sub
-                else:
-                    self.lunch_eligible_at_time = False
-                    self.lunch_subscription = None
-
-            except Exception:
-                # Fail safe: never block attendance writes
-                self.lunch_eligible_at_time = False
-
-        super().save(*args, **kwargs)
 
 
 class AttendanceEvent(models.Model):
@@ -601,6 +514,14 @@ class LunchSubscription(models.Model):
         default=TYPE_MONTHLY,
         help_text="Annual / monthly / other – mainly for reporting.",
     )
+    lunch_profile = models.ForeignKey(
+        "attendance.LunchProfile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="subscriptions",
+        help_text="Optional pricing/policy profile. Blank = basic date-range behavior."
+    )
     status = models.CharField(
         max_length=20,
         choices=STATUS_CHOICES,
@@ -670,3 +591,364 @@ class LunchSubscription(models.Model):
     def save(self, *args, **kwargs):
         self.full_clean()
         return super().save(*args, **kwargs)
+
+
+class Wallet(models.Model):
+    student = models.OneToOneField(
+        "attendance.Student",
+        on_delete=models.CASCADE,
+        related_name="wallet",
+    )
+    balance_iqd = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+    notes = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["student__h_code"]
+
+    def __str__(self):
+        return f"{self.student.h_code} wallet ({self.balance_iqd} IQD)"
+
+
+class WalletTransaction(models.Model):
+    TYPE_TOPUP = "topup"
+    TYPE_DEBIT = "debit"
+    TYPE_REFUND = "refund"
+    TYPE_ADJUSTMENT = "adjustment"
+    TYPE_UNPAID = "unpaid"
+
+    TYPE_CHOICES = [
+        (TYPE_TOPUP, "Top-up"),
+        (TYPE_DEBIT, "Debit"),
+        (TYPE_REFUND, "Refund"),
+        (TYPE_ADJUSTMENT, "Adjustment"),
+        (TYPE_UNPAID, "Unpaid"),
+    ]
+
+    wallet = models.ForeignKey(
+        "attendance.Wallet",
+        on_delete=models.CASCADE,
+        related_name="transactions",
+    )
+    student = models.ForeignKey(
+        "attendance.Student",
+        on_delete=models.PROTECT,
+        related_name="wallet_transactions",
+    )
+
+    tx_type = models.CharField(max_length=20, choices=TYPE_CHOICES, db_index=True)
+    amount_iqd = models.IntegerField(
+        help_text="Signed amount. Example: +10000 topup, -5000 debit, +5000 refund."
+    )
+    balance_before_iqd = models.IntegerField(default=0)
+    balance_after_iqd = models.IntegerField(default=0)
+
+    attendance_record = models.ForeignKey(
+        "attendance.AttendanceRecord",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="wallet_transactions",
+    )
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="created_wallet_transactions",
+    )
+
+    reason_code = models.CharField(max_length=32, blank=True, default="")
+    notes = models.CharField(max_length=200, blank=True, default="")
+
+    is_reversal = models.BooleanField(default=False)
+    reversed_transaction = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="reversal_children",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+        indexes = [
+            models.Index(fields=["wallet", "created_at"]),
+            models.Index(fields=["student", "created_at"]),
+            models.Index(fields=["attendance_record", "created_at"]),
+            models.Index(fields=["tx_type", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.student.h_code} {self.tx_type} {self.amount_iqd} IQD"
+
+
+class DiscountProfile(models.Model):
+    name = models.CharField(max_length=100, unique=True)
+    is_active = models.BooleanField(default=True)
+    notes = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class DiscountRule(models.Model):
+    TYPE_FIXED = "fixed"
+    TYPE_PERCENT = "percent"
+
+    TYPE_CHOICES = [
+        (TYPE_FIXED, "Fixed amount"),
+        (TYPE_PERCENT, "Percentage"),
+    ]
+
+    discount_profile = models.ForeignKey(
+        "attendance.DiscountProfile",
+        on_delete=models.CASCADE,
+        related_name="rules",
+    )
+
+    rule_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    value_iqd = models.IntegerField(default=0)
+    value_percent = models.PositiveSmallIntegerField(default=0)
+
+    period_template = models.ForeignKey(
+        "attendance.PeriodTemplate",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="discount_rules",
+        help_text="Blank means all periods."
+    )
+
+    min_same_day_confirmed_meals = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        help_text="Optional condition for same-day logic."
+    )
+
+    priority = models.PositiveSmallIntegerField(default=100)
+    is_active = models.BooleanField(default=True)
+    notes = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        ordering = ["priority", "id"]
+
+    def __str__(self):
+        return f"{self.discount_profile.name} / {self.rule_type}"
+
+
+class LunchProfile(models.Model):
+    MODE_DATE_RANGE = "date_range"
+    MODE_WALLET = "wallet"
+
+    MODE_CHOICES = [
+        (MODE_DATE_RANGE, "Date-range"),
+        (MODE_WALLET, "Wallet"),
+    ]
+
+    INSUFFICIENT_DENY = "deny"
+    INSUFFICIENT_ALLOW_UNPAID = "allow_unpaid"
+    INSUFFICIENT_ALLOW_NEGATIVE = "allow_negative"
+
+    INSUFFICIENT_CHOICES = [
+        (INSUFFICIENT_DENY, "Deny"),
+        (INSUFFICIENT_ALLOW_UNPAID, "Allow unpaid"),
+        (INSUFFICIENT_ALLOW_NEGATIVE, "Allow negative"),
+    ]
+
+    name = models.CharField(max_length=100, unique=True)
+    mode = models.CharField(max_length=20, choices=MODE_CHOICES, default=MODE_DATE_RANGE)
+
+    discount_profile = models.ForeignKey(
+        "attendance.DiscountProfile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="lunch_profiles",
+    )
+
+    insufficient_funds_mode = models.CharField(
+        max_length=20,
+        choices=INSUFFICIENT_CHOICES,
+        default=INSUFFICIENT_DENY,
+    )
+
+    allow_supervisor_confirm = models.BooleanField(default=True)
+    allow_supervisor_unconfirm = models.BooleanField(default=False)
+    allow_supervisor_refund = models.BooleanField(default=False)
+
+    require_reason_on_override = models.BooleanField(default=True)
+    require_reason_on_unconfirm = models.BooleanField(default=False)
+    require_reason_on_refund = models.BooleanField(default=True)
+
+    is_active = models.BooleanField(default=True)
+    notes = models.CharField(max_length=200, blank=True, default="")
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+
+class LunchProfilePeriod(models.Model):
+    lunch_profile = models.ForeignKey(
+        "attendance.LunchProfile",
+        on_delete=models.CASCADE,
+        related_name="period_prices",
+    )
+    period_template = models.ForeignKey(
+        "attendance.PeriodTemplate",
+        on_delete=models.PROTECT,
+        related_name="lunch_profile_prices",
+    )
+    price_iqd = models.IntegerField(default=0)
+    is_enabled = models.BooleanField(default=True)
+    notes = models.CharField(max_length=200, blank=True, default="")
+
+    class Meta:
+        unique_together = [("lunch_profile", "period_template")]
+        ordering = ["lunch_profile__name", "period_template__order"]
+
+    def __str__(self):
+        return f"{self.lunch_profile.name} / {self.period_template.name} = {self.price_iqd} IQD"
+
+
+class LunchRecord(models.Model):
+    MODE_NONE = ""
+    MODE_DATE_RANGE = "date_range"
+    MODE_WALLET = "wallet"
+    MODE_EXCEPTION = "exception"
+
+    MODE_CHOICES = [
+        (MODE_NONE, "—"),
+        (MODE_DATE_RANGE, "Date-range"),
+        (MODE_WALLET, "Wallet"),
+        (MODE_EXCEPTION, "Exception"),
+    ]
+
+    STATUS_PENDING = "pending"
+    STATUS_CONFIRMED = "confirmed"
+    STATUS_DENIED = "denied"
+    STATUS_UNPAID = "unpaid"
+    STATUS_REFUNDED = "refunded"
+    STATUS_VOIDED = "voided"
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, "Pending"),
+        (STATUS_CONFIRMED, "Confirmed"),
+        (STATUS_DENIED, "Denied"),
+        (STATUS_UNPAID, "Unpaid"),
+        (STATUS_REFUNDED, "Refunded"),
+        (STATUS_VOIDED, "Voided"),
+    ]
+
+    attendance_record = models.OneToOneField(
+        "attendance.AttendanceRecord",
+        on_delete=models.CASCADE,
+        related_name="lunch_record",
+    )
+
+    lunch_subscription = models.ForeignKey(
+        "attendance.LunchSubscription",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="lunch_records",
+    )
+
+    lunch_profile = models.ForeignKey(
+        "attendance.LunchProfile",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="lunch_records",
+    )
+
+    eligible_at_time = models.BooleanField(null=True, blank=True, db_index=True)
+
+    mode_snapshot = models.CharField(
+        max_length=20,
+        choices=MODE_CHOICES,
+        blank=True,
+        default=MODE_NONE,
+        db_index=True,
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+
+    price_base_iqd = models.IntegerField(default=0)
+    discount_iqd = models.IntegerField(default=0)
+    final_charge_iqd = models.IntegerField(default=0)
+
+    wallet_balance_before_iqd = models.IntegerField(default=0)
+    wallet_balance_after_iqd = models.IntegerField(default=0)
+
+    wallet_transaction = models.ForeignKey(
+        "attendance.WalletTransaction",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="lunch_charge_records",
+    )
+
+    wallet_refund_transaction = models.ForeignKey(
+        "attendance.WalletTransaction",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="lunch_refund_records",
+    )
+
+    reason_code = models.CharField(max_length=32, blank=True, default="", db_index=True)
+    reason_notes = models.CharField(max_length=200, blank=True, default="")
+
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="confirmed_lunch_records",
+    )
+
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+        related_name="reversed_lunch_records",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-attendance_record__best_seen", "-id"]
+        indexes = [
+            models.Index(fields=["status", "mode_snapshot"]),
+            models.Index(fields=["eligible_at_time"]),
+            models.Index(fields=["confirmed_at"]),
+            models.Index(fields=["lunch_profile"]),
+            models.Index(fields=["lunch_subscription"]),
+        ]
+
+    def __str__(self):
+        return f"LunchRecord for AttendanceRecord #{self.attendance_record_id}"

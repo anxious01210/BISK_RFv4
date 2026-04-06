@@ -26,6 +26,13 @@ from .models import (
     RecognitionSettings,
     FaceEmbedding,
     DashboardTag,
+    Wallet,
+    WalletTransaction,
+    DiscountProfile,
+    DiscountRule,
+    LunchProfile,
+    LunchProfilePeriod,
+    LunchRecord,
 )
 from .services import roll_periods
 from apps.attendance.utils.lunch import recalc_lunch_flags_for_students
@@ -766,18 +773,12 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
         "period_col",
         "best_camera",
         "best_seen",
-        "lunch_eligible_at_time",
-        "confirmed",
-        "lunch_reason_code",
         "face_preview",
     )
     # list_filter = ("period__template", "best_camera",)
     list_filter = (
         "period__template",
         "best_camera",
-        "confirmed",
-        "lunch_eligible_at_time",
-        "lunch_reason_code",
     )
     # search_fields = ("student__h_code", "student__full_name")
     search_fields = (
@@ -803,8 +804,6 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
         "best_score",
         "sightings",
         "status",
-        "lunch_subscription",
-        "lunch_eligible_at_time",
     )
     exclude = ("best_crop",)
     # Optional: allow supervisors to quickly confirm + set reason from the list
@@ -899,7 +898,13 @@ class AttendanceEventAdmin(admin.ModelAdmin):
     date_hierarchy = "ts"
     list_display = ("student_col", "score_col", "period_col", "camera", "ts", "face_preview",)
     list_filter = ("camera", "period__template")
-    search_fields = ("student__h_code", "student__full_name")
+    # search_fields = ("student__h_code", "student__full_name")
+    search_fields = (
+        "student__h_code",
+        "student__first_name",
+        "student__middle_name",
+        "student__last_name",
+    )
     ordering = ("-ts",)
     list_select_related = ("student", "period__template", "camera")
     readonly_fields = ("student_col", "score_col", "period_col", "camera", "ts", "face_preview", "crop_path")
