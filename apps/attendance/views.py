@@ -6,7 +6,6 @@ from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import render, get_object_or_404
 from django.utils import timezone
 from apps.cameras.models import Camera
-from .models import DashboardTag, PeriodTemplate, AttendanceRecord, MealRecord
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.html import escape
 from django.views.decorators.http import require_GET, require_POST
@@ -14,8 +13,28 @@ from django.urls import reverse
 from math import ceil
 from django.db.models import F, Window
 from django.db.models.functions import RowNumber
+from .models import (
+    DashboardTag,
+    PeriodTemplate,
+    AttendanceRecord,
+    MealSubscription,
+    MealRecord,
+    Wallet,
+    WalletTransaction,
+)
 
+def get_meal_price(meal_profile, period_template):
+    if not meal_profile or not period_template:
+        return 0
 
+    try:
+        mpp = meal_profile.period_prices.filter(
+            period_template=period_template,
+            is_enabled=True
+        ).first()
+        return mpp.price_iqd if mpp else 0
+    except Exception:
+        return 0
 
 def _parse_any(s):
     if not s:
@@ -66,15 +85,25 @@ def _row_html(rec, media_url, is_supervisor, confirm_url):
     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
     score = f"{float(rec.best_score or 0.0):.2f}"
     cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
+
+    meal = getattr(rec, "meal_record", None)
+
+    if meal and meal.eligible_at_time is True:
+        eligible_html = "<span class='badge g'>MEAL</span>"
+    elif meal and meal.eligible_at_time is False:
+        eligible_html = "<span class='badge r'>No Meal</span>"
+    else:
+        eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
     pc = int(getattr(rec, "pass_count", 1) or 1)
     badge_class = "badge r" if pc >= 2 else "badge g"
 
     # Confirm cell
-    meal = getattr(rec, "meal_record", None)
-
     if meal and meal.status == "confirmed":
         confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+    elif meal and meal.status == "denied":
+        confirm_html = "<span class='badge r'>Denied</span>"
+    elif meal and meal.status == "unpaid":
+        confirm_html = "<span class='badge r'>Unpaid</span>"
     elif is_supervisor:
         confirm_html = (
             f"<button hx-post='{confirm_url}' "
@@ -395,6 +424,25 @@ def confirm_record(request):
         return HttpResponse("Not found", status=404)
 
     # Mark confirmed
+    # Find active subscription for the record date
+    try:
+        meal_day = timezone.localdate(rec.best_seen) if rec.best_seen else timezone.localdate()
+    except Exception:
+        meal_day = timezone.localdate()
+
+    sub = (
+        MealSubscription.objects
+        .select_related("meal_profile")
+        .filter(
+            student_id=rec.student_id,
+            status=MealSubscription.STATUS_ACTIVE,
+            start_date__lte=meal_day,
+            end_date__gte=meal_day,
+        )
+        .order_by("start_date", "id")
+        .first()
+    )
+
     meal, created = MealRecord.objects.get_or_create(
         attendance_record=rec,
         defaults={
@@ -402,16 +450,133 @@ def confirm_record(request):
         }
     )
 
-    if meal.status != MealRecord.STATUS_CONFIRMED:
-        meal.status = MealRecord.STATUS_CONFIRMED
-        meal.confirmed_at = timezone.now()
-        meal.confirmed_by = request.user
+    # Snapshot subscription/profile/eligibility
+    meal.meal_subscription = sub
+    meal.meal_profile = sub.meal_profile if sub and sub.meal_profile_id else None
+    meal.eligible_at_time = bool(sub)
 
-        # Basic snapshot (no wallet yet)
-        meal.mode_snapshot = MealRecord.MODE_DATE_RANGE
-        meal.eligible_at_time = rec.student.has_meal
+    if meal.meal_profile:
+        if meal.meal_profile.mode == MealRecord.MODE_WALLET:
+            meal.mode_snapshot = MealRecord.MODE_WALLET
+        else:
+            meal.mode_snapshot = MealRecord.MODE_DATE_RANGE
+    else:
+        meal.mode_snapshot = MealRecord.MODE_DATE_RANGE if sub else MealRecord.MODE_NONE
 
-        meal.save()
+    # For now, confirmation logic is still simple:
+    # active subscription -> confirmed
+    # no subscription -> denied
+    from django.db import transaction
+
+    if sub and meal.meal_profile:
+
+        profile = meal.meal_profile
+
+        # CASE 1: DATE RANGE MODE
+        if profile.mode == MealRecord.MODE_DATE_RANGE:
+            meal.status = MealRecord.STATUS_CONFIRMED
+            meal.confirmed_at = timezone.now()
+            meal.confirmed_by = request.user
+
+        # CASE 2: WALLET MODE
+        elif profile.mode == MealRecord.MODE_WALLET:
+
+            wallet = Wallet.objects.filter(student_id=rec.student_id, is_active=True).first()
+
+            period_template = rec.period.template if rec.period else None
+            price = get_meal_price(profile, period_template)
+
+            meal.price_base_iqd = price
+            meal.discount_iqd = 0
+            meal.final_charge_iqd = price
+            meal.wallet_transaction = None
+            meal.wallet_refund_transaction = None
+            meal.wallet_balance_before_iqd = 0
+            meal.wallet_balance_after_iqd = 0
+
+            if wallet:
+                meal.wallet_balance_before_iqd = wallet.balance_iqd
+                meal.wallet_balance_after_iqd = wallet.balance_iqd
+
+                # Enough balance
+                if wallet.balance_iqd >= price:
+                    wallet.balance_iqd -= price
+                    wallet.save()
+
+                    tx = WalletTransaction.objects.create(
+                        wallet=wallet,
+                        student=rec.student,
+                        tx_type="debit",
+                        amount_iqd=price,
+                        balance_before_iqd=meal.wallet_balance_before_iqd,
+                        balance_after_iqd=wallet.balance_iqd,
+                        attendance_record=rec,
+                        created_by=request.user,
+                    )
+
+                    meal.wallet_transaction = tx
+                    meal.wallet_balance_after_iqd = wallet.balance_iqd
+                    meal.status = MealRecord.STATUS_CONFIRMED
+                    meal.confirmed_at = timezone.now()
+                    meal.confirmed_by = request.user
+
+                # Not enough balance
+                else:
+                    mode = profile.insufficient_funds_mode
+
+                    if mode == "deny":
+                        meal.status = MealRecord.STATUS_DENIED
+                        meal.confirmed_at = None
+                        meal.confirmed_by = None
+                        meal.wallet_transaction = None
+
+                    elif mode == "allow_unpaid":
+                        meal.status = MealRecord.STATUS_UNPAID
+                        meal.confirmed_at = timezone.now()
+                        meal.confirmed_by = request.user
+                        meal.wallet_balance_after_iqd = meal.wallet_balance_before_iqd
+                        meal.wallet_transaction = None
+
+                    elif mode == "allow_negative":
+                        wallet.balance_iqd -= price
+                        wallet.save()
+
+                        tx = WalletTransaction.objects.create(
+                            wallet=wallet,
+                            student=rec.student,
+                            tx_type="debit",
+                            amount_iqd=price,
+                            balance_before_iqd=meal.wallet_balance_before_iqd,
+                            balance_after_iqd=wallet.balance_iqd,
+                            attendance_record=rec,
+                            created_by=request.user,
+                        )
+
+                        meal.wallet_transaction = tx
+                        meal.wallet_balance_after_iqd = wallet.balance_iqd
+                        meal.status = MealRecord.STATUS_CONFIRMED
+                        meal.confirmed_at = timezone.now()
+                        meal.confirmed_by = request.user
+
+            else:
+                meal.status = MealRecord.STATUS_DENIED
+                meal.confirmed_at = None
+                meal.confirmed_by = None
+                meal.wallet_transaction = None
+                meal.wallet_balance_before_iqd = 0
+                meal.wallet_balance_after_iqd = 0
+
+    else:
+        meal.status = MealRecord.STATUS_DENIED
+        meal.confirmed_at = None
+        meal.confirmed_by = None
+        meal.wallet_transaction = None
+        meal.wallet_refund_transaction = None
+        meal.wallet_balance_before_iqd = 0
+        meal.wallet_balance_after_iqd = 0
+
+    meal.save()
+
 
     # Rebuild a single <tr> (same shape as meal_stream_rows)
     st = rec.student
@@ -421,13 +586,24 @@ def confirm_record(request):
     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
     score = f"{float(rec.best_score or 0.0):.2f}"
     cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    eligible_html = f"<span class='badge g'>MEAL</span>" if getattr(st, 'has_meal',
-                                                                     False) else f"<span class='badge r'>No Meal</span>"
-    ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
+    if meal.eligible_at_time is True:
+        eligible_html = "<span class='badge g'>MEAL</span>"
+    elif meal.eligible_at_time is False:
+        eligible_html = "<span class='badge r'>No Meal</span>"
+    else:
+        eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
+    # ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
     # ts = escape(rec.best_seen.astimezone().strftime("%Y-%m-%d %H:%M:%S"))
     pc = int(getattr(rec, "pass_count", 1) or 1)
     badge_class = "badge r" if pc >= 2 else "badge g"
-    confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+    if meal.status == MealRecord.STATUS_CONFIRMED:
+        confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+    elif meal.status == MealRecord.STATUS_DENIED:
+        confirm_html = "<span class='badge r'>Denied</span>"
+    elif meal.status == MealRecord.STATUS_UNPAID:
+        confirm_html = "<span class='badge r'>Unpaid</span>"
+    else:
+        confirm_html = f"<span class='badge'>{escape(meal.status.title())}</span>"
 
     crop = getattr(rec, "best_crop", "") or ""
     crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
@@ -443,6 +619,29 @@ def confirm_record(request):
     gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
     # img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
     img_html = _photos_html(gallery_url, crop_url)
+
+    def fmt_hms(dt):
+        if not dt:
+            return "—"
+        try:
+            return dt.astimezone(timezone.get_current_timezone()).strftime("%H:%M:%S")
+        except Exception:
+            try:
+                return dt.strftime("%H:%M:%S")
+            except Exception:
+                return "—"
+
+    t_first = fmt_hms(getattr(rec, "first_seen", None))
+    t_best = fmt_hms(getattr(rec, "best_seen", None))
+    t_last = fmt_hms(getattr(rec, "last_seen", None))
+    t_pass = fmt_hms(getattr(rec, "last_pass_at", None))
+
+    times_html = (
+        f"<span class='small'><span class='k'>first:</span> {t_first}</span><br/>"
+        f"<span class='small'><span class='k'>best:</span> {t_best}</span><br/>"
+        f"<span class='small'><span class='k'>last:</span> {t_last}</span>"
+    )
+    pass_html = f"<span class='small'>{t_pass}</span>"
 
     html = (
         f"<tr>"
@@ -460,7 +659,8 @@ def confirm_record(request):
         f"<td>{confirm_html}</td>"
         f"<td><span class='{badge_class}'>{pc}</span></td>"
         f"<td>{score}</td>"
-        f"<td class='small'>{ts}</td>"
+        f"<td class='small'>{times_html}</td>"
+        f"<td class='small'>{pass_html}</td>"
         f"</tr>"
     )
     return HttpResponse(html)

@@ -1,0 +1,130 @@
+Two small notes
+
+They are not blockers, but worth noting:
+
+In confirm_record(), these two variables are now unused:
+crop_html
+gallery_html
+because you switched to _photos_html(...) directly.
+You can leave them for now or remove them later.
+In meal_stream_rows(), the eligible_only filter still uses student__has_meal=True, which is okay for now, but later when wallet logic is added, you may want this filter to rely more on snapped meal state or active subscription logic rather than only the student flag.
+
+
+------------------------------------
+
+One small note
+
+Your debit transaction is being stored with:
+
+tx_type = Debit
+amount_iqd = 1000
+
+That is fine if you want debit amounts stored as positive values and rely on tx_type + before/after balances to interpret direction.
+
+But earlier your model design text suggested signed amounts for transactions, where a debit would be negative. Since the current behavior is already working, I would not change it now in the middle of testing. Just be aware that later you should pick one convention and keep it consistent everywhere.
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+------------------------------------
+
+
+
+
