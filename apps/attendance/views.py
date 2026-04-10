@@ -64,7 +64,7 @@ def _photos_html(gallery_url: str, crop_url: str) -> str:
     return "<div class='photos'>" + _ph(gallery_url) + _ph(crop_url) + "</div>"
 
 
-def _row_html(rec, media_url, is_supervisor, confirm_url):
+def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
     from django.utils import timezone
 
     def fmt_hms(dt):
@@ -98,20 +98,80 @@ def _row_html(rec, media_url, is_supervisor, confirm_url):
     badge_class = "badge r" if pc >= 2 else "badge g"
 
     # Confirm cell
-    if meal and meal.status == "confirmed":
-        confirm_html = "<span class='badge g'>✔ Confirmed</span>"
-    elif meal and meal.status == "denied":
-        confirm_html = "<span class='badge r'>Denied</span>"
-    elif meal and meal.status == "unpaid":
-        confirm_html = "<span class='badge r'>Unpaid</span>"
+    profile = getattr(meal, "meal_profile", None) if meal else None
+    allow_refund = bool(profile and getattr(profile, "allow_supervisor_refund", False))
+    allow_unconfirm = bool(profile and getattr(profile, "allow_supervisor_unconfirm", False))
+
+    if meal and meal.status == MealRecord.STATUS_CONFIRMED:
+        status_html = "<span class='badge g'>✔ Confirmed</span>"
+
+        if (
+            is_supervisor
+            and meal.mode_snapshot == MealRecord.MODE_WALLET
+            and allow_refund
+        ):
+            status_html += (
+                "<br/>"
+                f"<button class='btn-mini' hx-post='{reverse_url}' "
+                f"hx-vals='{{\"id\": {rec.id}}}' "
+                f"hx-target='closest tr' hx-swap='outerHTML'>Refund</button>"
+            )
+        elif (
+            is_supervisor
+            and meal.mode_snapshot == MealRecord.MODE_DATE_RANGE
+            and allow_unconfirm
+        ):
+            status_html += (
+                "<br/>"
+                f"<button class='btn-mini' hx-post='{reverse_url}' "
+                f"hx-vals='{{\"id\": {rec.id}}}' "
+                f"hx-target='closest tr' hx-swap='outerHTML'>Unconfirm</button>"
+            )
+
+    elif meal and meal.status == MealRecord.STATUS_UNPAID:
+        status_html = "<span class='badge r'>Unpaid</span>"
+
+        if is_supervisor and allow_unconfirm:
+            status_html += (
+                "<br/>"
+                f"<button class='btn-mini' hx-post='{reverse_url}' "
+                f"hx-vals='{{\"id\": {rec.id}}}' "
+                f"hx-target='closest tr' hx-swap='outerHTML'>Void</button>"
+            )
+
+    elif meal and meal.status == MealRecord.STATUS_DENIED:
+        status_html = "<span class='badge r'>Denied</span>"
+
+    elif meal and meal.status == MealRecord.STATUS_REFUNDED:
+        status_html = "<span class='badge'>Refunded</span>"
+
+        if is_supervisor and profile and getattr(profile, "allow_supervisor_confirm", False):
+            status_html += (
+                "<br/>"
+                f"<button class='btn-mini' hx-post='{confirm_url}' "
+                f"hx-vals='{{\"id\": {rec.id}}}' "
+                f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
+            )
+
+    elif meal and meal.status == MealRecord.STATUS_VOIDED:
+        status_html = "<span class='badge'>Voided</span>"
+
+        if is_supervisor and profile and getattr(profile, "allow_supervisor_confirm", False):
+            status_html += (
+                "<br/>"
+                f"<button class='btn-mini' hx-post='{confirm_url}' "
+                f"hx-vals='{{\"id\": {rec.id}}}' "
+                f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
+            )
+
     elif is_supervisor:
-        confirm_html = (
+        status_html = (
             f"<button hx-post='{confirm_url}' "
             f"hx-vals='{{\"id\": {rec.id}}}' "
             f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
         )
     else:
-        confirm_html = "—"
+        status_html = "—"
 
     # Photos (gallery + crop)
     crop = getattr(rec, "best_crop", "") or ""
@@ -145,7 +205,8 @@ def _row_html(rec, media_url, is_supervisor, confirm_url):
         f"<td>{per_name}</td>"
         f"<td>{cam}</td>"
         f"<td>{eligible_html}</td>"
-        f"<td>{confirm_html}</td>"
+        # f"<td>{confirm_html}</td>"
+        f"<td>{status_html}</td>"
         f"<td><span class='{badge_class}'>{pc}</span></td>"
         f"<td>{score}</td>"
         f"<td class='small'>{times_html}</td>"   # ← first/best/last stacked
@@ -196,6 +257,7 @@ def meal_stream_rows(request):
 
     is_supervisor = _is_meal_supervisor(request.user)
     confirm_url = reverse("attendance:confirm_record")
+    reverse_url = reverse("attendance:reverse_record")
 
     # ----- base queryset and filters (shared) -----
     qs = (AttendanceRecord.objects.select_related("student", "period__template", "best_camera", "meal_record"))
@@ -379,9 +441,8 @@ def meal_stream_rows(request):
     is_supervisor = _is_meal_supervisor(request.user)
     confirm_url = reverse("attendance:confirm_record")
 
-
     for rec in qs:
-        rows.append(_row_html(rec, media_url, is_supervisor, confirm_url))
+        rows.append(_row_html(rec, media_url, is_supervisor, confirm_url, reverse_url))
 
     html = "\n".join(rows)
     if not rows and not at:
@@ -450,6 +511,12 @@ def confirm_record(request):
         }
     )
 
+    # If this record is being reconfirmed after a refund/void,
+    # clear reverse markers before applying new confirmation logic.
+    meal.reversed_at = None
+    meal.reversed_by = None
+    meal.wallet_refund_transaction = None
+
     # Snapshot subscription/profile/eligibility
     meal.meal_subscription = sub
     meal.meal_profile = sub.meal_profile if sub and sub.meal_profile_id else None
@@ -474,6 +541,10 @@ def confirm_record(request):
 
         # CASE 1: DATE RANGE MODE
         if profile.mode == MealRecord.MODE_DATE_RANGE:
+            meal.wallet_transaction = None
+            meal.wallet_refund_transaction = None
+            meal.wallet_balance_before_iqd = 0
+            meal.wallet_balance_after_iqd = 0
             meal.status = MealRecord.STATUS_CONFIRMED
             meal.confirmed_at = timezone.now()
             meal.confirmed_by = request.user
@@ -577,90 +648,101 @@ def confirm_record(request):
 
     meal.save()
 
-
-    # Rebuild a single <tr> (same shape as meal_stream_rows)
-    st = rec.student
+    # Re-render the row using the same helper
     media_url = (settings.MEDIA_URL or "").rstrip("/")
-    h = escape(getattr(st, "h_code", ""))
-    name = escape(st.full_name() if hasattr(st, "full_name") else "")
-    per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
-    score = f"{float(rec.best_score or 0.0):.2f}"
-    cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    if meal.eligible_at_time is True:
-        eligible_html = "<span class='badge g'>MEAL</span>"
-    elif meal.eligible_at_time is False:
-        eligible_html = "<span class='badge r'>No Meal</span>"
-    else:
-        eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
-    # ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
-    # ts = escape(rec.best_seen.astimezone().strftime("%Y-%m-%d %H:%M:%S"))
-    pc = int(getattr(rec, "pass_count", 1) or 1)
-    badge_class = "badge r" if pc >= 2 else "badge g"
-    if meal.status == MealRecord.STATUS_CONFIRMED:
-        confirm_html = "<span class='badge g'>✔ Confirmed</span>"
-    elif meal.status == MealRecord.STATUS_DENIED:
-        confirm_html = "<span class='badge r'>Denied</span>"
-    elif meal.status == MealRecord.STATUS_UNPAID:
-        confirm_html = "<span class='badge r'>Unpaid</span>"
-    else:
-        confirm_html = f"<span class='badge'>{escape(meal.status.title())}</span>"
+    confirm_url = reverse("attendance:confirm_record")
+    reverse_url = reverse("attendance:reverse_record")
+    html = _row_html(rec, media_url, True, confirm_url, reverse_url)
+    return HttpResponse(html)
 
-    crop = getattr(rec, "best_crop", "") or ""
-    crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
-    crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
+@login_required
+@require_POST
+def reverse_record(request):
+    if not _is_meal_supervisor(request.user):
+        return HttpResponseForbidden("Requires meal_supervisor")
 
-    gallery_url = ""
+    rid = request.POST.get("id") or request.POST.get("record_id")
+    if not rid:
+        return HttpResponse("Missing id", status=400)
+
     try:
-        if hasattr(st, "gallery_photo_relurl"):
-            u = st.gallery_photo_relurl()
-            gallery_url = u or ""
-    except Exception:
-        gallery_url = ""
-    gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
-    # img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
-    img_html = _photos_html(gallery_url, crop_url)
+        rec = AttendanceRecord.objects.select_related(
+            "student",
+            "period__template",
+            "best_camera",
+            "meal_record__meal_profile",
+            "meal_record__wallet_transaction__wallet",
+        ).get(pk=int(rid))
+    except AttendanceRecord.DoesNotExist:
+        return HttpResponse("Not found", status=404)
 
-    def fmt_hms(dt):
-        if not dt:
-            return "—"
-        try:
-            return dt.astimezone(timezone.get_current_timezone()).strftime("%H:%M:%S")
-        except Exception:
-            try:
-                return dt.strftime("%H:%M:%S")
-            except Exception:
-                return "—"
+    meal = getattr(rec, "meal_record", None)
+    if not meal:
+        return HttpResponse("No meal record", status=400)
 
-    t_first = fmt_hms(getattr(rec, "first_seen", None))
-    t_best = fmt_hms(getattr(rec, "best_seen", None))
-    t_last = fmt_hms(getattr(rec, "last_seen", None))
-    t_pass = fmt_hms(getattr(rec, "last_pass_at", None))
+    profile = meal.meal_profile
 
-    times_html = (
-        f"<span class='small'><span class='k'>first:</span> {t_first}</span><br/>"
-        f"<span class='small'><span class='k'>best:</span> {t_best}</span><br/>"
-        f"<span class='small'><span class='k'>last:</span> {t_last}</span>"
-    )
-    pass_html = f"<span class='small'>{t_pass}</span>"
+    # ----- CASE A: wallet confirmed -> refund -----
+    if meal.status == MealRecord.STATUS_CONFIRMED and meal.mode_snapshot == MealRecord.MODE_WALLET:
+        if not (profile and getattr(profile, "allow_supervisor_refund", False)):
+            return HttpResponse("Refund not allowed", status=403)
 
-    html = (
-        f"<tr>"
-        f"<td>{img_html}</td>"
-        # f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
-        f"<td>"
-        # f"  <b>{h}</b>"
-        f"  <span>{h}</span>"
-        f"  <br/><span class='small'>{name}</span>"
-        f"  <br/><span class='small'>{escape(getattr(st, 'get_grade_display', lambda: getattr(st, 'grade', '') or '—')())}</span>"
-        f"</td>"
-        f"<td>{per_name}</td>"
-        f"<td>{cam}</td>"
-        f"<td>{eligible_html}</td>"
-        f"<td>{confirm_html}</td>"
-        f"<td><span class='{badge_class}'>{pc}</span></td>"
-        f"<td>{score}</td>"
-        f"<td class='small'>{times_html}</td>"
-        f"<td class='small'>{pass_html}</td>"
-        f"</tr>"
-    )
+        tx0 = meal.wallet_transaction
+        if not tx0 or not tx0.wallet_id:
+            return HttpResponse("Original wallet transaction missing", status=400)
+
+        wallet = tx0.wallet
+        refund_amount = meal.final_charge_iqd or meal.price_base_iqd or 0
+
+        balance_before = wallet.balance_iqd
+        wallet.balance_iqd += refund_amount
+        wallet.save()
+
+        refund_tx = WalletTransaction.objects.create(
+            wallet=wallet,
+            student=rec.student,
+            tx_type=WalletTransaction.TYPE_REFUND,
+            amount_iqd=refund_amount,
+            balance_before_iqd=balance_before,
+            balance_after_iqd=wallet.balance_iqd,
+            attendance_record=rec,
+            created_by=request.user,
+            reason_code="refund",
+            notes=f"Refund for meal record #{meal.id}",
+        )
+
+        meal.wallet_refund_transaction = refund_tx
+        meal.status = MealRecord.STATUS_REFUNDED
+        meal.reversed_at = timezone.now()
+        meal.reversed_by = request.user
+        meal.save()
+
+    # ----- CASE B: date-range confirmed -> void/unconfirm -----
+    elif meal.status == MealRecord.STATUS_CONFIRMED and meal.mode_snapshot == MealRecord.MODE_DATE_RANGE:
+        if not (profile and getattr(profile, "allow_supervisor_unconfirm", False)):
+            return HttpResponse("Unconfirm not allowed", status=403)
+
+        meal.status = MealRecord.STATUS_VOIDED
+        meal.reversed_at = timezone.now()
+        meal.reversed_by = request.user
+        meal.save()
+
+    # ----- CASE C: unpaid -> void -----
+    elif meal.status == MealRecord.STATUS_UNPAID:
+        if not (profile and getattr(profile, "allow_supervisor_unconfirm", False)):
+            return HttpResponse("Void not allowed", status=403)
+
+        meal.status = MealRecord.STATUS_VOIDED
+        meal.reversed_at = timezone.now()
+        meal.reversed_by = request.user
+        meal.save()
+
+    else:
+        return HttpResponse("Nothing to reverse", status=400)
+
+    # Re-render the row using the same helper
+    media_url = (settings.MEDIA_URL or "").rstrip("/")
+    confirm_url = reverse("attendance:confirm_record")
+    reverse_url = reverse("attendance:reverse_record")
+    html = _row_html(rec, media_url, True, confirm_url, reverse_url)
     return HttpResponse(html)

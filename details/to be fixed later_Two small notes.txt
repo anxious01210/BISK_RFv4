@@ -24,12 +24,80 @@ That is fine if you want debit amounts stored as positive values and rely on tx_
 But earlier your model design text suggested signed amounts for transactions, where a debit would be negative. Since the current behavior is already working, I would not change it now in the middle of testing. Just be aware that later you should pick one convention and keep it consistent everywhere.
 
 ------------------------------------
+Dash/meal/
+About your idea of showing a small number badge
+
+Yes — I think that is a good idea.
+
+But I recommend doing it as a second step, after the action flow is correct.
+
+Best meaning for the counters
+
+You could show:
+
+confirm count
+refund count
+
+For wallet records, those counts can come from the ledger/history idea:
+
+original debit
+refund transaction
+later re-debit if reconfirmed
+
+For example:
+
+✔ Confirmed (2)
+Refunded (1)
 
 
+-----------------  Check Cases  -------------------
 
-------------------------------------
+Step 6: test in this order
+A. Wallet confirmed → Refund
 
+Use:
 
+profile mode = Wallet
+allow_supervisor_refund = True
+enough balance so meal confirms
+
+Expected:
+
+dashboard row shows Refund button under confirmed
+click Refund
+row becomes Refunded
+wallet balance restored
+new WalletTransaction with tx_type = Refund
+MealRecord.wallet_refund_transaction populated
+MealRecord.reversed_at and reversed_by filled
+B. Date-range confirmed → Unconfirm
+
+Use:
+
+profile mode = Date-range
+allow_supervisor_unconfirm = True
+
+Expected:
+
+row shows Unconfirm
+click it
+row becomes Voided
+no wallet transaction created
+C. Unpaid → Void
+
+Use:
+
+wallet mode
+allow_unpaid
+allow_supervisor_unconfirm = True
+
+Expected:
+
+row shows Void
+click it
+row becomes Voided
+wallet stays unchanged
+no refund transaction
 
 ------------------------------------
 

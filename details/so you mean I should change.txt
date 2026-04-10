@@ -1,0 +1,95 @@
+so you mean I should change the below 86 lines of code:
+    # Rebuild a single <tr> (same shape as meal_stream_rows)
+    st = rec.student
+    media_url = (settings.MEDIA_URL or "").rstrip("/")
+    h = escape(getattr(st, "h_code", ""))
+    name = escape(st.full_name() if hasattr(st, "full_name") else "")
+    per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
+    score = f"{float(rec.best_score or 0.0):.2f}"
+    cam = escape(getattr(rec.best_camera, "name", "") or "-")
+    if meal.eligible_at_time is True:
+        eligible_html = "<span class='badge g'>MEAL</span>"
+    elif meal.eligible_at_time is False:
+        eligible_html = "<span class='badge r'>No Meal</span>"
+    else:
+        eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
+    # ts = escape(rec.best_seen.astimezone().strftime("%H:%M:%S"))
+    # ts = escape(rec.best_seen.astimezone().strftime("%Y-%m-%d %H:%M:%S"))
+    pc = int(getattr(rec, "pass_count", 1) or 1)
+    badge_class = "badge r" if pc >= 2 else "badge g"
+    if meal.status == MealRecord.STATUS_CONFIRMED:
+        confirm_html = "<span class='badge g'>✔ Confirmed</span>"
+    elif meal.status == MealRecord.STATUS_DENIED:
+        confirm_html = "<span class='badge r'>Denied</span>"
+    elif meal.status == MealRecord.STATUS_UNPAID:
+        confirm_html = "<span class='badge r'>Unpaid</span>"
+    else:
+        confirm_html = f"<span class='badge'>{escape(meal.status.title())}</span>"
+
+    crop = getattr(rec, "best_crop", "") or ""
+    crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
+    crop_html = f'<img src="{crop_url}" class="photo" loading="lazy"/>' if crop_url else "—"
+
+    gallery_url = ""
+    try:
+        if hasattr(st, "gallery_photo_relurl"):
+            u = st.gallery_photo_relurl()
+            gallery_url = u or ""
+    except Exception:
+        gallery_url = ""
+    gallery_html = f'<img src="{gallery_url}" class="photo" loading="lazy"/>' if gallery_url else "—"
+    # img_html = f'<div style="display:flex;gap:6px;align-items:center">{gallery_html}{crop_html}</div>'
+    img_html = _photos_html(gallery_url, crop_url)
+
+    def fmt_hms(dt):
+        if not dt:
+            return "—"
+        try:
+            return dt.astimezone(timezone.get_current_timezone()).strftime("%H:%M:%S")
+        except Exception:
+            try:
+                return dt.strftime("%H:%M:%S")
+            except Exception:
+                return "—"
+
+    t_first = fmt_hms(getattr(rec, "first_seen", None))
+    t_best = fmt_hms(getattr(rec, "best_seen", None))
+    t_last = fmt_hms(getattr(rec, "last_seen", None))
+    t_pass = fmt_hms(getattr(rec, "last_pass_at", None))
+
+    times_html = (
+        f"<span class='small'><span class='k'>first:</span> {t_first}</span><br/>"
+        f"<span class='small'><span class='k'>best:</span> {t_best}</span><br/>"
+        f"<span class='small'><span class='k'>last:</span> {t_last}</span>"
+    )
+    pass_html = f"<span class='small'>{t_pass}</span>"
+
+    html = (
+        f"<tr>"
+        f"<td>{img_html}</td>"
+        # f"<td><b>{h}</b><br/><span class='small'>{name}</span></td>"
+        f"<td>"
+        # f"  <b>{h}</b>"
+        f"  <span>{h}</span>"
+        f"  <br/><span class='small'>{name}</span>"
+        f"  <br/><span class='small'>{escape(getattr(st, 'get_grade_display', lambda: getattr(st, 'grade', '') or '—')())}</span>"
+        f"</td>"
+        f"<td>{per_name}</td>"
+        f"<td>{cam}</td>"
+        f"<td>{eligible_html}</td>"
+        f"<td>{confirm_html}</td>"
+        f"<td><span class='{badge_class}'>{pc}</span></td>"
+        f"<td>{score}</td>"
+        f"<td class='small'>{times_html}</td>"
+        f"<td class='small'>{pass_html}</td>"
+        f"</tr>"
+    )
+    return HttpResponse(html)
+
+to the below:
+    # Re-render the row using the same helper
+    media_url = (settings.MEDIA_URL or "").rstrip("/")
+    confirm_url = reverse("attendance:confirm_record")
+    reverse_url = reverse("attendance:reverse_record")
+    html = _row_html(rec, media_url, True, confirm_url, reverse_url)
+    return HttpResponse(html)
