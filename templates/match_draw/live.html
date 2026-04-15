@@ -562,7 +562,9 @@
         // Optional small random offset inside the correct slice
         // so the wheel does not always stop at the exact same internal point
         // while still staying safely inside the same slice.
-        const jitter = (Math.random() - 0.5) * (segment * 0.34);
+        const safeMargin = Math.min(10, segment * 0.18);
+        const jitterRange = Math.max(0, (segment / 2) - safeMargin);
+        const jitter = (Math.random() * 2 - 1) * jitterRange;
 
         const desiredRotation = baseTargetRotation + jitter;
 
