@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ page_title }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <style>
+      :root {
+          --bg: #040b16;
+          --bg2: #0a1430;
+          --panel: rgba(16, 24, 40, 0.82);
+          --panel-2: rgba(20, 31, 53, 0.94);
+          --text: #edf4ff;
+          --muted: #a7b7d8;
+          --accent: #69a7ff;
+          --accent-2: #8a6dff;
+          --gold: #f5c86b;
+          --success: #22c55e;
+          --border: rgba(255, 255, 255, 0.10);
+          --shadow: 0 30px 80px rgba(0, 0, 0, 0.38);
+          --glow: 0 0 40px rgba(105, 167, 255, 0.18);
+      }
+
+      body.light {
+          --bg: #eef4ff;
+          --bg2: #f8fbff;
+          --panel: rgba(255, 255, 255, 0.90);
+          --panel-2: rgba(244, 248, 255, 0.96);
+          --text: #172033;
+          --muted: #60708e;
+          --accent: #2563eb;
+          --accent-2: #7c3aed;
+          --gold: #c68a10;
+          --success: #16a34a;
+          --border: rgba(23, 32, 51, 0.10);
+          --shadow: 0 18px 48px rgba(19, 33, 68, 0.14);
+          --glow: 0 0 30px rgba(37, 99, 235, 0.12);
+      }
+
+      * {
+          box-sizing: border-box;
+      }
+
+      body {
+          margin: 0;
+          min-height: 100vh;
+          font-family: system-ui, sans-serif;
+          color: var(--text);
+          background: radial-gradient(circle at top left, rgba(105, 167, 255, 0.16), transparent 25%),
+          radial-gradient(circle at top right, rgba(138, 109, 255, 0.16), transparent 22%),
+          radial-gradient(circle at bottom center, rgba(245, 200, 107, 0.06), transparent 20%),
+          linear-gradient(180deg, var(--bg), var(--bg2));
+      }
+
+      .wrap {
+          max-width: 1450px;
+          margin: 0 auto;
+          padding: 24px;
+      }
+
+      .topbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 16px;
+          margin-bottom: 24px;
+      }
+
+      .title-block h1 {
+          margin: 0;
+          font-size: 38px;
+          font-weight: 900;
+          letter-spacing: 0.2px;
+      }
+
+      .title-block p {
+          margin: 8px 0 0;
+          color: var(--muted);
+          font-size: 17px;
+      }
+
+      .top-actions {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+      }
+
+      .btn {
+          border: 1px solid var(--border);
+          background: linear-gradient(180deg, var(--panel), var(--panel-2));
+          color: var(--text);
+          border-radius: 14px;
+          padding: 11px 16px;
+          cursor: pointer;
+          box-shadow: var(--shadow);
+          font-weight: 800;
+          text-decoration: none;
+      }
+
+      .btn-primary {
+          background: linear-gradient(135deg, var(--accent), var(--accent-2));
+          color: #fff;
+          border: none;
+      }
+
+      .layout {
+          display: grid;
+          grid-template-columns: 1.05fr 0.95fr;
+          gap: 24px;
+          align-items: start;
+      }
+
+      .panel {
+          background: linear-gradient(180deg, var(--panel), var(--panel-2));
+          border: 1px solid var(--border);
+          border-radius: 28px;
+          padding: 24px;
+          box-shadow: var(--shadow);
+          backdrop-filter: blur(12px);
+      }
+
+      .wheel-stage {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 24px;
+      }
+
+      .wheel-shell {
+          position: relative;
+          width: 520px;
+          height: 520px;
+          max-width: 90vw;
+          max-height: 90vw;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+      }
+
+      .pointer {
+          position: absolute;
+          right: -10px;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 0;
+          height: 0;
+          border-top: 22px solid transparent;
+          border-bottom: 22px solid transparent;
+          border-right: 34px solid var(--gold);
+          filter: drop-shadow(0 0 10px rgba(245, 200, 107, 0.32));
+          z-index: 5;
+      }
+
+      .wheel {
+          width: 100%;
+          height: 100%;
+          border-radius: 50%;
+          position: relative;
+          overflow: hidden;
+          transition: transform 3.2s cubic-bezier(0.15, 0.9, 0.2, 1);
+          border: 10px solid rgba(255, 255, 255, 0.10);
+          box-shadow: var(--shadow),
+          var(--glow),
+          inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+          inset 0 0 40px rgba(255, 255, 255, 0.03);
+          background: #18243c;
+      }
+
+      .wheel::before {
+          content: "";
+          position: absolute;
+          inset: 0;
+          border-radius: 50%;
+          background: radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.10), transparent 42%),
+          radial-gradient(circle at 50% 120%, rgba(0, 0, 0, 0.12), transparent 45%);
+          pointer-events: none;
+          z-index: 2;
+      }
+
+      .wheel::after {
+          content: "";
+          position: absolute;
+          inset: 39%;
+          border-radius: 50%;
+          background: linear-gradient(180deg, rgba(240, 245, 255, 0.96), rgba(220, 228, 245, 0.95));
+          box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.10),
+          0 0 0 8px rgba(255, 255, 255, 0.06);
+          z-index: 4;
+      }
+
+      body.light .wheel::after {
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(238, 243, 252, 0.97));
+          box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.08),
+          0 0 0 8px rgba(23, 32, 51, 0.04);
+      }
+
+
+      .wheel-svg {
+          width: 100%;
+          height: 100%;
+          display: block;
+          transform: rotate(-90deg);
+          position: relative;
+          z-index: 1;
+      }
+
+      .announce-box {
+          width: 100%;
+          min-height: 210px;
+          display: grid;
+          grid-template-columns: 1fr;
+          gap: 16px;
+      }
+
+      .picked-team {
+          min-height: 82px;
+          border-radius: 22px;
+          border: 1px solid var(--border);
+          background: rgba(255, 255, 255, 0.04);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 18px;
+          font-size: 28px;
+          font-weight: 900;
+          letter-spacing: 0.2px;
+          text-align: center;
+          box-shadow: var(--glow);
+          opacity: 0;
+          transform: translateY(16px) scale(0.98);
+          transition: all 0.35s ease;
+      }
+
+      .picked-team.show {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+      }
+
+      .versus {
+          text-align: center;
+          color: var(--gold);
+          font-size: 26px;
+          font-weight: 900;
+          letter-spacing: 2px;
+          opacity: 0;
+          transition: opacity 0.3s ease;
+      }
+
+      .versus.show {
+          opacity: 1;
+      }
+
+      .current-status {
+          color: var(--muted);
+          font-size: 16px;
+          text-align: center;
+          min-height: 24px;
+      }
+
+      .match-list h2 {
+          margin: 0 0 16px;
+          font-size: 28px;
+      }
+
+      .matches {
+          display: grid;
+          gap: 14px;
+      }
+
+      .match-card {
+          border: 1px solid var(--border);
+          background: rgba(255, 255, 255, 0.04);
+          border-radius: 20px;
+          padding: 18px 20px;
+          opacity: 0;
+          transform: translateY(14px);
+          transition: all 0.35s ease;
+      }
+
+      .match-card.show {
+          opacity: 1;
+          transform: translateY(0);
+      }
+
+      .match-order {
+          color: var(--muted);
+          font-size: 14px;
+          margin-bottom: 8px;
+      }
+
+      .match-teams {
+          font-size: 24px;
+          font-weight: 900;
+          line-height: 1.4;
+      }
+
+      .done-banner {
+          margin-top: 18px;
+          border-radius: 18px;
+          padding: 16px 18px;
+          background: rgba(34, 197, 94, 0.12);
+          border: 1px solid rgba(34, 197, 94, 0.28);
+          color: #dbffea;
+          display: none;
+          font-weight: 800;
+      }
+
+      body.light .done-banner {
+          color: #14532d;
+      }
+
+      @media (max-width: 1120px) {
+          .layout {
+              grid-template-columns: 1fr;
+          }
+
+          .wheel-shell {
+              width: 430px;
+              height: 430px;
+          }
+      }
+
+      @media (max-width: 680px) {
+          .topbar {
+              flex-direction: column;
+              align-items: stretch;
+          }
+
+          .wheel-shell {
+              width: 340px;
+              height: 340px;
+          }
+
+          .title-block h1 {
+              font-size: 28px;
+          }
+
+          .picked-team {
+              font-size: 22px;
+          }
+
+          .match-teams {
+              font-size: 20px;
+          }
+      }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="title-block">
+      <h1>{{ event.title }}</h1>
+      <p>Live match draw ceremony</p>
+    </div>
+
+    <div class="top-actions">
+      <a class="btn" href="{% url 'match_draw:detail' event.id %}">← Back</a>
+      <button class="btn btn-primary" id="startCeremonyBtn" type="button">Start Ceremony</button>
+      <button class="btn" id="nextBtn" type="button" style="display:none;">Next Match</button>
+      <button class="btn" id="themeToggle" type="button">Toggle Dark / Light</button>
+    </div>
+  </div>
+
+  <div class="layout">
+    <section class="panel wheel-stage">
+      <div class="wheel-shell">
+        <div class="pointer"></div>
+        <div class="wheel" id="wheel">
+          <svg class="wheel-svg" id="wheelSvg" viewBox="0 0 520 520" aria-hidden="true"></svg>
+        </div>
+      </div>
+
+      <div class="current-status" id="statusText">Ready to begin the ceremony.</div>
+
+      <div class="announce-box">
+        <div class="picked-team" id="teamOneBox"></div>
+        <div class="versus" id="versusBox">VS</div>
+        <div class="picked-team" id="teamTwoBox"></div>
+      </div>
+    </section>
+
+    <section class="panel match-list">
+      <h2>Revealed Matches</h2>
+      <div class="matches" id="matchesContainer"></div>
+      <div class="done-banner" id="doneBanner">All matches have been revealed.</div>
+    </section>
+  </div>
+</div>
+
+{{ matches_json|json_script:"matches-data" }}
+
+<script>
+  (function () {
+    const body = document.body;
+    const themeBtn = document.getElementById("themeToggle");
+    const themeKey = "match_draw_theme";
+    const savedTheme = localStorage.getItem(themeKey);
+    if (savedTheme === "light") {
+      body.classList.add("light");
+    }
+
+    themeBtn.addEventListener("click", function () {
+      body.classList.toggle("light");
+      localStorage.setItem(themeKey, body.classList.contains("light") ? "light" : "dark");
+    });
+
+    const wheel = document.getElementById("wheel");
+    const wheelSvg = document.getElementById("wheelSvg");
+    const statusText = document.getElementById("statusText");
+    const teamOneBox = document.getElementById("teamOneBox");
+    const teamTwoBox = document.getElementById("teamTwoBox");
+    const versusBox = document.getElementById("versusBox");
+    const matchesContainer = document.getElementById("matchesContainer");
+    const doneBanner = document.getElementById("doneBanner");
+    const startBtn = document.getElementById("startCeremonyBtn");
+    const nextBtn = document.getElementById("nextBtn");
+
+    const matches = JSON.parse(document.getElementById("matches-data").textContent);
+
+    const allTeams = [];
+    matches.forEach((m) => {
+      allTeams.push(m.team_1);
+      allTeams.push(m.team_2);
+    });
+
+    const uniqueTeams = [...new Set(allTeams)];
+
+    let rotationDeg = 0;
+    let currentMatchIndex = 0;
+    let ceremonyStarted = false;
+
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    const wheelColors = [
+      "#4F8EF7", // refined blue
+      "#E44C9A", // rose
+      "#2FC463", // green
+      "#F3A712", // amber
+      "#8B63F6", // violet
+      "#23B5D3", // cyan
+      "#F24848", // red
+      "#84CC16", // lime
+      "#14B8A6", // teal
+      "#F97316", // orange
+    ];
+
+    function polarToCartesian(cx, cy, r, angleDeg) {
+      const rad = (angleDeg - 90) * Math.PI / 180.0;
+      return {
+        x: cx + (r * Math.cos(rad)),
+        y: cy + (r * Math.sin(rad))
+      };
+    }
+
+    function describeSlice(cx, cy, r, startAngle, endAngle) {
+      const start = polarToCartesian(cx, cy, r, endAngle);
+      const end = polarToCartesian(cx, cy, r, startAngle);
+      const largeArcFlag = endAngle - startAngle <= 180 ? "0" : "1";
+
+      return [
+        "M", cx, cy,
+        "L", start.x, start.y,
+        "A", r, r, 0, largeArcFlag, 0, end.x, end.y,
+        "Z"
+      ].join(" ");
+    }
+
+    function buildWheel() {
+      wheelSvg.innerHTML = "";
+
+      const total = uniqueTeams.length;
+      const cx = 260;
+      const cy = 260;
+      const r = 255;
+      const segment = 360 / total;
+
+      // Dynamic font size based on team count
+      let fontSize = 24;
+      if (total >= 5) fontSize = 20;
+      if (total >= 7) fontSize = 17;
+      if (total >= 9) fontSize = 14;
+
+      // Put text farther from center for fewer teams, slightly closer for many teams
+      let labelRadius = 175;
+      if (total === 2) labelRadius = 170;
+      else if (total <= 4) labelRadius = 180;
+      else if (total <= 6) labelRadius = 172;
+      else if (total <= 8) labelRadius = 165;
+      else labelRadius = 155;
+
+      for (let i = 0; i < total; i++) {
+        const startAngle = i * segment;
+        const endAngle = startAngle + segment;
+        const midAngle = startAngle + (segment / 2);
+
+        // Slice path
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", describeSlice(cx, cy, r, startAngle, endAngle));
+        path.setAttribute("fill", wheelColors[i % wheelColors.length]);
+        wheelSvg.appendChild(path);
+
+        // Text position inside slice
+        const rad = (midAngle - 90) * Math.PI / 180;
+        const tx = cx + Math.cos(rad) * labelRadius;
+        const ty = cy + Math.sin(rad) * labelRadius;
+
+        // Keep text readable
+        let textRotation = midAngle;
+        if (textRotation > 90 && textRotation < 270) {
+          textRotation += 180;
+        }
+
+        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        text.setAttribute("x", tx);
+        text.setAttribute("y", ty);
+        text.setAttribute("fill", "rgba(255,255,255,0.98)");
+        text.setAttribute("font-size", fontSize);
+        text.setAttribute("font-weight", "800");
+        text.setAttribute("text-anchor", "middle");
+        text.setAttribute("dominant-baseline", "middle");
+        text.setAttribute("transform", `rotate(${textRotation} ${tx} ${ty})`);
+        text.setAttribute("style", "paint-order: stroke; stroke: rgba(0,0,0,0.18); stroke-width: 2px; letter-spacing: 0.15px;");
+        text.textContent = uniqueTeams[i];
+
+        wheelSvg.appendChild(text);
+      }
+    }
+
+    function getTeamCenterAngle(teamName) {
+      const idx = uniqueTeams.indexOf(teamName);
+      if (idx === -1) return 0;
+
+      const total = uniqueTeams.length;
+      const segment = 360 / total;
+
+      return idx * segment + (segment / 2);
+    }
+
+    function normalizeDeg(deg) {
+      return ((deg % 360) + 360) % 360;
+    }
+
+    function spinToTeam(teamName) {
+      return new Promise((resolve) => {
+        const total = uniqueTeams.length;
+        const segment = 360 / total;
+
+        const targetCenter = getTeamCenterAngle(teamName);
+
+        // Because:
+        // 1) our slice math is top-based
+        // 2) the SVG itself is rotated by -90deg
+        // 3) the pointer is visually on the right
+        // the correct alignment target is 180deg in this coordinate system
+        const baseTargetRotation = 180 - targetCenter;
+
+        // Optional small random offset inside the correct slice
+        // so the wheel does not always stop at the exact same internal point
+        // while still staying safely inside the same slice.
+        const jitter = (Math.random() - 0.5) * (segment * 0.34);
+
+        const desiredRotation = baseTargetRotation + jitter;
+
+        const currentNormalized = normalizeDeg(rotationDeg);
+        let delta = desiredRotation - currentNormalized;
+        delta = normalizeDeg(delta);
+
+        rotationDeg += 1440 + delta;
+        wheel.style.transform = `rotate(${rotationDeg}deg)`;
+
+        setTimeout(resolve, 3200);
+      });
+    }
+
+    function resetRevealBoxes() {
+      teamOneBox.classList.remove("show");
+      teamTwoBox.classList.remove("show");
+      versusBox.classList.remove("show");
+      teamOneBox.innerHTML = "";
+      teamTwoBox.innerHTML = "";
+    }
+
+    function showTeam(box, name) {
+      box.innerHTML = escapeHtml(name);
+      requestAnimationFrame(() => {
+        box.classList.add("show");
+      });
+    }
+
+    function addMatchCard(match) {
+      const card = document.createElement("div");
+      card.className = "match-card";
+      card.innerHTML = `
+            <div class="match-order">Match ${match.match_order}</div>
+            <div class="match-teams">${escapeHtml(match.team_1)} vs ${escapeHtml(match.team_2)}</div>
+        `;
+      matchesContainer.appendChild(card);
+      requestAnimationFrame(() => {
+        card.classList.add("show");
+      });
+    }
+
+    async function revealMatch(match) {
+      resetRevealBoxes();
+
+      statusText.textContent = "Spinning for the first team...";
+      await spinToTeam(match.team_1);
+      showTeam(teamOneBox, match.team_1);
+
+      await new Promise(resolve => setTimeout(resolve, 650));
+
+      statusText.textContent = "Spinning for the opponent...";
+      await spinToTeam(match.team_2);
+      versusBox.classList.add("show");
+      showTeam(teamTwoBox, match.team_2);
+
+      await new Promise(resolve => setTimeout(resolve, 850));
+
+      addMatchCard(match);
+      statusText.textContent = `Match ${match.match_order} revealed.`;
+
+      currentMatchIndex += 1;
+
+      if (currentMatchIndex >= matches.length) {
+        statusText.textContent = "Ceremony complete.";
+        nextBtn.style.display = "none";
+        doneBanner.style.display = "block";
+      } else {
+        nextBtn.style.display = "inline-block";
+      }
+    }
+
+    async function startCeremony() {
+      if (ceremonyStarted) return;
+      ceremonyStarted = true;
+
+      if (!matches.length) {
+        statusText.textContent = "No generated matches found. Please return and click Start Draw first.";
+        return;
+      }
+
+      startBtn.style.display = "none";
+      nextBtn.style.display = "none";
+      currentMatchIndex = 0;
+      matchesContainer.innerHTML = "";
+      doneBanner.style.display = "none";
+      resetRevealBoxes();
+
+      await revealMatch(matches[currentMatchIndex]);
+    }
+
+    async function revealNext() {
+      if (currentMatchIndex >= matches.length) return;
+      nextBtn.style.display = "none";
+      await revealMatch(matches[currentMatchIndex]);
+    }
+
+    buildWheel();
+
+    startBtn.addEventListener("click", startCeremony);
+    nextBtn.addEventListener("click", revealNext);
+  })();
+</script>
+</body>
+</html>

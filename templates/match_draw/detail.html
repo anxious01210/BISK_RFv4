@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{{ page_title }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+        :root {
+            --bg: #071120;
+            --bg2: #0b1730;
+            --panel: rgba(17, 26, 43, 0.88);
+            --panel-2: rgba(24, 34, 53, 0.95);
+            --text: #e8eefc;
+            --muted: #9fb0d1;
+            --accent: #4da3ff;
+            --accent-2: #7c5cff;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --border: rgba(255,255,255,0.10);
+            --shadow: 0 20px 60px rgba(0,0,0,0.35);
+        }
+
+        body.light {
+            --bg: #eef4ff;
+            --bg2: #f7faff;
+            --panel: rgba(255,255,255,0.95);
+            --panel-2: rgba(244,248,255,0.98);
+            --text: #172033;
+            --muted: #5f6f8f;
+            --accent: #2563eb;
+            --accent-2: #7c3aed;
+            --success: #16a34a;
+            --danger: #dc2626;
+            --border: rgba(23,32,51,0.10);
+            --shadow: 0 16px 40px rgba(19,33,68,0.12);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: system-ui, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(77,163,255,0.18), transparent 28%),
+                radial-gradient(circle at top right, rgba(124,92,255,0.18), transparent 24%),
+                linear-gradient(180deg, var(--bg), var(--bg2));
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .wrap {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .title {
+            font-size: 30px;
+            font-weight: 800;
+        }
+
+        .actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--text);
+            border-radius: 14px;
+            padding: 11px 16px;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            font-weight: 700;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            color: white;
+            border: none;
+        }
+
+        .panel {
+            background: linear-gradient(180deg, var(--panel), var(--panel-2));
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: var(--shadow);
+            margin-bottom: 20px;
+        }
+
+        .sub {
+            color: var(--muted);
+            line-height: 1.6;
+        }
+
+        .list {
+            display: grid;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .item {
+            padding: 14px 16px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            background: rgba(255,255,255,0.03);
+        }
+
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        .messages {
+            margin-bottom: 16px;
+        }
+
+        .msg {
+            padding: 12px 14px;
+            border-radius: 14px;
+            margin-bottom: 10px;
+        }
+
+        .msg-success {
+            background: rgba(34,197,94,0.12);
+            border: 1px solid rgba(34,197,94,0.30);
+            color: #d7ffe5;
+        }
+
+        .msg-error {
+            background: rgba(239,68,68,0.12);
+            border: 1px solid rgba(239,68,68,0.30);
+            color: #ffd4d4;
+        }
+
+        body.light .msg-success {
+            color: #14532d;
+        }
+
+        body.light .msg-error {
+            color: #7f1d1d;
+        }
+
+        @media (max-width: 900px) {
+            .two-col {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="topbar">
+        <div class="title">{{ event.title }}</div>
+        <div class="actions">
+            <a class="btn" href="{% url 'match_draw:home' %}">← Back</a>
+
+            <form method="post" action="{% url 'match_draw:start' event.id %}" style="margin:0;">
+                {% csrf_token %}
+                <button class="btn btn-primary" type="submit">Start Draw</button>
+            </form>
+
+            <a class="btn btn-primary" href="{% url 'match_draw:live' event.id %}">Open Live Ceremony</a>
+
+            <button id="themeToggle" class="btn" type="button">Toggle Dark / Light</button>
+        </div>
+    </div>
+
+    {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <div class="msg {% if message.tags == 'error' %}msg-error{% else %}msg-success{% endif %}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <section class="panel">
+        <h2>Draw Summary</h2>
+        <p class="sub">
+            Type: <strong>{% if event.mode == 'random' %}Random Draw{% else %}Guided Draw{% endif %}</strong><br>
+            Theme: <strong>{{ event.get_theme_display }}</strong><br>
+            Status: <strong>{{ event.get_status_display }}</strong><br>
+            Teams count: <strong>{{ event.teams_count }}</strong>
+        </p>
+    </section>
+
+    <div class="two-col">
+        <section class="panel">
+            <h2>Teams</h2>
+            <div class="list">
+                {% for team in teams %}
+                    <div class="item">{{ team.display_order }}. {{ team.name }}</div>
+                {% empty %}
+                    <div class="item">No teams found.</div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Pair Rules</h2>
+            <div class="list">
+                {% for pair in pair_rules %}
+                    <div class="item">{{ pair.team_a.name }} vs {{ pair.team_b.name }}</div>
+                {% empty %}
+                    <div class="item">No pair rules for this draw.</div>
+                {% endfor %}
+            </div>
+        </section>
+    </div>
+
+    <section class="panel">
+        <h2>Generated Matches</h2>
+        <div class="list">
+            {% for match in matches %}
+                <div class="item">
+                    Match {{ match.match_order }}: {{ match.team_1.name }} vs {{ match.team_2.name }}
+                </div>
+            {% empty %}
+                <div class="item">No matches generated yet. Click <strong>Start Draw</strong>.</div>
+            {% endfor %}
+        </div>
+    </section>
+</div>
+
+<script>
+    (function () {
+        const body = document.body;
+        const btn = document.getElementById("themeToggle");
+        const key = "match_draw_theme";
+
+        const saved = localStorage.getItem(key);
+        if (saved === "light") {
+            body.classList.add("light");
+        }
+
+        btn.addEventListener("click", function () {
+            body.classList.toggle("light");
+            localStorage.setItem(key, body.classList.contains("light") ? "light" : "dark");
+        });
+    })();
+</script>
+</body>
+</html>

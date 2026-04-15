@@ -99,6 +99,8 @@ urlpatterns = [
     path("dash/system/", system_dash, name="system_dash"),
     path("dash/system.json", system_json, name="system_json"),
 
+    path("dash/match-draw/", include(("apps.match_draw.urls", "match_draw"), namespace="match_draw")),
+
     # Legacy dashboard pages
     path("dashboard/", core_views.dashboard, name="dashboard"),
     path("dashboard/system_stats/", core_views.system_stats, name="system-stats"),

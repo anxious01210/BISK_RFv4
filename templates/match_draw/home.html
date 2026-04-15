@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>{{ page_title }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <style>
+        :root {
+            --bg: #071120;
+            --bg2: #0b1730;
+            --panel: rgba(17, 26, 43, 0.88);
+            --panel-2: rgba(24, 34, 53, 0.95);
+            --text: #e8eefc;
+            --muted: #9fb0d1;
+            --accent: #4da3ff;
+            --accent-2: #7c5cff;
+            --success: #22c55e;
+            --danger: #ef4444;
+            --border: rgba(255,255,255,0.10);
+            --shadow: 0 20px 60px rgba(0,0,0,0.35);
+            --input: rgba(255,255,255,0.04);
+        }
+
+        body.light {
+            --bg: #eef4ff;
+            --bg2: #f7faff;
+            --panel: rgba(255,255,255,0.95);
+            --panel-2: rgba(244,248,255,0.98);
+            --text: #172033;
+            --muted: #5f6f8f;
+            --accent: #2563eb;
+            --accent-2: #7c3aed;
+            --success: #16a34a;
+            --danger: #dc2626;
+            --border: rgba(23,32,51,0.10);
+            --shadow: 0 16px 40px rgba(19,33,68,0.12);
+            --input: rgba(23,32,51,0.03);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            font-family: system-ui, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(77,163,255,0.18), transparent 28%),
+                radial-gradient(circle at top right, rgba(124,92,255,0.18), transparent 24%),
+                linear-gradient(180deg, var(--bg), var(--bg2));
+            color: var(--text);
+            min-height: 100vh;
+        }
+
+        .wrap {
+            max-width: 1320px;
+            margin: 0 auto;
+            padding: 24px;
+        }
+
+        .topbar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 22px;
+        }
+
+        .title {
+            font-size: 32px;
+            font-weight: 800;
+        }
+
+        .top-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn, button {
+            border: 1px solid var(--border);
+            background: var(--panel);
+            color: var(--text);
+            border-radius: 14px;
+            padding: 11px 16px;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            font-weight: 700;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), var(--accent-2));
+            color: white;
+            border: none;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: 1.15fr 0.85fr;
+            gap: 22px;
+        }
+
+        .panel {
+            background: linear-gradient(180deg, var(--panel), var(--panel-2));
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(10px);
+        }
+
+        .panel h2 {
+            margin: 0 0 8px;
+            font-size: 28px;
+        }
+
+        .panel .sub {
+            margin: 0 0 22px;
+            color: var(--muted);
+        }
+
+        .field {
+            margin-bottom: 18px;
+        }
+
+        .field label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 700;
+        }
+
+        .field input[type="text"],
+        .field textarea,
+        .field select {
+            width: 100%;
+            border-radius: 16px;
+            border: 1px solid var(--border);
+            background: var(--input);
+            color: var(--text);
+            padding: 14px 16px;
+            font: inherit;
+            outline: none;
+        }
+
+        .field textarea {
+            resize: vertical;
+            min-height: 140px;
+        }
+
+        .help {
+            margin-top: 8px;
+            color: var(--muted);
+            font-size: 14px;
+        }
+
+        .radio-group {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+        }
+
+        .radio-group label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 12px 14px;
+            background: var(--input);
+            cursor: pointer;
+            margin: 0;
+        }
+
+        .errorbox {
+            margin-bottom: 18px;
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: rgba(239,68,68,0.12);
+            border: 1px solid rgba(239,68,68,0.30);
+            color: #ffd4d4;
+        }
+
+        body.light .errorbox {
+            color: #7f1d1d;
+        }
+
+        .messages {
+            margin-bottom: 16px;
+        }
+
+        .msg {
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: rgba(34,197,94,0.12);
+            border: 1px solid rgba(34,197,94,0.30);
+            color: #d7ffe5;
+        }
+
+        body.light .msg {
+            color: #14532d;
+        }
+
+        .side-list {
+            display: grid;
+            gap: 12px;
+        }
+
+        .event-card {
+            border: 1px solid var(--border);
+            border-radius: 18px;
+            padding: 16px;
+            background: var(--input);
+        }
+
+        .event-card h3 {
+            margin: 0 0 6px;
+            font-size: 18px;
+        }
+
+        .meta {
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .event-card a {
+            display: inline-block;
+            margin-top: 10px;
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 700;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        @media (max-width: 980px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="topbar">
+        <div class="title">BISK Match Draw</div>
+        <div class="top-actions">
+            <button id="themeToggle" type="button">Toggle Dark / Light</button>
+        </div>
+    </div>
+
+    {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+                <div class="msg">{{ message }}</div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <div class="grid">
+        <section class="panel">
+            <h2>Create Match Draw</h2>
+            <p class="sub">
+                Create a new match draw event. You can choose a true random draw or a guided draw with pair rules.
+            </p>
+
+            <form method="post">
+                {% csrf_token %}
+
+                {% if form.non_field_errors %}
+                    <div class="errorbox">
+                        {{ form.non_field_errors }}
+                    </div>
+                {% endif %}
+
+                <div class="field">
+                    <label for="{{ form.title.id_for_label }}">{{ form.title.label }}</label>
+                    {{ form.title }}
+                    {% if form.title.errors %}<div class="errorbox">{{ form.title.errors }}</div>{% endif %}
+                </div>
+
+                <div class="field">
+                    <label>{{ form.mode.label }}</label>
+                    <div class="radio-group">
+                        {{ form.mode }}
+                    </div>
+                    {% if form.mode.errors %}<div class="errorbox">{{ form.mode.errors }}</div>{% endif %}
+                </div>
+
+                <div class="field">
+                    <label for="{{ form.theme.id_for_label }}">{{ form.theme.label }}</label>
+                    {{ form.theme }}
+                    {% if form.theme.errors %}<div class="errorbox">{{ form.theme.errors }}</div>{% endif %}
+                </div>
+
+                <div class="field">
+                    <label for="{{ form.teams_text.id_for_label }}">{{ form.teams_text.label }}</label>
+                    {{ form.teams_text }}
+                    <div class="help">{{ form.teams_text.help_text }}</div>
+                    {% if form.teams_text.errors %}<div class="errorbox">{{ form.teams_text.errors }}</div>{% endif %}
+                </div>
+
+                <div class="field" id="riggedPairsWrap">
+                    <label for="{{ form.rigged_pairs_text.id_for_label }}">{{ form.rigged_pairs_text.label }}</label>
+                    {{ form.rigged_pairs_text }}
+                    <div class="help">{{ form.rigged_pairs_text.help_text }}</div>
+                    {% if form.rigged_pairs_text.errors %}<div class="errorbox">{{ form.rigged_pairs_text.errors }}</div>{% endif %}
+                </div>
+
+                <button class="btn-primary" type="submit">Create Draw Event</button>
+            </form>
+        </section>
+
+        <aside class="panel">
+            <h2>Recent Draws</h2>
+            <p class="sub">
+                Recently created draw events will appear here.
+            </p>
+
+            <div class="side-list">
+                {% for event in recent_events %}
+                    <div class="event-card">
+                        <h3>{{ event.title }}</h3>
+                        <div class="meta">
+                            Mode: {{ event.get_mode_display }}<br>
+                            Theme: {{ event.get_theme_display }}<br>
+                            Status: {{ event.get_status_display }}<br>
+                            Teams: {{ event.teams_count }}
+                        </div>
+                        <a href="{% url 'match_draw:detail' event.id %}">Open draw →</a>
+                    </div>
+                {% empty %}
+                    <div class="event-card">
+                        <div class="meta">No draw events yet.</div>
+                    </div>
+                {% endfor %}
+            </div>
+        </aside>
+    </div>
+</div>
+
+<script>
+    (function () {
+        const body = document.body;
+        const btn = document.getElementById("themeToggle");
+        const key = "match_draw_theme";
+
+        const saved = localStorage.getItem(key);
+        if (saved === "light") {
+            body.classList.add("light");
+        }
+
+        btn.addEventListener("click", function () {
+            body.classList.toggle("light");
+            localStorage.setItem(key, body.classList.contains("light") ? "light" : "dark");
+        });
+
+        const riggedWrap = document.getElementById("riggedPairsWrap");
+        const modeInputs = document.querySelectorAll('input[name="mode"]');
+
+        function refreshRiggedVisibility() {
+            let selected = "random";
+            modeInputs.forEach(function (input) {
+                if (input.checked) {
+                    selected = input.value;
+                }
+            });
+            riggedWrap.classList.toggle("hidden", selected !== "rigged");
+        }
+
+        modeInputs.forEach(function (input) {
+            input.addEventListener("change", refreshRiggedVisibility);
+        });
+
+        refreshRiggedVisibility();
+    })();
+</script>
+</body>
+</html>
