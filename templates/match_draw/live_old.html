@@ -17,7 +17,6 @@
           --accent-2: #8a6dff;
           --gold: #f5c86b;
           --success: #22c55e;
-          --danger: #ef4444;
           --border: rgba(255, 255, 255, 0.10);
           --shadow: 0 30px 80px rgba(0, 0, 0, 0.38);
           --glow: 0 0 40px rgba(105, 167, 255, 0.18);
@@ -34,7 +33,6 @@
           --accent-2: #7c3aed;
           --gold: #c68a10;
           --success: #16a34a;
-          --danger: #dc2626;
           --border: rgba(23, 32, 51, 0.10);
           --shadow: 0 18px 48px rgba(19, 33, 68, 0.14);
           --glow: 0 0 30px rgba(37, 99, 235, 0.12);
@@ -100,25 +98,8 @@
           text-decoration: none;
       }
 
-      .btn:disabled {
-          opacity: 0.55;
-          cursor: not-allowed;
-      }
-
       .btn-primary {
           background: linear-gradient(135deg, var(--accent), var(--accent-2));
-          color: #fff;
-          border: none;
-      }
-
-      .btn-danger {
-          background: linear-gradient(135deg, #ef4444, #b91c1c);
-          color: #fff;
-          border: none;
-      }
-
-      .btn-success {
-          background: linear-gradient(135deg, #22c55e, #15803d);
           color: #fff;
           border: none;
       }
@@ -213,6 +194,7 @@
           box-shadow: inset 0 0 12px rgba(0, 0, 0, 0.08),
           0 0 0 8px rgba(23, 32, 51, 0.04);
       }
+
 
       .wheel-svg {
           width: 100%;
@@ -313,10 +295,6 @@
           line-height: 1.4;
       }
 
-      .match-vs {
-          color: var(--gold);
-      }
-
       .done-banner {
           margin-top: 18px;
           border-radius: 18px;
@@ -330,79 +308,6 @@
 
       body.light .done-banner {
           color: #14532d;
-      }
-
-      .modal-backdrop {
-          position: fixed;
-          inset: 0;
-          background: rgba(2, 8, 23, 0.62);
-          backdrop-filter: blur(6px);
-          display: none;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-          z-index: 1000;
-      }
-
-      .modal-backdrop.show {
-          display: flex;
-      }
-
-      .modal-card {
-          width: min(560px, 100%);
-          border-radius: 28px;
-          background: linear-gradient(180deg, var(--panel), var(--panel-2));
-          border: 1px solid var(--border);
-          box-shadow: var(--shadow);
-          padding: 24px;
-      }
-
-      .modal-card h3 {
-          margin: 0 0 10px;
-          font-size: 28px;
-      }
-
-      .modal-card p {
-          margin: 0;
-          color: var(--muted);
-          line-height: 1.6;
-          font-size: 16px;
-      }
-
-      .modal-picked {
-          margin-top: 18px;
-          padding: 18px;
-          border-radius: 20px;
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid var(--border);
-      }
-
-      .modal-picked .label {
-          font-size: 13px;
-          color: var(--muted);
-          margin-bottom: 8px;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          font-weight: 800;
-      }
-
-      .modal-picked .team-name {
-          font-size: 28px;
-          font-weight: 900;
-          line-height: 1.3;
-      }
-
-      .modal-actions {
-          display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-          margin-top: 22px;
-      }
-
-      .modal-note {
-          margin-top: 16px;
-          font-size: 14px;
-          color: var(--muted);
       }
 
       @media (max-width: 1120px) {
@@ -438,18 +343,6 @@
           .match-teams {
               font-size: 20px;
           }
-
-          .modal-card {
-              padding: 20px;
-          }
-
-          .modal-card h3 {
-              font-size: 24px;
-          }
-
-          .modal-picked .team-name {
-              font-size: 24px;
-          }
       }
   </style>
 </head>
@@ -464,6 +357,7 @@
     <div class="top-actions">
       <a class="btn" href="{% url 'match_draw:detail' event.id %}">← Back</a>
       <button class="btn btn-primary" id="startCeremonyBtn" type="button">Start Ceremony</button>
+      <button class="btn" id="nextBtn" type="button" style="display:none;">Next Match</button>
       <button class="btn" id="themeToggle" type="button">Toggle Dark / Light</button>
     </div>
   </div>
@@ -494,25 +388,6 @@
   </div>
 </div>
 
-<div class="modal-backdrop" id="decisionModal" aria-hidden="true">
-  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="decisionTitle">
-    <h3 id="decisionTitle">Confirm selected team</h3>
-    <p id="decisionDescription">The wheel has stopped. Decide whether to remove this team from the wheel or keep it there before the ceremony continues.</p>
-
-    <div class="modal-picked">
-      <div class="label" id="decisionContext">Selected team</div>
-      <div class="team-name" id="decisionTeamName"></div>
-    </div>
-
-    <div class="modal-actions">
-      <button class="btn btn-danger" id="deleteSelectionBtn" type="button">Delete from wheel</button>
-      <button class="btn btn-success" id="holdSelectionBtn" type="button">Hold in wheel</button>
-    </div>
-
-    <div class="modal-note">The ceremony pauses here and will only continue after you choose one of the two options.</div>
-  </div>
-</div>
-
 {{ matches_json|json_script:"matches-data" }}
 
 <script>
@@ -539,16 +414,9 @@
     const matchesContainer = document.getElementById("matchesContainer");
     const doneBanner = document.getElementById("doneBanner");
     const startBtn = document.getElementById("startCeremonyBtn");
-
-    const decisionModal = document.getElementById("decisionModal");
-    const decisionContext = document.getElementById("decisionContext");
-    const decisionDescription = document.getElementById("decisionDescription");
-    const decisionTeamName = document.getElementById("decisionTeamName");
-    const deleteSelectionBtn = document.getElementById("deleteSelectionBtn");
-    const holdSelectionBtn = document.getElementById("holdSelectionBtn");
+    const nextBtn = document.getElementById("nextBtn");
 
     const matches = JSON.parse(document.getElementById("matches-data").textContent);
-    let revealMatches = [];
 
     const allTeams = [];
     matches.forEach((m) => {
@@ -557,15 +425,10 @@
     });
 
     const uniqueTeams = [...new Set(allTeams)];
-    let activeTeams = [...uniqueTeams];
 
     let rotationDeg = 0;
     let currentMatchIndex = 0;
-    let currentPickSide = "first";
     let ceremonyStarted = false;
-    let isSpinning = false;
-    let isWaitingDecision = false;
-    let pendingPick = null;
 
     function escapeHtml(text) {
       const div = document.createElement("div");
@@ -574,16 +437,16 @@
     }
 
     const wheelColors = [
-      "#4F8EF7",
-      "#E44C9A",
-      "#2FC463",
-      "#F3A712",
-      "#8B63F6",
-      "#23B5D3",
-      "#F24848",
-      "#84CC16",
-      "#14B8A6",
-      "#F97316",
+      "#4F8EF7", // refined blue
+      "#E44C9A", // rose
+      "#2FC463", // green
+      "#F3A712", // amber
+      "#8B63F6", // violet
+      "#23B5D3", // cyan
+      "#F24848", // red
+      "#84CC16", // lime
+      "#14B8A6", // teal
+      "#F97316", // orange
     ];
 
     function polarToCartesian(cx, cy, r, angleDeg) {
@@ -610,22 +473,19 @@
     function buildWheel() {
       wheelSvg.innerHTML = "";
 
-      const total = activeTeams.length;
+      const total = uniqueTeams.length;
       const cx = 260;
       const cy = 260;
       const r = 255;
-
-      if (!total) {
-        return;
-      }
-
       const segment = 360 / total;
 
+      // Dynamic font size based on team count
       let fontSize = 24;
       if (total >= 5) fontSize = 20;
       if (total >= 7) fontSize = 17;
       if (total >= 9) fontSize = 14;
 
+      // Put text farther from center for fewer teams, slightly closer for many teams
       let labelRadius = 175;
       if (total === 2) labelRadius = 170;
       else if (total <= 4) labelRadius = 180;
@@ -638,15 +498,18 @@
         const endAngle = startAngle + segment;
         const midAngle = startAngle + (segment / 2);
 
+        // Slice path
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", describeSlice(cx, cy, r, startAngle, endAngle));
         path.setAttribute("fill", wheelColors[i % wheelColors.length]);
         wheelSvg.appendChild(path);
 
+        // Text position inside slice
         const rad = (midAngle - 90) * Math.PI / 180;
         const tx = cx + Math.cos(rad) * labelRadius;
         const ty = cy + Math.sin(rad) * labelRadius;
 
+        // Keep text readable
         let textRotation = midAngle;
         if (textRotation > 90 && textRotation < 270) {
           textRotation += 180;
@@ -662,19 +525,17 @@
         text.setAttribute("dominant-baseline", "middle");
         text.setAttribute("transform", `rotate(${textRotation} ${tx} ${ty})`);
         text.setAttribute("style", "paint-order: stroke; stroke: rgba(0,0,0,0.18); stroke-width: 2px; letter-spacing: 0.15px;");
-        text.textContent = activeTeams[i];
+        text.textContent = uniqueTeams[i];
 
         wheelSvg.appendChild(text);
       }
     }
 
     function getTeamCenterAngle(teamName) {
-      const idx = activeTeams.indexOf(teamName);
-      if (idx === -1) {
-        return null;
-      }
+      const idx = uniqueTeams.indexOf(teamName);
+      if (idx === -1) return 0;
 
-      const total = activeTeams.length;
+      const total = uniqueTeams.length;
       const segment = 360 / total;
 
       return idx * segment + (segment / 2);
@@ -686,24 +547,25 @@
 
     function spinToTeam(teamName) {
       return new Promise((resolve) => {
-        const total = activeTeams.length;
-        if (!total) {
-          resolve();
-          return;
-        }
-
+        const total = uniqueTeams.length;
         const segment = 360 / total;
+
         const targetCenter = getTeamCenterAngle(teamName);
 
-        if (targetCenter === null) {
-          resolve();
-          return;
-        }
-
+        // Because:
+        // 1) our slice math is top-based
+        // 2) the SVG itself is rotated by -90deg
+        // 3) the pointer is visually on the right
+        // the correct alignment target is 180deg in this coordinate system
         const baseTargetRotation = 180 - targetCenter;
+
+        // Optional small random offset inside the correct slice
+        // so the wheel does not always stop at the exact same internal point
+        // while still staying safely inside the same slice.
         const safeMargin = Math.min(10, segment * 0.18);
         const jitterRange = Math.max(0, (segment / 2) - safeMargin);
         const jitter = (Math.random() * 2 - 1) * jitterRange;
+
         const desiredRotation = baseTargetRotation + jitter;
 
         const currentNormalized = normalizeDeg(rotationDeg);
@@ -732,25 +594,12 @@
       });
     }
 
-    function shuffleArray(items) {
-      const copy = [...items];
-      for (let i = copy.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [copy[i], copy[j]] = [copy[j], copy[i]];
-      }
-      return copy;
-    }
-
-    function getCurrentRevealMatch() {
-      return revealMatches[currentMatchIndex];
-    }
-
     function addMatchCard(match) {
       const card = document.createElement("div");
       card.className = "match-card";
       card.innerHTML = `
-            <div class="match-order">Match ${match.reveal_order}</div>
-            <div class="match-teams">${escapeHtml(match.team_1)} <span class="match-vs">VS</span> ${escapeHtml(match.team_2)}</div>
+            <div class="match-order">Match ${match.match_order}</div>
+            <div class="match-teams">${escapeHtml(match.team_1)} vs ${escapeHtml(match.team_2)}</div>
         `;
       matchesContainer.appendChild(card);
       requestAnimationFrame(() => {
@@ -758,139 +607,65 @@
       });
     }
 
-    function openDecisionModal(teamName) {
-      const match = getCurrentRevealMatch();
-      const sideText = currentPickSide === "first" ? "First side selected" : "Second side selected";
-      decisionContext.textContent = `Match ${match.reveal_order} • ${sideText}`;
-      decisionDescription.textContent = "The wheel is paused. Choose whether this team should be removed from the wheel or kept in it before the ceremony continues.";
-      decisionTeamName.innerHTML = escapeHtml(teamName);
-      decisionModal.classList.add("show");
-      decisionModal.setAttribute("aria-hidden", "false");
-    }
+    async function revealMatch(match) {
+      resetRevealBoxes();
 
-    function closeDecisionModal() {
-      decisionModal.classList.remove("show");
-      decisionModal.setAttribute("aria-hidden", "true");
-    }
+      statusText.textContent = "Spinning for the first team...";
+      await spinToTeam(match.team_1);
+      showTeam(teamOneBox, match.team_1);
 
-    function removeTeamFromWheel(teamName) {
-      const idx = activeTeams.indexOf(teamName);
-      if (idx !== -1) {
-        activeTeams.splice(idx, 1);
-        buildWheel();
-      }
-    }
+      await new Promise(resolve => setTimeout(resolve, 650));
 
-    async function requestCurrentPick() {
-      if (!ceremonyStarted || isSpinning || isWaitingDecision) return;
-      if (currentMatchIndex >= revealMatches.length) return;
+      statusText.textContent = "Spinning for the opponent...";
+      await spinToTeam(match.team_2);
+      versusBox.classList.add("show");
+      showTeam(teamTwoBox, match.team_2);
 
-      const match = getCurrentRevealMatch();
-      const targetTeam = currentPickSide === "first" ? match.team_1 : match.team_2;
+      await new Promise(resolve => setTimeout(resolve, 850));
 
-      statusText.textContent = currentPickSide === "first"
-        ? `Spinning for the first team of match ${match.reveal_order}...`
-        : `Spinning for the opponent of match ${match.reveal_order}...`;
+      addMatchCard(match);
+      statusText.textContent = `Match ${match.match_order} revealed.`;
 
-      isSpinning = true;
-      await spinToTeam(targetTeam);
-      isSpinning = false;
-
-      if (currentPickSide === "first") {
-        showTeam(teamOneBox, targetTeam);
-      } else {
-        versusBox.classList.add("show");
-        showTeam(teamTwoBox, targetTeam);
-      }
-
-      pendingPick = {
-        teamName: targetTeam,
-        matchIndex: currentMatchIndex,
-        side: currentPickSide
-      };
-
-      isWaitingDecision = true;
-      openDecisionModal(targetTeam);
-      statusText.textContent = `${targetTeam} selected. Waiting for your decision...`;
-    }
-
-    async function continueAfterDecision(removeFromWheel) {
-      if (!pendingPick || !isWaitingDecision) return;
-
-      const picked = pendingPick;
-      const teamName = picked.teamName;
-
-      if (removeFromWheel) {
-        removeTeamFromWheel(teamName);
-      }
-
-      closeDecisionModal();
-      isWaitingDecision = false;
-      pendingPick = null;
-
-      if (picked.side === "first") {
-        currentPickSide = "second";
-        statusText.textContent = `${teamName} confirmed. Preparing the opponent spin...`;
-        await new Promise(resolve => setTimeout(resolve, 550));
-        requestCurrentPick();
-        return;
-      }
-
-      addMatchCard(revealMatches[picked.matchIndex]);
-      statusText.textContent = `Match ${revealMatches[picked.matchIndex].reveal_order} revealed.`;
       currentMatchIndex += 1;
 
-      if (currentMatchIndex >= revealMatches.length) {
-        ceremonyStarted = false;
-        startBtn.disabled = false;
-        doneBanner.style.display = "block";
+      if (currentMatchIndex >= matches.length) {
         statusText.textContent = "Ceremony complete.";
-        return;
+        nextBtn.style.display = "none";
+        doneBanner.style.display = "block";
+      } else {
+        nextBtn.style.display = "inline-block";
       }
-
-      currentPickSide = "first";
-      await new Promise(resolve => setTimeout(resolve, 850));
-      resetRevealBoxes();
-      requestCurrentPick();
     }
 
     async function startCeremony() {
-      if (ceremonyStarted || isSpinning || isWaitingDecision) return;
+      if (ceremonyStarted) return;
+      ceremonyStarted = true;
 
       if (!matches.length) {
         statusText.textContent = "No generated matches found. Please return and click Start Draw first.";
         return;
       }
 
-      ceremonyStarted = true;
-      startBtn.disabled = true;
+      startBtn.style.display = "none";
+      nextBtn.style.display = "none";
       currentMatchIndex = 0;
-      currentPickSide = "first";
-      revealMatches = shuffleArray(matches).map((match, index) => ({
-        ...match,
-        reveal_order: index + 1
-      }));
-      activeTeams = [...uniqueTeams];
       matchesContainer.innerHTML = "";
       doneBanner.style.display = "none";
-      pendingPick = null;
       resetRevealBoxes();
-      buildWheel();
 
-      statusText.textContent = "Ceremony started.";
-      await new Promise(resolve => setTimeout(resolve, 250));
-      requestCurrentPick();
+      await revealMatch(matches[currentMatchIndex]);
+    }
+
+    async function revealNext() {
+      if (currentMatchIndex >= matches.length) return;
+      nextBtn.style.display = "none";
+      await revealMatch(matches[currentMatchIndex]);
     }
 
     buildWheel();
 
     startBtn.addEventListener("click", startCeremony);
-    deleteSelectionBtn.addEventListener("click", function () {
-      continueAfterDecision(true);
-    });
-    holdSelectionBtn.addEventListener("click", function () {
-      continueAfterDecision(false);
-    });
+    nextBtn.addEventListener("click", revealNext);
   })();
 </script>
 </body>

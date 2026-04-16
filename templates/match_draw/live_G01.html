@@ -313,10 +313,6 @@
           line-height: 1.4;
       }
 
-      .match-vs {
-          color: var(--gold);
-      }
-
       .done-banner {
           margin-top: 18px;
           border-radius: 18px;
@@ -548,7 +544,6 @@
     const holdSelectionBtn = document.getElementById("holdSelectionBtn");
 
     const matches = JSON.parse(document.getElementById("matches-data").textContent);
-    let revealMatches = [];
 
     const allTeams = [];
     matches.forEach((m) => {
@@ -732,25 +727,12 @@
       });
     }
 
-    function shuffleArray(items) {
-      const copy = [...items];
-      for (let i = copy.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [copy[i], copy[j]] = [copy[j], copy[i]];
-      }
-      return copy;
-    }
-
-    function getCurrentRevealMatch() {
-      return revealMatches[currentMatchIndex];
-    }
-
     function addMatchCard(match) {
       const card = document.createElement("div");
       card.className = "match-card";
       card.innerHTML = `
-            <div class="match-order">Match ${match.reveal_order}</div>
-            <div class="match-teams">${escapeHtml(match.team_1)} <span class="match-vs">VS</span> ${escapeHtml(match.team_2)}</div>
+            <div class="match-order">Match ${match.match_order}</div>
+            <div class="match-teams">${escapeHtml(match.team_1)} vs ${escapeHtml(match.team_2)}</div>
         `;
       matchesContainer.appendChild(card);
       requestAnimationFrame(() => {
@@ -759,9 +741,9 @@
     }
 
     function openDecisionModal(teamName) {
-      const match = getCurrentRevealMatch();
+      const match = matches[currentMatchIndex];
       const sideText = currentPickSide === "first" ? "First side selected" : "Second side selected";
-      decisionContext.textContent = `Match ${match.reveal_order} • ${sideText}`;
+      decisionContext.textContent = `Match ${match.match_order} • ${sideText}`;
       decisionDescription.textContent = "The wheel is paused. Choose whether this team should be removed from the wheel or kept in it before the ceremony continues.";
       decisionTeamName.innerHTML = escapeHtml(teamName);
       decisionModal.classList.add("show");
@@ -783,14 +765,14 @@
 
     async function requestCurrentPick() {
       if (!ceremonyStarted || isSpinning || isWaitingDecision) return;
-      if (currentMatchIndex >= revealMatches.length) return;
+      if (currentMatchIndex >= matches.length) return;
 
-      const match = getCurrentRevealMatch();
+      const match = matches[currentMatchIndex];
       const targetTeam = currentPickSide === "first" ? match.team_1 : match.team_2;
 
       statusText.textContent = currentPickSide === "first"
-        ? `Spinning for the first team of match ${match.reveal_order}...`
-        : `Spinning for the opponent of match ${match.reveal_order}...`;
+        ? `Spinning for the first team of match ${match.match_order}...`
+        : `Spinning for the opponent of match ${match.match_order}...`;
 
       isSpinning = true;
       await spinToTeam(targetTeam);
@@ -836,11 +818,11 @@
         return;
       }
 
-      addMatchCard(revealMatches[picked.matchIndex]);
-      statusText.textContent = `Match ${revealMatches[picked.matchIndex].reveal_order} revealed.`;
+      addMatchCard(matches[picked.matchIndex]);
+      statusText.textContent = `Match ${matches[picked.matchIndex].match_order} revealed.`;
       currentMatchIndex += 1;
 
-      if (currentMatchIndex >= revealMatches.length) {
+      if (currentMatchIndex >= matches.length) {
         ceremonyStarted = false;
         startBtn.disabled = false;
         doneBanner.style.display = "block";
@@ -866,10 +848,6 @@
       startBtn.disabled = true;
       currentMatchIndex = 0;
       currentPickSide = "first";
-      revealMatches = shuffleArray(matches).map((match, index) => ({
-        ...match,
-        reveal_order: index + 1
-      }));
       activeTeams = [...uniqueTeams];
       matchesContainer.innerHTML = "";
       doneBanner.style.display = "none";
