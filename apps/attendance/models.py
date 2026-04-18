@@ -542,11 +542,32 @@ class MealSubscription(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    SOURCE_MANUAL = "manual"
+    SOURCE_DASHBOARD_POSTPAID = "dashboard_postpaid"
+
+    SOURCE_CHOICES = [
+        (SOURCE_MANUAL, "Manual"),
+        (SOURCE_DASHBOARD_POSTPAID, "Dashboard postpaid"),
+    ]
+
+    source = models.CharField(
+        max_length=40,
+        choices=SOURCE_CHOICES,
+        default=SOURCE_MANUAL,
+        db_index=True,
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=1,
+        db_index=True,
+        help_text="Lower number wins. Recommended: 1=primary, 2=fallback."
+    )
+
     class Meta:
         indexes = [
             models.Index(fields=["student", "status", "start_date", "end_date"]),
         ]
-        ordering = ["student", "start_date"]
+        # ordering = ["student", "start_date"]
+        ordering = ["student", "priority", "start_date", "id"]
 
     def __str__(self):
         return f"{self.student.h_code} {self.plan_type} [{self.start_date} → {self.end_date}]"
@@ -570,10 +591,27 @@ class MealSubscription(models.Model):
             raise ValidationError({"end_date": "End date cannot be earlier than start date."})
 
         # Overlap check only when saving an ACTIVE subscription
+        # if self.status == self.STATUS_ACTIVE and self.student_id and self.start_date and self.end_date:
+        #     clash = MealSubscription.objects.filter(
+        #         student_id=self.student_id,
+        #         status=self.STATUS_ACTIVE,
+        #     ).exclude(pk=self.pk).filter(
+        #         start_date__lte=self.end_date,
+        #         end_date__gte=self.start_date,
+        #     ).exists()
+        #
+        #     if clash:
+        #         raise ValidationError(
+        #             "Overlapping ACTIVE subscription exists for this student in the selected date range."
+        #         )
+
+        # Allow overlaps across different priorities.
+        # Only block overlapping ACTIVE subscriptions with the SAME priority.
         if self.status == self.STATUS_ACTIVE and self.student_id and self.start_date and self.end_date:
             clash = MealSubscription.objects.filter(
                 student_id=self.student_id,
                 status=self.STATUS_ACTIVE,
+                priority=self.priority,
             ).exclude(pk=self.pk).filter(
                 start_date__lte=self.end_date,
                 end_date__gte=self.start_date,
@@ -581,7 +619,7 @@ class MealSubscription(models.Model):
 
             if clash:
                 raise ValidationError(
-                    "Overlapping ACTIVE subscription exists for this student in the selected date range."
+                    f"Overlapping ACTIVE subscription exists for this student with the same priority ({self.priority}) in the selected date range."
                 )
 
     # Optional: only enforce date validity for ACTIVE (but usually enforce always)
@@ -764,6 +802,14 @@ class MealProfile(models.Model):
         (INSUFFICIENT_ALLOW_NEGATIVE, "Allow negative"),
     ]
 
+    credit_limit_iqd = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Only used when mode=Wallet and insufficient funds mode=Allow negative. "
+            "Blank = no negative limit. Example: 1000 means balance may go down to -1000 IQD only."
+        ),
+    )
     name = models.CharField(max_length=100, unique=True)
     mode = models.CharField(max_length=20, choices=MODE_CHOICES, default=MODE_DATE_RANGE)
 

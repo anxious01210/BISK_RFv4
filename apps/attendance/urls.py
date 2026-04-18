@@ -25,6 +25,7 @@ urlpatterns = [
     path("dash/meal/stream/", views.meal_stream_rows, name="meal_stream_rows"),
     path("dash/meal/confirm/", views.confirm_record, name="confirm_record"),
     path("dash/meal/reverse/", views.reverse_record, name="reverse_record"),
+    # path("dash/meal/enable-postpaid/", views.enable_postpaid, name="enable_postpaid"),
     # MJPEG stream endpoint (staff-only via the view)
     path("stream/live/<str:session>.mjpg", stream_views.mjpeg_stream, name="att_mjpeg_stream"),
     # synthetic publisher controls

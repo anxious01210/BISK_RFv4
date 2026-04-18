@@ -1,10 +1,10 @@
-from datetime import datetime, time
+from datetime import datetime, time, date
+from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q, OuterRef, Subquery
 from django.http import HttpResponse, HttpResponseForbidden
 from django.shortcuts import render, get_object_or_404
-from django.utils import timezone
 from apps.cameras.models import Camera
 from django.utils.dateparse import parse_date, parse_datetime
 from django.utils.html import escape
@@ -21,7 +21,34 @@ from .models import (
     MealRecord,
     Wallet,
     WalletTransaction,
+    MealProfile,
 )
+from django.db import transaction
+
+def _academic_year_end(today):
+    # Simple default: next June 30
+    year = today.year
+    if today.month >= 7:
+        return date(year + 1, 6, 30)
+    return date(year, 6, 30)
+
+def _get_or_create_postpaid_profile():
+    profile, _ = MealProfile.objects.get_or_create(
+        name="Postpaid Wallet",
+        defaults={
+            "mode": MealRecord.MODE_WALLET,
+            "insufficient_funds_mode": "allow_negative",
+            "allow_supervisor_confirm": True,
+            "allow_supervisor_unconfirm": True,
+            "allow_supervisor_refund": True,
+            "require_reason_on_override": False,
+            "require_reason_on_unconfirm": False,
+            "require_reason_on_refund": False,
+            "is_active": True,
+            "notes": "Reusable supervisor-created postpaid wallet profile",
+        },
+    )
+    return profile
 
 def get_meal_price(meal_profile, period_template):
     if not meal_profile or not period_template:
@@ -49,6 +76,100 @@ def _parse_any(s):
         return datetime.combine(d, time.min).replace(tzinfo=timezone.get_current_timezone())
     return None
 
+def _get_active_subscriptions_for_day(student_id, meal_day):
+    return list(
+        MealSubscription.objects
+        .select_related("meal_profile")
+        .filter(
+            student_id=student_id,
+            status=MealSubscription.STATUS_ACTIVE,
+            start_date__lte=meal_day,
+            end_date__gte=meal_day,
+        )
+        .order_by("priority", "start_date", "id")
+    )
+
+
+def _resolve_effective_meal_setup(student, meal_day, period_template=None):
+    """
+    Returns a dict describing the effective subscription/profile to use today.
+    Lower priority number wins.
+    """
+    subs = _get_active_subscriptions_for_day(student.id, meal_day)
+    wallet = Wallet.objects.filter(student=student, is_active=True).first()
+
+    for sub in subs:
+        profile = sub.meal_profile
+        if not profile or not getattr(profile, "is_active", False):
+            continue
+
+        # Date-range profiles are applicable immediately if the subscription is active on the date.
+        if profile.mode == MealRecord.MODE_DATE_RANGE:
+            return {
+                "sub": sub,
+                "profile": profile,
+                "wallet": None,
+                "mode": MealRecord.MODE_DATE_RANGE,
+                "priority": sub.priority,
+                "is_fallback": sub.priority > 1,
+                "blocked": False,
+                "block_reason": "",
+                "credit_limit_iqd": None,
+                "projected_balance_iqd": None,
+            }
+
+        # Wallet profiles need a wallet to be usable.
+        if profile.mode == MealRecord.MODE_WALLET:
+            price = int(get_meal_price(profile, period_template) or 0)
+            balance = int(getattr(wallet, "balance_iqd", 0) or 0) if wallet else 0
+            projected = balance - price
+
+            blocked = False
+            block_reason = ""
+            credit_limit_iqd = getattr(profile, "credit_limit_iqd", None)
+            funds_mode = getattr(profile, "insufficient_funds_mode", "")
+
+            if price <= 0:
+                blocked = True
+                block_reason = "No meal price is configured for this period."
+
+            elif not wallet:
+                blocked = True
+                block_reason = "No active wallet exists."
+
+            elif funds_mode == MealProfile.INSUFFICIENT_ALLOW_NEGATIVE and credit_limit_iqd is not None:
+                if projected < -int(credit_limit_iqd):
+                    blocked = True
+                    block_reason = (
+                        f"Credit limit reached. Balance {balance} IQD, charge {price} IQD, "
+                        f"limit -{int(credit_limit_iqd)} IQD."
+                    )
+
+            return {
+                "sub": sub,
+                "profile": profile,
+                "wallet": wallet,
+                "mode": MealRecord.MODE_WALLET,
+                "priority": sub.priority,
+                "is_fallback": sub.priority > 1,
+                "blocked": blocked,
+                "block_reason": block_reason,
+                "credit_limit_iqd": credit_limit_iqd,
+                "projected_balance_iqd": projected,
+            }
+
+    return {
+        "sub": None,
+        "profile": None,
+        "wallet": wallet,
+        "mode": MealRecord.MODE_NONE,
+        "priority": None,
+        "is_fallback": False,
+        "blocked": False,
+        "block_reason": "",
+        "credit_limit_iqd": None,
+        "projected_balance_iqd": None,
+    }
 
 # small helper so both the list view and confirm swap render the same photo+row
 def _photos_html(gallery_url: str, crop_url: str) -> str:
@@ -65,7 +186,36 @@ def _photos_html(gallery_url: str, crop_url: str) -> str:
 
 
 def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
-    from django.utils import timezone
+    # enable_postpaid_url = reverse("attendance:enable_postpaid")
+    try:
+        meal_day = timezone.localdate(rec.best_seen) if rec.best_seen else timezone.localdate()
+    except Exception:
+        meal_day = timezone.localdate()
+
+    # active_sub = (
+    #     MealSubscription.objects
+    #     .select_related("meal_profile")
+    #     .filter(
+    #         student_id=rec.student_id,
+    #         status=MealSubscription.STATUS_ACTIVE,
+    #         start_date__lte=meal_day,
+    #         end_date__gte=meal_day,
+    #     )
+    #     .order_by("start_date", "id")
+    #     .first()
+    # )
+    #
+    # active_profile = active_sub.meal_profile if active_sub and active_sub.meal_profile_id else None
+
+    period_template = rec.period.template if rec.period else None
+    resolved = _resolve_effective_meal_setup(rec.student, meal_day, period_template=period_template)
+    active_sub = resolved["sub"]
+    active_profile = resolved["profile"]
+    resolved_wallet = resolved["wallet"]
+    resolved_blocked = resolved["blocked"]
+    resolved_block_reason = resolved["block_reason"]
+    resolved_priority = resolved["priority"]
+    resolved_is_fallback = resolved["is_fallback"]
 
     def fmt_hms(dt):
         if not dt:
@@ -88,19 +238,102 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
 
     meal = getattr(rec, "meal_record", None)
 
-    if meal and meal.eligible_at_time is True:
-        eligible_html = "<span class='badge g'>MEAL</span>"
-    elif meal and meal.eligible_at_time is False:
-        eligible_html = "<span class='badge r'>No Meal</span>"
+    plan_html = "<span class='small k'>—</span>"
+
+    # sub = getattr(meal, "meal_subscription", None) if meal else None
+    # profile = getattr(meal, "meal_profile", None) if meal else None
+    sub = active_sub
+    profile = active_profile
+
+    if sub and profile:
+        profile_name = escape(getattr(profile, "name", "") or "Profile")
+        mode = getattr(profile, "mode", "") or ""
+        mode_label = "DATE-RANGE" if mode == MealRecord.MODE_DATE_RANGE else "WALLET"
+
+        if mode == MealRecord.MODE_DATE_RANGE:
+            end_date = getattr(sub, "end_date", None)
+            end_txt = escape(end_date.isoformat()) if end_date else "—"
+            # plan_html = (
+            #     f"<span class='badge'>{mode_label}</span><br/>"
+            #     f"<span class='small'>{profile_name}</span><br/>"
+            #     f"<span class='small k'>until:</span> <span class='small'>{end_txt}</span>"
+            # )
+            priority_label = "Fallback" if resolved_is_fallback else "Primary"
+            plan_html = (
+                f"<span class='badge'>{mode_label}</span><br/>"
+                f"<span class='small'>{profile_name}</span><br/>"
+                f"<span class='small k'>{priority_label}</span><br/>"
+                f"<span class='small k'>until:</span> <span class='small'>{end_txt}</span>"
+            )
+        else:
+            # wallet = getattr(rec.student, "wallet", None)
+            wallet = resolved_wallet or getattr(rec.student, "wallet", None)
+
+            # Prefer current live wallet balance.
+            bal = getattr(wallet, "balance_iqd", None)
+
+            # Fallback to meal snapshot if wallet relation is missing for any reason.
+            if bal is None and meal is not None:
+                bal = getattr(meal, "wallet_balance_after_iqd", None)
+
+            # Final fallback
+            if bal is None and meal is not None:
+                bal = getattr(meal, "wallet_balance_before_iqd", None)
+
+            bal = int(bal or 0)
+            bal_class = "g" if bal >= 0 else "r"
+
+            policy = getattr(profile, "insufficient_funds_mode", "") or ""
+            if policy == "allow_negative":
+                policy_badge = "<span class='badge'>POSTPAID OK</span>"
+            elif policy == "allow_unpaid":
+                policy_badge = "<span class='badge'>UNPAID OK</span>"
+            elif policy == "deny":
+                policy_badge = "<span class='badge r'>DENY</span>"
+            else:
+                policy_badge = "<span class='badge'>—</span>"
+
+            # plan_html = (
+            #     f"<span class='badge'>{mode_label}</span><br/>"
+            #     f"<span class='small'>{profile_name}</span><br/>"
+            #     f"<span class='small {bal_class}'>Bal: {bal} IQD</span><br/>"
+            #     f"{policy_badge}"
+            # )
+            priority_label = "Fallback" if resolved_is_fallback else "Primary"
+            extra_badge = ""
+            if resolved_blocked:
+                extra_badge = "<br/><span class='badge r'>LIMIT REACHED</span>"
+
+            plan_html = (
+                f"<span class='badge'>{mode_label}</span><br/>"
+                f"<span class='small'>{profile_name}</span><br/>"
+                f"<span class='small k'>{priority_label}</span><br/>"
+                f"<span class='small {bal_class}'>Bal: {bal} IQD</span><br/>"
+                f"{policy_badge}"
+                f"{extra_badge}"
+            )
     else:
-        eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
+        # No active structured meal setup
+        plan_html = "<span class='badge r'>No active plan</span>"
+
+    # if meal and meal.eligible_at_time is True:
+    #     eligible_html = "<span class='badge g'>MEAL</span>"
+    # elif meal and meal.eligible_at_time is False:
+    #     eligible_html = "<span class='badge r'>No Meal</span>"
+    # else:
+    #     eligible_html = "<span class='badge g'>MEAL</span>" if getattr(st, "has_meal", False) else "<span class='badge r'>No Meal</span>"
+    if sub:
+        eligible_html = "<span class='badge g'>MEAL</span>"
+    else:
+        eligible_html = "<span class='badge r'>No Meal</span>"
+
     pc = int(getattr(rec, "pass_count", 1) or 1)
     badge_class = "badge r" if pc >= 2 else "badge g"
 
     # Confirm cell
-    profile = getattr(meal, "meal_profile", None) if meal else None
-    allow_refund = bool(profile and getattr(profile, "allow_supervisor_refund", False))
-    allow_unconfirm = bool(profile and getattr(profile, "allow_supervisor_unconfirm", False))
+    meal_profile = getattr(meal, "meal_profile", None) if meal else None
+    allow_refund = bool(meal_profile and getattr(meal_profile, "allow_supervisor_refund", False))
+    allow_unconfirm = bool(meal_profile and getattr(meal_profile, "allow_supervisor_unconfirm", False))
 
     if meal and meal.status == MealRecord.STATUS_CONFIRMED:
         status_html = "<span class='badge g'>✔ Confirmed</span>"
@@ -145,7 +378,7 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
     elif meal and meal.status == MealRecord.STATUS_REFUNDED:
         status_html = "<span class='badge'>Refunded</span>"
 
-        if is_supervisor and profile and getattr(profile, "allow_supervisor_confirm", False):
+        if is_supervisor and meal_profile and getattr(meal_profile, "allow_supervisor_confirm", False):
             status_html += (
                 "<br/>"
                 f"<button class='btn-mini' hx-post='{confirm_url}' "
@@ -156,7 +389,7 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
     elif meal and meal.status == MealRecord.STATUS_VOIDED:
         status_html = "<span class='badge'>Voided</span>"
 
-        if is_supervisor and profile and getattr(profile, "allow_supervisor_confirm", False):
+        if is_supervisor and meal_profile and getattr(meal_profile, "allow_supervisor_confirm", False):
             status_html += (
                 "<br/>"
                 f"<button class='btn-mini' hx-post='{confirm_url}' "
@@ -164,12 +397,37 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
                 f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
             )
 
+    # elif is_supervisor:
+    #     if sub and profile:
+    #         status_html = (
+    #             f"<button hx-post='{confirm_url}' "
+    #             f"hx-vals='{{\"id\": {rec.id}}}' "
+    #             f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
+    #         )
+    #     else:
+    #         status_html = (
+    #             f"<button class='btn-mini' "
+    #             f"hx-post='{enable_postpaid_url}' "
+    #             f"hx-vals='{{\"id\": {rec.id}}}' "
+    #             f"hx-target='closest tr' "
+    #             f"hx-swap='outerHTML' "
+    #             f"onclick='return confirm(\"Enable postpaid for this student? This will create or reuse a wallet, postpaid meal profile, and active subscription until academic year end.\")'>"
+    #             f"Enable Postpaid</button>"
+    #         )
     elif is_supervisor:
-        status_html = (
-            f"<button hx-post='{confirm_url}' "
-            f"hx-vals='{{\"id\": {rec.id}}}' "
-            f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
-        )
+        if sub and profile and not resolved_blocked:
+            status_html = (
+                f"<button hx-post='{confirm_url}' "
+                f"hx-vals='{{\"id\": {rec.id}}}' "
+                f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
+            )
+        elif sub and profile and resolved_blocked:
+            status_html = (
+                f"<span class='badge r'>Blocked</span><br/>"
+                f"<span class='small'>{escape(resolved_block_reason)}</span>"
+            )
+        else:
+            status_html = "<span class='small k'>No applicable plan</span>"
     else:
         status_html = "—"
 
@@ -205,7 +463,7 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
         f"<td>{per_name}</td>"
         f"<td>{cam}</td>"
         f"<td>{eligible_html}</td>"
-        # f"<td>{confirm_html}</td>"
+        f"<td>{plan_html}</td>"
         f"<td>{status_html}</td>"
         f"<td><span class='{badge_class}'>{pc}</span></td>"
         f"<td>{score}</td>"
@@ -491,18 +749,24 @@ def confirm_record(request):
     except Exception:
         meal_day = timezone.localdate()
 
-    sub = (
-        MealSubscription.objects
-        .select_related("meal_profile")
-        .filter(
-            student_id=rec.student_id,
-            status=MealSubscription.STATUS_ACTIVE,
-            start_date__lte=meal_day,
-            end_date__gte=meal_day,
-        )
-        .order_by("start_date", "id")
-        .first()
-    )
+    # sub = (
+    #     MealSubscription.objects
+    #     .select_related("meal_profile")
+    #     .filter(
+    #         student_id=rec.student_id,
+    #         status=MealSubscription.STATUS_ACTIVE,
+    #         start_date__lte=meal_day,
+    #         end_date__gte=meal_day,
+    #     )
+    #     .order_by("start_date", "id")
+    #     .first()
+    # )
+    period_template = rec.period.template if rec.period else None
+    resolved = _resolve_effective_meal_setup(rec.student, meal_day, period_template=period_template)
+    sub = resolved["sub"]
+    profile = resolved["profile"]
+    wallet = resolved["wallet"]
+    resolved_blocked = resolved["blocked"]
 
     meal, created = MealRecord.objects.get_or_create(
         attendance_record=rec,
@@ -519,26 +783,48 @@ def confirm_record(request):
 
     # Snapshot subscription/profile/eligibility
     meal.meal_subscription = sub
-    meal.meal_profile = sub.meal_profile if sub and sub.meal_profile_id else None
+    # meal.meal_profile = sub.meal_profile if sub and sub.meal_profile_id else None
+    meal.meal_profile = profile
     meal.eligible_at_time = bool(sub)
 
-    if meal.meal_profile:
-        if meal.meal_profile.mode == MealRecord.MODE_WALLET:
+    # if meal.meal_profile:
+    #     if meal.meal_profile.mode == MealRecord.MODE_WALLET:
+    #         meal.mode_snapshot = MealRecord.MODE_WALLET
+    #     else:
+    #         meal.mode_snapshot = MealRecord.MODE_DATE_RANGE
+    if profile:
+        if profile.mode == MealRecord.MODE_WALLET:
             meal.mode_snapshot = MealRecord.MODE_WALLET
         else:
             meal.mode_snapshot = MealRecord.MODE_DATE_RANGE
     else:
         meal.mode_snapshot = MealRecord.MODE_DATE_RANGE if sub else MealRecord.MODE_NONE
 
+    if sub and profile and resolved_blocked:
+        meal.status = MealRecord.STATUS_DENIED
+        meal.confirmed_at = None
+        meal.confirmed_by = None
+        meal.wallet_transaction = None
+        meal.wallet_refund_transaction = None
+        meal.wallet_balance_before_iqd = getattr(wallet, "balance_iqd", 0) if wallet else 0
+        meal.wallet_balance_after_iqd = meal.wallet_balance_before_iqd
+        meal.reason_code = "credit_limit_reached"
+        meal.reason_notes = resolved.get("block_reason", "")
+        meal.save()
+
+        media_url = (settings.MEDIA_URL or "").rstrip("/")
+        confirm_url = reverse("attendance:confirm_record")
+        reverse_url = reverse("attendance:reverse_record")
+        html = _row_html(rec, media_url, True, confirm_url, reverse_url)
+        return HttpResponse(html)
+
     # For now, confirmation logic is still simple:
     # active subscription -> confirmed
     # no subscription -> denied
-    from django.db import transaction
 
-    if sub and meal.meal_profile:
-
-        profile = meal.meal_profile
-
+    # if sub and meal.meal_profile:
+    #     profile = meal.meal_profile
+    if sub and profile:
         # CASE 1: DATE RANGE MODE
         if profile.mode == MealRecord.MODE_DATE_RANGE:
             meal.wallet_transaction = None
@@ -552,10 +838,35 @@ def confirm_record(request):
         # CASE 2: WALLET MODE
         elif profile.mode == MealRecord.MODE_WALLET:
 
-            wallet = Wallet.objects.filter(student_id=rec.student_id, is_active=True).first()
+            # wallet = Wallet.objects.filter(student_id=rec.student_id, is_active=True).first()
 
             period_template = rec.period.template if rec.period else None
-            price = get_meal_price(profile, period_template)
+            # price = get_meal_price(profile, period_template)
+
+            price = int(get_meal_price(profile, period_template) or 0)
+
+            if price <= 0:
+                meal.price_base_iqd = 0
+                meal.discount_iqd = 0
+                meal.final_charge_iqd = 0
+                meal.wallet_transaction = None
+                meal.wallet_refund_transaction = None
+                meal.wallet_balance_before_iqd = getattr(
+                    Wallet.objects.filter(student_id=rec.student_id, is_active=True).first(),
+                    "balance_iqd",
+                    0,
+                )
+                meal.wallet_balance_after_iqd = meal.wallet_balance_before_iqd
+                meal.status = MealRecord.STATUS_DENIED
+                meal.confirmed_at = None
+                meal.confirmed_by = None
+                meal.save()
+
+                media_url = (settings.MEDIA_URL or "").rstrip("/")
+                confirm_url = reverse("attendance:confirm_record")
+                reverse_url = reverse("attendance:reverse_record")
+                html = _row_html(rec, media_url, True, confirm_url, reverse_url)
+                return HttpResponse(html)
 
             meal.price_base_iqd = price
             meal.discount_iqd = 0
@@ -608,26 +919,61 @@ def confirm_record(request):
                         meal.wallet_balance_after_iqd = meal.wallet_balance_before_iqd
                         meal.wallet_transaction = None
 
+                    # elif mode == "allow_negative":
+                    #     wallet.balance_iqd -= price
+                    #     wallet.save()
+                    #
+                    #     tx = WalletTransaction.objects.create(
+                    #         wallet=wallet,
+                    #         student=rec.student,
+                    #         tx_type="debit",
+                    #         amount_iqd=price,
+                    #         balance_before_iqd=meal.wallet_balance_before_iqd,
+                    #         balance_after_iqd=wallet.balance_iqd,
+                    #         attendance_record=rec,
+                    #         created_by=request.user,
+                    #     )
+                    #
+                    #     meal.wallet_transaction = tx
+                    #     meal.wallet_balance_after_iqd = wallet.balance_iqd
+                    #     meal.status = MealRecord.STATUS_CONFIRMED
+                    #     meal.confirmed_at = timezone.now()
+                    #     meal.confirmed_by = request.user
                     elif mode == "allow_negative":
-                        wallet.balance_iqd -= price
-                        wallet.save()
+                        credit_limit_iqd = getattr(profile, "credit_limit_iqd", None)
+                        projected_balance = wallet.balance_iqd - price
 
-                        tx = WalletTransaction.objects.create(
-                            wallet=wallet,
-                            student=rec.student,
-                            tx_type="debit",
-                            amount_iqd=price,
-                            balance_before_iqd=meal.wallet_balance_before_iqd,
-                            balance_after_iqd=wallet.balance_iqd,
-                            attendance_record=rec,
-                            created_by=request.user,
-                        )
+                        if credit_limit_iqd is not None and projected_balance < -int(credit_limit_iqd):
+                            meal.status = MealRecord.STATUS_DENIED
+                            meal.confirmed_at = None
+                            meal.confirmed_by = None
+                            meal.wallet_transaction = None
+                            meal.wallet_balance_after_iqd = meal.wallet_balance_before_iqd
+                            meal.reason_code = "credit_limit_reached"
+                            meal.reason_notes = (
+                                f"Credit limit reached. Balance {meal.wallet_balance_before_iqd} IQD, "
+                                f"charge {price} IQD, limit -{int(credit_limit_iqd)} IQD."
+                            )
+                        else:
+                            wallet.balance_iqd = projected_balance
+                            wallet.save()
 
-                        meal.wallet_transaction = tx
-                        meal.wallet_balance_after_iqd = wallet.balance_iqd
-                        meal.status = MealRecord.STATUS_CONFIRMED
-                        meal.confirmed_at = timezone.now()
-                        meal.confirmed_by = request.user
+                            tx = WalletTransaction.objects.create(
+                                wallet=wallet,
+                                student=rec.student,
+                                tx_type="debit",
+                                amount_iqd=price,
+                                balance_before_iqd=meal.wallet_balance_before_iqd,
+                                balance_after_iqd=wallet.balance_iqd,
+                                attendance_record=rec,
+                                created_by=request.user,
+                            )
+
+                            meal.wallet_transaction = tx
+                            meal.wallet_balance_after_iqd = wallet.balance_iqd
+                            meal.status = MealRecord.STATUS_CONFIRMED
+                            meal.confirmed_at = timezone.now()
+                            meal.confirmed_by = request.user
 
             else:
                 meal.status = MealRecord.STATUS_DENIED
@@ -741,6 +1087,72 @@ def reverse_record(request):
         return HttpResponse("Nothing to reverse", status=400)
 
     # Re-render the row using the same helper
+    media_url = (settings.MEDIA_URL or "").rstrip("/")
+    confirm_url = reverse("attendance:confirm_record")
+    reverse_url = reverse("attendance:reverse_record")
+    html = _row_html(rec, media_url, True, confirm_url, reverse_url)
+    return HttpResponse(html)
+
+@login_required
+@require_POST
+def enable_postpaid(request):
+    if not _is_meal_supervisor(request.user):
+        return HttpResponseForbidden("Requires meal_supervisor")
+
+    rid = request.POST.get("id") or request.POST.get("record_id")
+    if not rid:
+        return HttpResponse("Missing id", status=400)
+
+    try:
+        rec = AttendanceRecord.objects.select_related(
+            "student",
+            "period__template",
+            "best_camera",
+            "meal_record",
+        ).get(pk=int(rid))
+    except AttendanceRecord.DoesNotExist:
+        return HttpResponse("Not found", status=404)
+
+    student = rec.student
+    today = timezone.localdate()
+    end_date = _academic_year_end(today)
+
+    profile = _get_or_create_postpaid_profile()
+
+    wallet, _ = Wallet.objects.get_or_create(
+        student=student,
+        defaults={
+            "balance_iqd": 0,
+            "is_active": True,
+            "notes": "Auto-created from dashboard postpaid enable",
+        },
+    )
+
+    sub = (
+        MealSubscription.objects
+        .filter(
+            student=student,
+            meal_profile=profile,
+            status=MealSubscription.STATUS_ACTIVE,
+            end_date__gte=today,
+        )
+        .order_by("-end_date")
+        .first()
+    )
+
+    if not sub:
+        sub = MealSubscription.objects.create(
+            student=student,
+            plan_type="other",
+            meal_profile=profile,
+            status=MealSubscription.STATUS_ACTIVE,
+            start_date=today,
+            end_date=end_date,
+            notes=f"Auto-created from dashboard by {request.user.username}",
+            source=MealSubscription.SOURCE_DASHBOARD_POSTPAID,
+        )
+
+    # Re-render row
     media_url = (settings.MEDIA_URL or "").rstrip("/")
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
