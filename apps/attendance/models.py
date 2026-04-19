@@ -512,7 +512,7 @@ class MealSubscription(models.Model):
         max_length=20,
         choices=TYPE_CHOICES,
         default=TYPE_MONTHLY,
-        help_text="Annual / monthly / other – mainly for reporting.",
+        help_text="Date-range: (Annual / monthly), or Wallet / other – mainly for reporting.",
     )
     meal_profile = models.ForeignKey(
         "attendance.MealProfile",

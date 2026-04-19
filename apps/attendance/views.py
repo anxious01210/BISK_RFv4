@@ -397,23 +397,6 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
                 f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
             )
 
-    # elif is_supervisor:
-    #     if sub and profile:
-    #         status_html = (
-    #             f"<button hx-post='{confirm_url}' "
-    #             f"hx-vals='{{\"id\": {rec.id}}}' "
-    #             f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
-    #         )
-    #     else:
-    #         status_html = (
-    #             f"<button class='btn-mini' "
-    #             f"hx-post='{enable_postpaid_url}' "
-    #             f"hx-vals='{{\"id\": {rec.id}}}' "
-    #             f"hx-target='closest tr' "
-    #             f"hx-swap='outerHTML' "
-    #             f"onclick='return confirm(\"Enable postpaid for this student? This will create or reuse a wallet, postpaid meal profile, and active subscription until academic year end.\")'>"
-    #             f"Enable Postpaid</button>"
-    #         )
     elif is_supervisor:
         if sub and profile and not resolved_blocked:
             status_html = (
@@ -422,9 +405,21 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
                 f"hx-target='closest tr' hx-swap='outerHTML'>Confirm</button>"
             )
         elif sub and profile and resolved_blocked:
+            credit_limit_iqd = getattr(profile, "credit_limit_iqd", None)
+            bal_now = 0
+            if resolved_wallet:
+                bal_now = int(getattr(resolved_wallet, "balance_iqd", 0) or 0)
+
+            charge_iqd = int(get_meal_price(profile, rec.period.template if rec.period else None) or 0)
+
             status_html = (
                 f"<span class='badge r'>Blocked</span><br/>"
-                f"<span class='small'>{escape(resolved_block_reason)}</span>"
+                f"<span class='small status-reason'>"
+                f"Credit limit reached.<br/>"
+                f"• Balance: {bal_now} IQD.<br/>"
+                f"• Charge: {charge_iqd} IQD.<br/>"
+                f"• Limit: -{int(credit_limit_iqd or 0)} IQD."
+                f"</span>"
             )
         else:
             status_html = "<span class='small k'>No applicable plan</span>"
