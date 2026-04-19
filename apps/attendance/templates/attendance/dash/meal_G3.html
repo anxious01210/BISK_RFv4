@@ -139,7 +139,7 @@
       }
 
       .periods-label::after {
-          content: attr(data-label);
+          content: "Compact";
           font-size: 11px;
           font-weight: 600;
           opacity: .8;
@@ -282,68 +282,6 @@
       .periods-panel.compact .pc-counts {
           gap: 4px 8px;
           font-size: 11px;
-      }
-
-      .periods-panel.summary {
-          gap: 8px;
-      }
-
-      .periods-panel.summary .period-card {
-          min-width: 132px;
-          max-width: 150px;
-          padding: 7px 8px;
-          border-radius: 8px;
-      }
-
-      .periods-panel.summary .pc-top {
-          margin-bottom: 4px;
-      }
-
-      .periods-panel.summary .pc-title {
-          font-size: 12px;
-      }
-
-      .periods-panel.summary .pc-badge {
-          font-size: 9px;
-          padding: 1px 6px;
-      }
-
-      .periods-panel.summary .pc-time {
-          font-size: 11px;
-          margin-bottom: 0;
-      }
-
-      .periods-panel.summary .pc-counts {
-          display: none;
-      }
-
-      .periods-panel.mini {
-          gap: 8px;
-      }
-
-      .periods-panel.mini .period-card {
-          min-width: 118px;
-          max-width: 136px;
-          padding: 6px 8px;
-          border-radius: 8px;
-      }
-
-      .periods-panel.mini .pc-top {
-          margin-bottom: 0;
-      }
-
-      .periods-panel.mini .pc-title {
-          font-size: 12px;
-      }
-
-      .periods-panel.mini .pc-badge {
-          font-size: 9px;
-          padding: 1px 6px;
-      }
-
-      .periods-panel.mini .pc-time,
-      .periods-panel.mini .pc-counts {
-          display: none;
       }
 
       .sticky-head .small label {
@@ -563,9 +501,7 @@
     </div>
 
     <div class="toolbar-row periods-row">
-      <div id="periodsToggle" class="periods-label" data-label="Compact" title="Click to cycle period card display">
-        Periods
-      </div>
+      <div id="periodsToggle" class="periods-label" title="Click to toggle compact periods view">Periods</div>
       <div id="periodCards" class="periods-panel">
         {% for card in period_cards %}
           <div
@@ -687,38 +623,15 @@
       if (m) evt.detail.headers['X-CSRFToken'] = decodeURIComponent(m[1]);
     });
 
-    const PERIODS_VIEW_STATES = ['full', 'compact', 'summary', 'mini'];
-
-    function applyPeriodsView(view) {
-      const safeView = PERIODS_VIEW_STATES.includes(view) ? view : 'full';
-      periodCardsWrap.classList.remove('compact', 'summary', 'mini');
-      if (safeView !== 'full') {
-        periodCardsWrap.classList.add(safeView);
-      }
-      periodCardsWrap.dataset.view = safeView;
-
-      const nextLabelMap = {
-        full: 'Compact',
-        compact: 'Summary',
-        summary: 'Mini',
-        mini: 'Full',
-      };
-      periodsToggle.dataset.label = nextLabelMap[safeView];
-      periodsToggle.setAttribute('title', `Current view: ${safeView}. Click to switch to ${nextLabelMap[safeView]}.`);
-
-      localStorage.setItem(LS_PERIODS_VIEW, safeView);
+    function setPeriodsCompact(isCompact) {
+      periodCardsWrap.classList.toggle('compact', !!isCompact);
+      periodsToggle.classList.toggle('is-compact', !!isCompact);
+      localStorage.setItem(LS_PERIODS_COMPACT, isCompact ? '1' : '0');
     }
 
-    function cyclePeriodsView() {
-      const current = periodCardsWrap.dataset.view || 'full';
-      const idx = PERIODS_VIEW_STATES.indexOf(current);
-      const next = PERIODS_VIEW_STATES[(idx + 1) % PERIODS_VIEW_STATES.length];
-      applyPeriodsView(next);
-    }
-
-    function hydratePeriodsView() {
-      const saved = localStorage.getItem(LS_PERIODS_VIEW) || 'full';
-      applyPeriodsView(saved);
+    function hydratePeriodsCompact() {
+      const saved = localStorage.getItem(LS_PERIODS_COMPACT);
+      setPeriodsCompact(saved === '1');
     }
 
     function getSelectedPeriodCards() {
@@ -782,7 +695,7 @@
     }
 
     const LS_KEY = 'meal.page_size';
-    const LS_PERIODS_VIEW = 'meal.periods_view';
+    const LS_PERIODS_COMPACT = 'meal.periods_compact';
     const savedSize = localStorage.getItem(LS_KEY);
     if (savedSize && [...pageSizeSel.options].some(o => o.value === savedSize)) {
       pageSizeSel.value = savedSize;
@@ -894,7 +807,7 @@
     });
 
     periodsToggle.addEventListener('click', () => {
-      cyclePeriodsView();
+      setPeriodsCompact(!periodCardsWrap.classList.contains('compact'));
     });
 
     periodCardsWrap.addEventListener('click', (e) => {
@@ -911,7 +824,7 @@
     });
 
     document.addEventListener('DOMContentLoaded', () => {
-      hydratePeriodsView();
+      hydratePeriodsCompact();
       hydrateCardsFromDefaults();
 
       if (cameraHid.value) {

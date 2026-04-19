@@ -27,7 +27,6 @@
           border-radius: 9999px;
           font-size: 12px;
           color: #fff;
-          background: #444;
       }
 
       .g {
@@ -76,29 +75,36 @@
       td:nth-child(7) .small,
       td:nth-child(10) .small,
       td:nth-child(11) .small {
-          line-height: 1.55;
+          line-height: 1.5;
       }
 
-      th:nth-child(1), td:nth-child(1) {
-          width: 300px;
+      /* Column widths */
+      th:nth-child(1),
+      td:nth-child(1) {
+          width: 300px; /* Photos */
       }
 
-      th:nth-child(6), td:nth-child(6) {
-          width: 170px;
+      th:nth-child(6),
+      td:nth-child(6) {
+          width: 170px; /* Plan / Balance */
       }
 
-      th:nth-child(7), td:nth-child(7) {
-          width: 200px;
+      th:nth-child(7),
+      td:nth-child(7) {
+          width: 200px; /* Status */
       }
 
-      th:nth-child(10), td:nth-child(10) {
-          width: 150px;
+      th:nth-child(10),
+      td:nth-child(10) {
+          width: 150px; /* Times */
       }
 
-      th:nth-child(11), td:nth-child(11) {
-          width: 120px;
+      th:nth-child(11),
+      td:nth-child(11) {
+          width: 120px; /* Last pass */
       }
 
+      /* Important columns a bit larger */
       th:nth-child(6),
       th:nth-child(7),
       th:nth-child(10),
@@ -106,246 +112,15 @@
           font-size: 13px;
       }
 
-      .toolbar-rows {
-          display: flex;
-          flex-direction: column;
-          gap: 10px;
-          margin-top: 8px;
+      /* Better spacing in stacked content */
+      td:nth-child(6) .small,
+      td:nth-child(7) .small,
+      td:nth-child(10) .small,
+      td:nth-child(11) .small {
+          line-height: 1.55;
       }
 
-      .toolbar-row {
-          display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-          align-items: center;
-      }
-
-      .toolbar-row.primary-controls {
-          row-gap: 10px;
-      }
-
-      .periods-row {
-          align-items: flex-start;
-      }
-
-      .periods-label {
-          font-weight: 700;
-          min-width: 62px;
-          cursor: pointer;
-          user-select: none;
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-      }
-
-      .periods-label::after {
-          content: attr(data-label);
-          font-size: 11px;
-          font-weight: 600;
-          opacity: .8;
-          padding: 2px 8px;
-          border: 1px solid #2f2f2f;
-          border-radius: 9999px;
-          background: #191919;
-      }
-
-      .periods-panel {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 10px;
-          margin-top: 4px;
-          transition: gap .15s ease;
-      }
-
-      .period-card {
-          min-width: 170px;
-          max-width: 220px;
-          padding: 10px 12px;
-          border: 1px solid #3a3a3a;
-          border-radius: 10px;
-          background: #161616;
-          cursor: pointer;
-          user-select: none;
-          transition: transform .12s ease, border-color .12s ease, background .12s ease, box-shadow .12s ease;
-      }
-
-      .period-card:hover {
-          transform: translateY(-1px);
-          border-color: #5a5a5a;
-      }
-
-      .period-card.selected {
-          border-color: #60a5fa;
-          box-shadow: 0 0 0 1px rgba(96, 165, 250, .25);
-      }
-
-      .period-card.active-now {
-          border-color: #22c55e;
-          background: rgba(34, 197, 94, 0.12);
-          box-shadow: 0 0 0 1px rgba(34, 197, 94, .25);
-      }
-
-      .period-card.active-now.selected {
-          border-color: #22c55e;
-          box-shadow: 0 0 0 1px rgba(34, 197, 94, .32);
-      }
-
-      .period-card.dimmed {
-          opacity: .82;
-      }
-
-      .period-card .pc-top {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 8px;
-          margin-bottom: 6px;
-      }
-
-      .period-card .pc-title {
-          font-size: 14px;
-          font-weight: 700;
-          line-height: 1.2;
-      }
-
-      .period-card .pc-badge {
-          font-size: 10px;
-          border-radius: 9999px;
-          padding: 2px 7px;
-          background: #2a2a2a;
-          color: #ddd;
-          white-space: nowrap;
-      }
-
-      .period-card.active-now .pc-badge {
-          background: #16a34a;
-          color: #fff;
-      }
-
-      .period-card .pc-time {
-          font-size: 12px;
-          opacity: .9;
-          margin-bottom: 8px;
-      }
-
-      .period-card .pc-counts {
-          display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 6px 10px;
-          font-size: 12px;
-      }
-
-      .period-card .pc-counts span {
-          display: inline-flex;
-          justify-content: space-between;
-          gap: 8px;
-          opacity: .95;
-      }
-
-      .period-card .pc-counts b {
-          font-weight: 700;
-      }
-
-      .period-card .pc-counts .blk b {
-          color: #f87171;
-      }
-
-      .periods-panel.compact {
-          gap: 8px;
-      }
-
-      .periods-panel.compact .period-card {
-          min-width: 132px;
-          max-width: 150px;
-          padding: 7px 8px;
-          border-radius: 8px;
-      }
-
-      .periods-panel.compact .pc-top {
-          margin-bottom: 4px;
-      }
-
-      .periods-panel.compact .pc-title {
-          font-size: 12px;
-      }
-
-      .periods-panel.compact .pc-badge {
-          font-size: 9px;
-          padding: 1px 6px;
-      }
-
-      .periods-panel.compact .pc-time {
-          font-size: 11px;
-          margin-bottom: 5px;
-      }
-
-      .periods-panel.compact .pc-counts {
-          gap: 4px 8px;
-          font-size: 11px;
-      }
-
-      .periods-panel.summary {
-          gap: 8px;
-      }
-
-      .periods-panel.summary .period-card {
-          min-width: 132px;
-          max-width: 150px;
-          padding: 7px 8px;
-          border-radius: 8px;
-      }
-
-      .periods-panel.summary .pc-top {
-          margin-bottom: 4px;
-      }
-
-      .periods-panel.summary .pc-title {
-          font-size: 12px;
-      }
-
-      .periods-panel.summary .pc-badge {
-          font-size: 9px;
-          padding: 1px 6px;
-      }
-
-      .periods-panel.summary .pc-time {
-          font-size: 11px;
-          margin-bottom: 0;
-      }
-
-      .periods-panel.summary .pc-counts {
-          display: none;
-      }
-
-      .periods-panel.mini {
-          gap: 8px;
-      }
-
-      .periods-panel.mini .period-card {
-          min-width: 118px;
-          max-width: 136px;
-          padding: 6px 8px;
-          border-radius: 8px;
-      }
-
-      .periods-panel.mini .pc-top {
-          margin-bottom: 0;
-      }
-
-      .periods-panel.mini .pc-title {
-          font-size: 12px;
-      }
-
-      .periods-panel.mini .pc-badge {
-          font-size: 9px;
-          padding: 1px 6px;
-      }
-
-      .periods-panel.mini .pc-time,
-      .periods-panel.mini .pc-counts {
-          display: none;
-      }
-
+      /* Center label text vertically beside its control in the toolbar */
       .sticky-head .small label {
           display: inline-flex;
           align-items: center;
@@ -368,15 +143,13 @@
           background: #2a2a2a;
       }
 
+      /* --- Meal photo previews --- */
       .photos {
           display: flex;
           gap: 10px;
           align-items: flex-start;
       }
 
-      .ph {
-          position: relative;
-      }
 
       .ph .open {
           position: absolute;
@@ -412,6 +185,7 @@
           background: #222;
       }
 
+      /* --- Image modal --- */
       .img-modal[hidden] {
           display: none;
       }
@@ -431,7 +205,7 @@
           max-width: min(90vw, 1100px);
           max-height: 90vh;
           background: #111;
-          padding: 28px;
+      {#padding: 14px;#} padding: 28px;
           border-radius: 10px;
       }
 
@@ -445,7 +219,7 @@
 
       .img-modal .open {
           position: absolute;
-          left: 1px;
+      {#right: 42px;#} left: 1px;
           top: 1px;
           text-decoration: none;
           background: rgba(119, 94, 76, 0.67);
@@ -472,11 +246,15 @@
           opacity: .65;
           margin-right: 4px;
       }
+
+
   </style>
 </head>
 <body>
 
 <div class="sticky-head">
+  <!-- Logout via Django admin's logout view (POST). Sends user back to "/" afterward. -->
+  {#  <form method="post" action="{% url 'admin:logout' %}" style="float:right;margin-left:10px;">#}
   <form method="post" action="{% url 'portal_logout' %}" style="float:right;margin-left:10px;">
     {% csrf_token %}
     <input type="hidden" name="next" value="/"/>
@@ -484,111 +262,86 @@
   </form>
   <strong>Meal — Live</strong>
   <span id="live-counts" class="small" style="margin-left:8px;"></span>
+  <div class="small" style="margin-top:6px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+    <label>Mode
+      <select id="modeSel">
+        <option value="latest">Latest per student (live)</option>
+        <option value="all_live">All records (live)</option>
+        <option value="all_paged">All records (paged)</option>
+      </select>
+    </label>
 
-  <div class="toolbar-rows small">
-    <div class="toolbar-row primary-controls">
-      <label>Mode
-        <select id="modeSel">
-          <option value="latest">Latest per student (live)</option>
-          <option value="all_live">All records (live)</option>
-          <option value="all_paged">All records (paged)</option>
-        </select>
-      </label>
+    <label>Periods
+      <select id="periodSel" multiple size="2">
 
-      <label>Camera
-        <input id="cameraInp" placeholder="Dept_01,Dept_02" style="width:220px;">
-      </label>
+      </select>
+    </label>
 
-      <label>Eligible only
-        <input id="eligibleChk" type="checkbox">
-      </label>
+    <label>Camera
+      <input id="cameraInp" placeholder="Dept_01,Dept_02" style="width:160px;">
+    </label>
 
-      <label>Min score
-        <input id="minScore" type="number" step="0.01" min="0" max="1" style="width:80px;">
-      </label>
+    <label>Eligible only
+      <input id="eligibleChk" type="checkbox">
+    </label>
 
-      <label>Since
-        <select id="sinceSel">
-          <option value="today" selected>Today</option>
-          <option value="15m">Last 15m</option>
-          <option value="1h">Last 1h</option>
-        </select>
-      </label>
+    <label>Min score
+      <input id="minScore" type="number" step="0.01" min="0" max="1" style="width:80px;">
+    </label>
 
-      <label id="poll-wrap">Poll
-        <select id="poll">
-          <option value="500">0.5s</option>
-          <option value="1000">1s</option>
-          <option value="2000" selected>2s</option>
-          <option value="3000">3s</option>
-          <option value="5000">5s</option>
-          <option value="10000">10s</option>
-          <option value="15000">15s</option>
-          <option value="30000">30s</option>
-          <option value="60000">60s</option>
-          <option value="0">Paused</option>
-        </select>
-      </label>
+    <label>Since
+      <select id="sinceSel">
+        <option value="today" selected>Today</option>
+        <option value="15m">Last 15m</option>
+        <option value="1h">Last 1h</option>
+      </select>
+    </label>
 
-      <button id="resetBtn" type="button"
-              title="Restart live stream from the current 'Since' filter. Only applies in mode 'Latest per student (live)'.">
-        Reset cursor
-      </button>
+    <label id="poll-wrap">Poll
+      <select id="poll">
+        <option value="500">0.5s</option>
+        <option value="1000">1s</option>
+        <option value="2000" selected>2s</option>
+        <option value="3000">3s</option>
+        <option value="5000">5s</option>
+        <option value="10000">10s</option>
+        <option value="15000">15s</option>
+        <option value="30000">30s</option>
+        <option value="60000">60s</option>
+        <option value="0">Paused</option>
+      </select>
+    </label>
 
-      <label id="pagesize-wrap" style="display:none">Page size
-        <select id="page_size">
-          <option>1</option>
-          <option>2</option>
-          <option>3</option>
-          <option>4</option>
-          <option>5</option>
-          <option>7</option>
-          <option>10</option>
-          <option selected>20</option>
-          <option>30</option>
-          <option>40</option>
-          <option>50</option>
-          <option>70</option>
-          <option>100</option>
-        </select>
-      </label>
+    <label id="pagesize-wrap" style="display:none">Page size
+      <select id="page_size">
+        <option>1</option>
+        <option>2</option>
+        <option>3</option>
+        <option>4</option>
+        <option>5</option>
+        <option>7</option>
+        <option>10</option>
+        <option style="font-weight: bold;" selected>20</option>
+        <option>30</option>
+        <option>40</option>
+        <option>50</option>
+        <option>70</option>
+        <option>100</option>
+      </select>
+    </label>
 
-      <span id="pager" style="display:none; gap:8px; align-items:center;">
-        <button id="page_prev" type="button">◀ Prev</button>
-        <span id="page_info">Page 1</span>
-        <button id="page_next" type="button">Next ▶</button>
-      </span>
+    <span id="pager" style="display:none; gap:8px; align-items:center;">
+  <button id="page_prev" type="button">◀ Prev</button>
+  <span id="page_info">Page 1</span>
+  <button id="page_next" type="button">Next ▶</button>
+</span>
 
-      <span id="spinner" class="small" style="display:none;margin-left:10px;">Loading…</span>
-    </div>
 
-    <div class="toolbar-row periods-row">
-      <div id="periodsToggle" class="periods-label" data-label="Compact" title="Click to cycle period card display">
-        Periods
-      </div>
-      <div id="periodCards" class="periods-panel">
-        {% for card in period_cards %}
-          <div
-            class="period-card{% if card.selected %} selected{% endif %}{% if card.is_active_now %} active-now{% else %} dimmed{% endif %}"
-            data-period-name="{{ card.name }}"
-            data-selected="{% if card.selected %}1{% else %}0{% endif %}"
-            title="{{ card.label }} ({{ card.start }} - {{ card.end }})"
-          >
-            <div class="pc-top">
-              <div class="pc-title">{{ card.label }}</div>
-              <div class="pc-badge">{% if card.is_active_now %}ACTIVE{% else %}PERIOD{% endif %}</div>
-            </div>
-            <div class="pc-time">{{ card.start }} – {{ card.end }}</div>
-            <div class="pc-counts">
-              <span><em>Rec</em> <b>{{ card.recognized_count }}</b></span>
-              <span><em>DR</em> <b>{{ card.date_range_count }}</b></span>
-              <span><em>Wal</em> <b>{{ card.wallet_count }}</b></span>
-              <span class="blk"><em>Blk</em> <b>{{ card.blocked_count }}</b></span>
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-    </div>
+    <button id="resetBtn" type="button"
+            title="Restart live stream from the current 'Since' filter. Only applies in mode 'Latest per student (live)'.">
+      Reset cursor
+    </button>
+    <span id="spinner" class="small" style="display:none;margin-left:10px;">Loading…</span>
   </div>
 
   <audio id="ding" preload="auto">
@@ -619,6 +372,18 @@
 {% endif %}
 
 <table>
+  {#    <colgroup>#}
+  {#    <col style="width: 340px;">   <!-- Photos -->#}
+  {#    <col style="width: 220px;">   <!-- Student -->#}
+  {#    <col style="width: 140px;">   <!-- Period -->#}
+  {#    <col style="width: 120px;">   <!-- Camera -->#}
+  {#    <col style="width: 110px;">   <!-- Eligible -->#}
+  {#    <col style="width: 120px;">   <!-- Confirm -->#}
+  {#    <col style="width: 80px;">    <!-- Pass -->#}
+  {#    <col style="width: 80px;">    <!-- Score -->#}
+  {#    <col style="width: 160px;">   <!-- Times -->#}
+  {#    <col style="width: 110px;">   <!-- Last pass -->#}
+  {#  </colgroup>#}
   <thead>
   <tr>
     <th>Photos</th>
@@ -637,32 +402,41 @@
   <tbody id="rows"></tbody>
 </table>
 
+<!-- HTMX driver -->
 <div id="meal-driver"
      hx-get="{% url 'attendance:meal_stream_rows' %}"
+  {#     hx-trigger="load, refresh, every 2s"#}
      hx-trigger="refresh"
      hx-include="#params"
      hx-target="#rows"
      hx-swap="innerHTML"
      hx-indicator="#spinner"></div>
 
+
 <script>
   (function () {
+    // ---------- tiny DOM helpers ----------
     const $ = (id) => document.getElementById(id);
 
+    // elements we use a lot
     const driver = $('meal-driver');
     const rowsBody = $('rows');
     const liveCnt = $('live-counts');
 
-    const modeSel = $('modeSel');
-    const modeInput = $('mode_input');
+    // toolbar controls
+    const modeSel = $('modeSel');          // visible mode select
+    const modeInput = $('mode_input');       // hidden <input name="mode">
     const lastN = $('last_n');
+
+    const periodSel = $('periodSel');
     const cameraInp = $('cameraInp');
     const eligible = $('eligibleChk');
     const minScore = $('minScore');
     const sinceSel = $('sinceSel');
-    const pollSel = $('poll');
+    const pollSel = $('poll');             // NOTE: id="poll"
     const resetBtn = $('resetBtn');
 
+    // paging controls
     const pageSizeWrap = $('pagesize-wrap');
     const pageSizeSel = $('page_size');
     const pageSizeInp = $('page_size_input');
@@ -672,6 +446,7 @@
     const prevBtn = $('page_prev');
     const nextBtn = $('page_next');
 
+    // hidden params
     const periodInp = $('period');
     const cameraHid = $('camera');
     const eligHid = $('eligible_only');
@@ -679,70 +454,68 @@
     const dateFromHid = $('date_from');
     const dateToHid = $('date_to');
     const afterTsHid = $('after_ts');
-    const periodCardsWrap = $('periodCards');
-    const periodsToggle = $('periodsToggle');
 
+    // ----- CSRF for HTMX -----
     document.body.addEventListener('htmx:configRequest', (evt) => {
       const m = document.cookie.match(/(?:^|;)\s*csrftoken=([^;]+)/);
       if (m) evt.detail.headers['X-CSRFToken'] = decodeURIComponent(m[1]);
     });
 
-    const PERIODS_VIEW_STATES = ['full', 'compact', 'summary', 'mini'];
+// ---- hydrate Periods/Cameras from defaults and sync hidden inputs ----
+    (function hydrateFromDefaults() {
+      // hidden inputs already populated by the view
+      const defaultsPeriods = (document.getElementById("period").value || "")
+        .split(",").map(s => s.trim()).filter(Boolean);
+      const defaultsCameras = (document.getElementById("camera").value || "")
+        .split(",").map(s => s.trim()).filter(Boolean);
 
-    function applyPeriodsView(view) {
-      const safeView = PERIODS_VIEW_STATES.includes(view) ? view : 'full';
-      periodCardsWrap.classList.remove('compact', 'summary', 'mini');
-      if (safeView !== 'full') {
-        periodCardsWrap.classList.add(safeView);
+      // Build Period options, select all, and set size = N (min 2 to keep UI tidy)
+      const sel = document.getElementById("periodSel");
+      sel.innerHTML = "";
+      defaultsPeriods.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = p;
+        opt.selected = true;     // auto-select all
+        sel.appendChild(opt);
+      });
+      sel.size = Math.max(2, defaultsPeriods.length || 2);
+
+      // If you want the visible camera input prefilled too:
+      const cameraInp = document.getElementById("cameraInp");
+      if (cameraInp && defaultsCameras.length) {
+        cameraInp.value = defaultsCameras.join(",");
       }
-      periodCardsWrap.dataset.view = safeView;
 
-      const nextLabelMap = {
-        full: 'Compact',
-        compact: 'Summary',
-        summary: 'Mini',
-        mini: 'Full',
-      };
-      periodsToggle.dataset.label = nextLabelMap[safeView];
-      periodsToggle.setAttribute('title', `Current view: ${safeView}. Click to switch to ${nextLabelMap[safeView]}.`);
+      // DEBUG (optional): see what we hydrated
+      console.groupCollapsed("[meal] hydrateFromDefaults");
+      console.log("periods:", defaultsPeriods);
+      console.log("cameras:", defaultsCameras);
+      console.groupEnd();
 
-      localStorage.setItem(LS_PERIODS_VIEW, safeView);
-    }
-
-    function cyclePeriodsView() {
-      const current = periodCardsWrap.dataset.view || 'full';
-      const idx = PERIODS_VIEW_STATES.indexOf(current);
-      const next = PERIODS_VIEW_STATES[(idx + 1) % PERIODS_VIEW_STATES.length];
-      applyPeriodsView(next);
-    }
-
-    function hydratePeriodsView() {
-      const saved = localStorage.getItem(LS_PERIODS_VIEW) || 'full';
-      applyPeriodsView(saved);
-    }
-
-    function getSelectedPeriodCards() {
-      return Array.from(periodCardsWrap.querySelectorAll('.period-card.selected'))
-        .map(el => el.dataset.periodName)
-        .filter(Boolean);
-    }
-
-    function hydrateCardsFromDefaults() {
-      const defaultsPeriods = (periodInp.value || '').split(',').map(s => s.trim()).filter(Boolean);
-      const defaultsCameras = (cameraHid.value || '').split(',').map(s => s.trim()).filter(Boolean);
-
-      periodCardsWrap.querySelectorAll('.period-card').forEach(card => {
-        const name = card.dataset.periodName;
-        const selected = defaultsPeriods.includes(name);
-        card.classList.toggle('selected', selected);
-        card.dataset.selected = selected ? '1' : '0';
+      // Keep hidden inputs in sync with the visible controls
+      const periodHid = document.getElementById("period");
+      sel.addEventListener("change", () => {
+        const vals = Array.from(sel.options).filter(o => o.selected).map(o => o.value);
+        periodHid.value = vals.join(",");
+        htmx.trigger(document.getElementById("meal-driver"), "refresh");
       });
 
-      if (cameraInp && defaultsCameras.length) {
-        cameraInp.value = defaultsCameras.join(',');
+      const cameraHid = document.getElementById("camera");
+      if (cameraInp) {
+        cameraInp.addEventListener("change", () => {
+          cameraHid.value = (cameraInp.value || "")
+            .split(",").map(s => s.trim()).filter(Boolean).join(",");
+          htmx.trigger(document.getElementById("meal-driver"), "refresh");
+        });
       }
-    }
 
+      // Kick an initial load using these hydrated values
+      htmx.trigger(document.getElementById("meal-driver"), "refresh");
+    })();
+
+
+    // ---------- filter updaters ----------
     function isoTodayStart() {
       const now = new Date();
       return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0).toISOString();
@@ -761,7 +534,7 @@
     }
 
     function updatePeriods() {
-      const vals = getSelectedPeriodCards();
+      const vals = Array.from(periodSel.selectedOptions).map(o => o.value);
       periodInp.value = vals.join(',');
     }
 
@@ -781,25 +554,28 @@
       afterTsHid.value = '';
     }
 
+    // ---------- persistence for page size ----------
     const LS_KEY = 'meal.page_size';
-    const LS_PERIODS_VIEW = 'meal.periods_view';
     const savedSize = localStorage.getItem(LS_KEY);
     if (savedSize && [...pageSizeSel.options].some(o => o.value === savedSize)) {
       pageSizeSel.value = savedSize;
       pageSizeInp.value = savedSize;
     }
 
+    // ---------- mode & paging controller (single source of truth) ----------
     const pollTriggerStr = () => {
       const ms = parseInt(pollSel.value || '2000', 10) || 0;
       return ms > 0 ? `load, refresh, every ${Math.max(1, Math.round(ms / 1000))}s` : 'load, refresh';
     };
+    {#const isPaged = (m) => m === 'all_paged' || m.startsWith('last');#}
     const isPaged = (m) => m === 'all_paged';
+    {#const lastNFromMode = (m) => m.startsWith('last') ? (parseInt(m.replace('last', ''), 10) || '') : '';#}
     const isAllLive = (m) => m === 'all_live';
 
     function setDriver(trigger, swap) {
       driver.setAttribute('hx-trigger', trigger);
-      driver.setAttribute('hx-swap', swap);
-      htmx.process(driver);
+      driver.setAttribute('hx-swap', swap); // always replace tbody
+      htmx.process(driver);  // rebind with the new trigger/swap
     }
 
     function resetPage() {
@@ -811,20 +587,34 @@
 
     function applyMode() {
       const m = modeSel.value;
+
+      // server expects: latest | all | lastN
+      // map client "all_live" to server "all"
+      {#modeInput.value = (m === 'all_paged' || isAllLive(m)) ? 'all' : (m.startsWith('last') ? 'lastN' : 'latest')#}
       modeInput.value = (m === 'all_paged' || isAllLive(m)) ? 'all' : 'latest';
-      lastN.value = '';
+      {#lastN.value = lastNFromMode(m);#}
+      lastN.value = ""; // not used anymore
 
       const paged = isPaged(m);
+
+      // toggle controls
+      // show poll when live modes are active
       $('poll-wrap').style.display = (m === 'latest' || isAllLive(m)) ? '' : 'none';
+      // page size is useful for paged AND all_live (acts as “latest N”)
       pageSizeWrap.style.display = (paged || isAllLive(m)) ? '' : 'none';
+      // no manual pager for all_live (always page 1)
       pager.style.display = paged ? 'inline-flex' : 'none';
 
+      // driver policy
       if (m === 'latest' || isAllLive(m)) {
+        // live polling
         setDriver(pollTriggerStr(), 'innerHTML');
         if (isAllLive(m)) {
+          // all_live always shows newest page (page 1)
           pageInp.value = '1';
         }
       } else {
+        // paged/manual modes
         setDriver('load, refresh', 'innerHTML');
         resetCursor();
       }
@@ -833,32 +623,35 @@
       htmx.trigger(driver, 'refresh');
     }
 
+    // ---------- events (filters) ----------
+    periodSel.addEventListener('change', () => {
+      updatePeriods();
+      resetCursor();
+      htmx.trigger(driver, 'refresh');
+    });
     eligible.addEventListener('change', () => {
       updateEligible();
       resetCursor();
       htmx.trigger(driver, 'refresh');
     });
-
     cameraInp.addEventListener('change', () => {
       updateCamera();
       resetCursor();
       htmx.trigger(driver, 'refresh');
     });
-
     minScore.addEventListener('change', () => {
       updateMinScore();
       resetCursor();
       htmx.trigger(driver, 'refresh');
     });
-
     sinceSel.addEventListener('change', () => {
       updateSince();
       resetCursor();
       htmx.trigger(driver, 'refresh');
     });
 
+    // mode & poll & paging events
     modeSel.addEventListener('change', applyMode);
-
     pollSel.addEventListener('change', () => {
       if (modeSel.value === 'latest' || modeSel.value === 'all_live') {
         setDriver(pollTriggerStr(), 'innerHTML');
@@ -866,96 +659,83 @@
         htmx.trigger(driver, 'refresh');
       }
     });
-
     pageSizeSel.addEventListener('change', () => {
       pageSizeInp.value = pageSizeSel.value;
       localStorage.setItem(LS_KEY, pageSizeSel.value);
       resetPage();
       htmx.trigger(driver, 'refresh');
     });
-
     prevBtn.addEventListener('click', () => {
       const cur = Math.max(1, (parseInt(pageInp.value, 10) || 1) - 1);
       pageInp.value = String(cur);
       pageInfo.textContent = `Page ${cur}`;
       htmx.trigger(driver, 'refresh');
     });
-
     nextBtn.addEventListener('click', () => {
       const cur = (parseInt(pageInp.value, 10) || 1) + 1;
       pageInp.value = String(cur);
       pageInfo.textContent = `Page ${cur}`;
       htmx.trigger(driver, 'refresh');
     });
-
     resetBtn.addEventListener('click', () => {
       resetCursor();
       htmx.trigger(driver, 'refresh');
     });
 
-    periodsToggle.addEventListener('click', () => {
-      cyclePeriodsView();
-    });
-
-    periodCardsWrap.addEventListener('click', (e) => {
-      const card = e.target.closest('.period-card');
-      if (!card) return;
-
-      const isSelected = card.classList.contains('selected');
-      card.classList.toggle('selected', !isSelected);
-      card.dataset.selected = !isSelected ? '1' : '0';
-
-      updatePeriods();
-      resetCursor();
-      htmx.trigger(driver, 'refresh');
-    });
-
+    // ---------- first-time init (order matters!) ----------
     document.addEventListener('DOMContentLoaded', () => {
-      hydratePeriodsView();
-      hydrateCardsFromDefaults();
+      // hydrate visible controls from hidden defaults provided by the server
+      // periods: select options that match #period's comma list
+      const defaultPeriods = (periodInp.value || '').split(',').filter(Boolean);
+      Array.from(periodSel.options).forEach(o => {
+        o.selected = defaultPeriods.includes(o.value);
+      });
+      // camera: show the default list (if any) in the textbox so change events keep it
+      if (cameraHid.value) cameraInp.value = cameraHid.value;
 
-      if (cameraHid.value) {
-        cameraInp.value = cameraHid.value;
-      }
-
+      // set all hidden params BEFORE the very first fetch
       updateSince();
-      updatePeriods();
+      updatePeriods();   // now reflects server-tagged defaults (or empty if none)
       updateEligible();
-      updateCamera();
+      updateCamera();    // keeps defaults if set above
       updateMinScore();
 
+      // let the controller configure the driver & make the first request
       applyMode();
     });
 
+    // ---------- after rows arrive ----------
     document.body.addEventListener('htmx:afterSwap', (evt) => {
       if (evt.target !== rowsBody) return;
 
+      // live count
       liveCnt.textContent = `${rowsBody.querySelectorAll('tr').length} row(s)`;
 
+      // only advance cursor in "latest" mode
       if (modeSel.value === 'latest') {
         const trig = evt.detail.xhr.getResponseHeader('HX-Trigger');
         if (trig) {
           try {
             const data = JSON.parse(trig);
             if (data['meal:last_ts']) afterTsHid.value = data['meal:last_ts'];
-          } catch (_) {
+          } catch {
           }
         } else {
           afterTsHid.value = new Date().toISOString();
         }
-
+        // (optional) ding on arrivals
         const audio = $('ding');
-        if (audio && audio.play) {
-          audio.play().catch(() => {
-          });
-        }
+        audio && audio.play && audio.play().catch(() => {
+        });
       }
 
+      // keep newest page when live-all mode
       if (modeSel.value === 'all_live') {
         pageInp.value = '1';
       }
     });
 
+    // ---------- update pager from server totals ----------
     document.body.addEventListener('htmx:afterOnLoad', (evt) => {
       if (evt.target !== driver) return;
       const trig = evt.detail.xhr.getResponseHeader('HX-Trigger');
@@ -968,10 +748,11 @@
           prevBtn.disabled = (p <= 1);
           nextBtn.disabled = (p >= P);
         }
-      } catch (_) {
+      } catch {
       }
     });
 
+    // ---------- thumbnail preview modal (unchanged) ----------
     function modalEls() {
       return {modal: $('img-modal'), img: $('img-modal-img'), open: $('img-modal-open')};
     }
@@ -998,7 +779,6 @@
         if (img) img.src = '';
       }
     });
-
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         const {modal, img} = modalEls();
@@ -1011,12 +791,14 @@
   })();
 </script>
 
+<!-- Image preview modal -->
 <div id="img-modal" class="img-modal" hidden>
   <div class="inner">
     <a id="img-modal-open" class="open" href="#" target="_blank" title="Open original">↗</a>
     <button class="close-modal" aria-label="Close">×</button>
     <img id="img-modal-img" alt="">
   </div>
+  <!-- click outside inner to close -->
 </div>
 </body>
 </html>
