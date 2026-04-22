@@ -566,13 +566,7 @@
       <div id="periodsToggle" class="periods-label" data-label="Compact" title="Click to cycle period card display">
         Periods
       </div>
-      <div id="periodCards"
-           class="periods-panel"
-           hx-get="{% url 'attendance:meal_period_cards' %}"
-           hx-trigger="meal:refresh_cards from:body"
-           hx-include="#params"
-           hx-target="#periodCards"
-           hx-swap="innerHTML">
+      <div id="periodCards" class="periods-panel">
         {% for card in period_cards %}
           <div
             class="period-card{% if card.selected %} selected{% endif %}{% if card.is_active_now %} active-now{% else %} dimmed{% endif %}"
@@ -594,7 +588,6 @@
           </div>
         {% endfor %}
       </div>
-
     </div>
   </div>
 
@@ -635,9 +628,7 @@
     <th>Eligible</th>
     <th>Plan / Balance</th>
     <th>Status</th>
-    <th title="Pass count increases when the same student is seen again after this gap.">
-      Pass (gap {{ pass_gap_window_sec }}s)
-    </th>
+    <th>Pass</th>
     <th>Score</th>
     <th>Times</th>
     <th>Last pass</th>

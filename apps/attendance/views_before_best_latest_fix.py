@@ -17,8 +17,6 @@ from apps.cameras.models import Camera
 from .models import (
     DashboardTag,
     PeriodTemplate,
-    RecognitionSettings,
-    AttendanceEvent,
     AttendanceRecord,
     MealSubscription,
     MealRecord,
@@ -173,30 +171,18 @@ def _resolve_effective_meal_setup(student, meal_day, period_template=None):
     }
 
 
-def _photos_html(gallery_url: str, best_crop_url: str, latest_crop_url: str) -> str:
-    def _ph(url: str, label: str) -> str:
+def _photos_html(gallery_url: str, crop_url: str) -> str:
+    def _ph(url: str) -> str:
         if not url:
-            return (
-                "<div class='ph'>"
-                f"  <div class='photo ph-empty'></div>"
-                f"  <div class='small k' style='margin-top:4px;text-align:center'>{label}</div>"
-                "</div>"
-            )
+            return "<div class='photo ph-empty'></div>"
         return (
             "<div class='ph'>"
             f"  <img src='{url}' class='photo js-preview' data-full='{url}' loading='lazy'/>"
             f"  <a class='open' href='{url}' target='_blank' title='Open in new tab'>↗</a>"
-            f"  <div class='small k' style='margin-top:4px;text-align:center'>{label}</div>"
             "</div>"
         )
 
-    return (
-            "<div class='photos'>"
-            + _ph(gallery_url, "ID")
-            + _ph(best_crop_url, "Best")
-            + _ph(latest_crop_url, "Latest")
-            + "</div>"
-    )
+    return "<div class='photos'>" + _ph(gallery_url) + _ph(crop_url) + "</div>"
 
 
 def _format_clock(value):
@@ -224,26 +210,14 @@ def _build_period_cards(default_periods, default_cameras):
     tomorrow = today + timedelta(days=1)
 
     tz = timezone.get_current_timezone()
-    latest_event_qs = (
-        AttendanceEvent.objects
-        .filter(student_id=OuterRef("student_id"), period_id=OuterRef("period_id"))
-        .order_by("-ts", "-id")
-    )
-
-    base_qs = (
-        AttendanceRecord.objects
-        .filter(
-            period__template__in=periods,
-            last_seen__gte=datetime.combine(today, time.min).replace(tzinfo=tz),
-            last_seen__lt=datetime.combine(tomorrow, time.min).replace(tzinfo=tz),
-        )
-        .annotate(
-            latest_event_camera_name=Subquery(latest_event_qs.values("camera__name")[:1]),
-        )
+    base_qs = AttendanceRecord.objects.filter(
+        period__template__in=periods,
+        best_seen__gte=datetime.combine(today, time.min).replace(tzinfo=tz),
+        best_seen__lt=datetime.combine(tomorrow, time.min).replace(tzinfo=tz),
     )
 
     if default_cameras:
-        base_qs = base_qs.filter(latest_event_camera_name__in=default_cameras)
+        base_qs = base_qs.filter(best_camera__name__in=default_cameras)
 
     rec_map = {
         row["period__template_id"]: row["c"]
@@ -329,11 +303,8 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
     name = escape(st.full_name() if hasattr(st, "full_name") else "")
     grade = escape(getattr(st, "get_grade_display", lambda: getattr(st, "grade", "") or "—")())
     per_name = escape(getattr(rec.period.template, "name", "")) if rec.period and rec.period.template else ""
-    best_score_txt = f"{float(rec.best_score or 0.0):.2f}"
-    latest_score_txt = f"{float(getattr(rec, 'latest_event_score', None) or rec.best_score or 0.0):.2f}"
-
-    best_cam = escape(getattr(rec.best_camera, "name", "") or "-")
-    latest_cam = escape(getattr(rec, "latest_event_camera_name", "") or best_cam or "-")
+    score = f"{float(rec.best_score or 0.0):.2f}"
+    cam = escape(getattr(rec.best_camera, "name", "") or "-")
 
     meal = getattr(rec, "meal_record", None)
     plan_html = "<span class='small k'>—</span>"
@@ -427,21 +398,7 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
                 f"hx-target='closest tr' hx-swap='outerHTML'>Void</button>"
             )
     elif meal and meal.status == MealRecord.STATUS_DENIED:
-        if (
-            is_supervisor
-            and sub
-            and profile
-            and not resolved_blocked
-            and getattr(profile, "allow_supervisor_confirm", False)
-        ):
-            status_html = (
-                "<span class='badge r'>Denied</span><br/>"
-                f"<button hx-post='{confirm_url}' "
-                f"hx-vals='{{\"id\": {rec.id}}}' "
-                f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
-            )
-        else:
-            status_html = "<span class='badge r'>Denied</span>"
+        status_html = "<span class='badge r'>Denied</span>"
     elif meal and meal.status == MealRecord.STATUS_REFUNDED:
         status_html = "<span class='badge'>Refunded</span>"
         if is_supervisor and meal_profile and getattr(meal_profile, "allow_supervisor_confirm", False):
@@ -486,12 +443,8 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
     else:
         status_html = "—"
 
-    best_crop = getattr(rec, "best_crop", "") or ""
-    best_crop_url = f"{media_url}/{best_crop.lstrip('/')}" if (media_url and best_crop) else ""
-
-    latest_crop = getattr(rec, "latest_event_crop_path", "") or ""
-    latest_crop_url = f"{media_url}/{latest_crop.lstrip('/')}" if (media_url and latest_crop) else ""
-
+    crop = getattr(rec, "best_crop", "") or ""
+    crop_url = f"{media_url}/{crop.lstrip('/')}" if (media_url and crop) else ""
     gallery_url = ""
     try:
         if hasattr(st, "gallery_photo_relurl"):
@@ -499,18 +452,17 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
             gallery_url = u or ""
     except Exception:
         gallery_url = ""
-
-    img_html = _photos_html(gallery_url, best_crop_url, latest_crop_url)
+    img_html = _photos_html(gallery_url, crop_url)
 
     t_first = fmt_hms(getattr(rec, "first_seen", None))
     t_best = fmt_hms(getattr(rec, "best_seen", None))
-    t_latest = fmt_hms(getattr(rec, "last_seen", None))
+    t_last = fmt_hms(getattr(rec, "last_seen", None))
     t_pass = fmt_hms(getattr(rec, "last_pass_at", None))
 
     times_html = (
-        f"<span class='small'><span class='k'>First:</span> {t_first}</span><br/>"
-        f"<span class='small'><span class='k'>Best:</span> {t_best}</span><br/>"
-        f"<span class='small'><span class='k'>Latest:</span> {t_latest}</span>"
+        f"<span class='small'><span class='k'>first:</span> {t_first}</span><br/>"
+        f"<span class='small'><span class='k'>best:</span> {t_best}</span><br/>"
+        f"<span class='small'><span class='k'>last:</span> {t_last}</span>"
     )
     pass_html = f"<span class='small'>{t_pass}</span>"
 
@@ -519,18 +471,12 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
         f"<td>{img_html}</td>"
         f"<td><b>{h}</b><br/><span class='small'>{name}</span><br/><span class='small'>{grade}</span></td>"
         f"<td>{per_name}</td>"
-        f"<td>"
-        f"  <span class='small'><span class='k'>Best:</span> {best_cam}</span><br/>"
-        f"  <span class='small'><span class='k'>Latest:</span> {latest_cam}</span>"
-        f"</td>"
+        f"<td>{cam}</td>"
         f"<td>{eligible_html}</td>"
         f"<td>{plan_html}</td>"
         f"<td>{status_html}</td>"
         f"<td><span class='{badge_class}'>{pc}</span></td>"
-        f"<td>"
-        f"  <span class='small'><span class='k'>Best:</span> {best_score_txt}</span><br/>"
-        f"  <span class='small'><span class='k'>Latest:</span> {latest_score_txt}</span>"
-        f"</td>"
+        f"<td>{score}</td>"
         f"<td class='small'>{times_html}</td>"
         f"<td class='small'>{pass_html}</td>"
         f"</tr>"
@@ -562,87 +508,13 @@ def meal_page(request):
 
     period_cards = _build_period_cards(default_periods, default_cameras)
 
-    rs = RecognitionSettings.get_solo()
-
     ctx = {
         "default_periods": ",".join(default_periods),
         "default_cameras": ",".join(default_cameras),
         "show_empty_notice": (not default_periods or not default_cameras),
         "period_cards": period_cards,
-        "pass_gap_window_sec": int(getattr(rs, "pass_gap_window_sec", 120) or 120),
     }
     return render(request, "attendance/dash/meal.html", ctx)
-
-
-@login_required
-@require_GET
-def meal_period_cards(request):
-    if not _is_meal_supervisor(request.user):
-        return HttpResponseForbidden("Requires meal_supervisor")
-
-    period_param = request.GET.get("period", "")
-    camera_param = request.GET.get("camera", "")
-
-    selected_periods = [p.strip() for p in period_param.split(",") if p.strip()]
-    selected_cameras = [c.strip() for c in camera_param.split(",") if c.strip()]
-
-    # Fall back to meal-tag defaults if nothing passed
-    if not selected_periods or not selected_cameras:
-        meal_tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
-        if meal_tag:
-            if not selected_periods:
-                selected_periods = list(
-                    PeriodTemplate.objects
-                    .filter(usage_tags=meal_tag)
-                    .order_by("order")
-                    .values_list("name", flat=True)
-                )
-            if not selected_cameras:
-                selected_cameras = list(
-                    Camera.objects
-                    .filter(usage_tags=meal_tag, is_active=True)
-                    .order_by("name")
-                    .values_list("name", flat=True)
-                )
-
-    period_cards = _build_period_cards(selected_periods, selected_cameras)
-
-    html = []
-    for card in period_cards:
-        classes = ["period-card"]
-        if card.get("selected"):
-            classes.append("selected")
-        if card.get("is_active_now"):
-            classes.append("active-now")
-        else:
-            classes.append("dimmed")
-
-        badge = "ACTIVE" if card.get("is_active_now") else "PERIOD"
-
-        html.append(
-            f"""
-            <div
-              class="{' '.join(classes)}"
-              data-period-name="{escape(card['name'])}"
-              data-selected="{'1' if card.get('selected') else '0'}"
-              title="{escape(card['label'])} ({escape(card['start'])} - {escape(card['end'])})"
-            >
-              <div class="pc-top">
-                <div class="pc-title">{escape(card['label'])}</div>
-                <div class="pc-badge">{badge}</div>
-              </div>
-              <div class="pc-time">{escape(card['start'])} – {escape(card['end'])}</div>
-              <div class="pc-counts">
-                <span><em>Rec</em> <b>{card['recognized_count']}</b></span>
-                <span><em>DR</em> <b>{card['date_range_count']}</b></span>
-                <span><em>Wal</em> <b>{card['wallet_count']}</b></span>
-                <span class="blk"><em>Blk</em> <b>{card['blocked_count']}</b></span>
-              </div>
-            </div>
-            """
-        )
-
-    return HttpResponse("".join(html))
 
 
 @login_required
@@ -655,23 +527,7 @@ def meal_stream_rows(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
 
-    latest_event_qs = (
-        AttendanceEvent.objects
-        .filter(student_id=OuterRef("student_id"), period_id=OuterRef("period_id"))
-        .order_by("-ts", "-id")
-    )
-
-    qs = (
-        AttendanceRecord.objects
-        .select_related("student", "period__template", "best_camera", "meal_record")
-        .annotate(
-            latest_event_ts=Subquery(latest_event_qs.values("ts")[:1]),
-            latest_event_camera_id=Subquery(latest_event_qs.values("camera_id")[:1]),
-            latest_event_camera_name=Subquery(latest_event_qs.values("camera__name")[:1]),
-            latest_event_score=Subquery(latest_event_qs.values("score")[:1]),
-            latest_event_crop_path=Subquery(latest_event_qs.values("crop_path")[:1]),
-        )
-    )
+    qs = AttendanceRecord.objects.select_related("student", "period__template", "best_camera", "meal_record")
 
     period_param = request.GET.get("period", "")
     parts = [p.strip() for p in (period_param or "").split(",") if p.strip()]
@@ -692,7 +548,7 @@ def meal_stream_rows(request):
         if cams:
             cam_q = Q()
             for c in cams:
-                cam_q |= Q(latest_event_camera_name__iexact=c)
+                cam_q |= Q(best_camera__name__iexact=c)
             qs = qs.filter(cam_q)
     else:
         tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
@@ -706,7 +562,7 @@ def meal_stream_rows(request):
             if cams:
                 cam_q = Q()
                 for c in cams:
-                    cam_q |= Q(latest_event_camera_name__iexact=c)
+                    cam_q |= Q(best_camera__name__iexact=c)
                 qs = qs.filter(cam_q)
 
     if (not request.GET.get("period") and not parts) or (
@@ -735,9 +591,9 @@ def meal_stream_rows(request):
     start_dt = _parse_any(request.GET.get("date_from"))
     end_dt = _parse_any(request.GET.get("date_to"))
     if start_dt:
-        qs = qs.filter(last_seen__gte=start_dt)
+        qs = qs.filter(best_seen__gte=start_dt)
     if end_dt:
-        qs = qs.filter(last_seen__lte=end_dt)
+        qs = qs.filter(best_seen__lte=end_dt)
 
     mode = request.GET.get("mode", "latest").strip()
     last_n = request.GET.get("last_n") or ""
@@ -760,18 +616,18 @@ def meal_stream_rows(request):
 
     if mode == "latest":
         if at:
-            qs = qs.filter(last_seen__gte=at)
+            qs = qs.filter(best_seen__gte=at)
 
         latest_pk = (
             AttendanceRecord.objects
             .filter(student_id=OuterRef("student_id"), period_id=OuterRef("period_id"))
-            .order_by("-last_seen", "-id")
+            .order_by("-best_seen", "-id")
             .values("pk")[:1]
         )
-        qs = qs.filter(pk=Subquery(latest_pk)).order_by("last_seen")[:200]
+        qs = qs.filter(pk=Subquery(latest_pk)).order_by("best_seen")[:200]
 
     elif mode == "all":
-        qs = qs.order_by("-last_seen", "-id")
+        qs = qs.order_by("-best_seen", "-id")
         total = qs.count()
         pages = max(1, ceil(total / page_size))
         page = min(page, pages)
@@ -786,11 +642,11 @@ def meal_stream_rows(request):
                     rn=Window(
                         expression=RowNumber(),
                         partition_by=[F("student_id"), F("period_id")],
-                        order_by=[F("last_seen").desc(), F("id").desc()],
+                        order_by=[F("best_seen").desc(), F("id").desc()],
                     )
                 )
                 .filter(rn__lte=last_n)
-                .order_by("-last_seen", "-id")
+                .order_by("-best_seen", "-id")
             )
             total = qs.count()
             pages = max(1, ceil(total / page_size))
@@ -800,14 +656,14 @@ def meal_stream_rows(request):
             totals = (total, pages, page)
         except Exception:
             from collections import defaultdict
-            qs = qs.order_by("-last_seen", "-id")[:5000]
+            qs = qs.order_by("-best_seen", "-id")[:5000]
             groups = defaultdict(list)
             for r in qs:
                 groups[(r.student_id, r.period_id)].append(r)
             flat = []
             for rows in groups.values():
                 flat.extend(rows[:last_n])
-            flat.sort(key=lambda r: (r.last_seen, r.id), reverse=True)
+            flat.sort(key=lambda r: (r.best_seen, r.id), reverse=True)
             total = len(flat)
             pages = max(1, ceil(total / page_size))
             page = min(page, pages)
@@ -817,14 +673,14 @@ def meal_stream_rows(request):
 
     else:
         if at:
-            qs = qs.filter(last_seen__gte=at)
+            qs = qs.filter(best_seen__gte=at)
         latest_pk = (
             AttendanceRecord.objects
             .filter(student_id=OuterRef("student_id"), period_id=OuterRef("period_id"))
-            .order_by("-last_seen", "-id")
+            .order_by("-best_seen", "-id")
             .values("pk")[:1]
         )
-        qs = qs.filter(pk=Subquery(latest_pk)).order_by("last_seen")[:200]
+        qs = qs.filter(pk=Subquery(latest_pk)).order_by("best_seen")[:200]
 
     rows = []
     media_url = (settings.MEDIA_URL or "").rstrip("/")
@@ -838,7 +694,7 @@ def meal_stream_rows(request):
     headers = {}
     try:
         if mode == "latest" and rows:
-            last_ts = (qs[len(qs) - 1].last_seen if hasattr(qs, "__getitem__") else None)
+            last_ts = (qs[len(qs) - 1].best_seen if hasattr(qs, "__getitem__") else None)
             if last_ts:
                 headers["HX-Trigger"] = f'{{"meal:last_ts": "{last_ts.astimezone().isoformat()}"}}'
         elif totals:
@@ -884,25 +740,9 @@ def confirm_record(request):
         defaults={"status": MealRecord.STATUS_PENDING},
     )
 
-    # Prevent duplicate charging if this row is already confirmed.
-    # A stale browser tab or repeated POST should not debit the wallet again.
-    if meal.status == MealRecord.STATUS_CONFIRMED:
-        media_url = (settings.MEDIA_URL or "").rstrip("/")
-        confirm_url = reverse("attendance:confirm_record")
-        reverse_url = reverse("attendance:reverse_record")
-        html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-        return HttpResponse(
-            html,
-            headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-        )
-
     meal.reversed_at = None
     meal.reversed_by = None
     meal.wallet_refund_transaction = None
-
-    # Clear old denial reason when attempting a fresh confirm/reconfirm
-    meal.reason_code = ""
-    meal.reason_notes = ""
 
     meal.meal_subscription = sub
     meal.meal_profile = profile
@@ -931,10 +771,7 @@ def confirm_record(request):
         confirm_url = reverse("attendance:confirm_record")
         reverse_url = reverse("attendance:reverse_record")
         html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-        return HttpResponse(
-            html,
-            headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-        )
+        return HttpResponse(html)
 
     if sub and profile:
         if profile.mode == MealRecord.MODE_DATE_RANGE:
@@ -971,10 +808,7 @@ def confirm_record(request):
                 confirm_url = reverse("attendance:confirm_record")
                 reverse_url = reverse("attendance:reverse_record")
                 html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-                return HttpResponse(
-                    html,
-                    headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-                )
+                return HttpResponse(html)
 
             meal.price_base_iqd = price
             meal.discount_iqd = 0
@@ -1079,10 +913,7 @@ def confirm_record(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
     html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-    return HttpResponse(
-        html,
-        headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-    )
+    return HttpResponse(html)
 
 
 @login_required
@@ -1168,10 +999,7 @@ def reverse_record(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
     html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-    return HttpResponse(
-        html,
-        headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-    )
+    return HttpResponse(html)
 
 
 @login_required
@@ -1237,7 +1065,4 @@ def enable_postpaid(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
     html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-    return HttpResponse(
-        html,
-        headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-    )
+    return HttpResponse(html)

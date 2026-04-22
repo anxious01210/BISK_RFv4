@@ -684,14 +684,12 @@ class MealRecordInline(admin.StackedInline):
     def has_add_permission(self, request, obj=None):
         return False
 
-
 @admin.register(DiscountProfile)
 class DiscountProfileAdmin(admin.ModelAdmin):
     list_display = ("name", "is_active", "notes")
     list_filter = ("is_active",)
     search_fields = ("name", "notes")
     inlines = [DiscountRuleInline]
-
 
 @admin.register(MealProfile)
 class MealProfileAdmin(admin.ModelAdmin):
@@ -717,7 +715,6 @@ class MealProfileAdmin(admin.ModelAdmin):
     autocomplete_fields = ("discount_profile",)
     inlines = [MealProfilePeriodInline]
 
-
 @admin.register(Wallet)
 class WalletAdmin(admin.ModelAdmin):
     list_display = ("student", "balance_iqd", "is_active", "updated_at")
@@ -731,7 +728,6 @@ class WalletAdmin(admin.ModelAdmin):
     )
     autocomplete_fields = ("student",)
     readonly_fields = ("created_at", "updated_at")
-
 
 @admin.register(WalletTransaction)
 class WalletTransactionAdmin(admin.ModelAdmin):
@@ -765,7 +761,6 @@ class WalletTransactionAdmin(admin.ModelAdmin):
         "reversed_transaction",
     )
     readonly_fields = ("created_at",)
-
 
 @admin.register(MealRecord)
 class MealRecordAdmin(admin.ModelAdmin):
@@ -831,6 +826,7 @@ class MealRecordAdmin(admin.ModelAdmin):
         return rec.period.template.name
 
     period_col.short_description = "Period"
+
 
 
 @admin.register(PeriodTemplate)
@@ -899,8 +895,7 @@ class PeriodOccurrenceAdmin(admin.ModelAdmin):
 @admin.register(AttendanceRecord)
 class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
     resource_class = AttendanceRecordResource
-    # date_hierarchy = "best_seen"
-    date_hierarchy = "last_seen"
+    date_hierarchy = "best_seen"
     inlines = [MealRecordInline]
     list_display = (
         "student_col",
@@ -908,9 +903,6 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
         "period_col",
         "best_camera",
         "best_seen",
-        "last_seen_col",
-        "pass_count_col",
-        "last_pass_col",
         "face_preview",
     )
     list_filter = (
@@ -923,7 +915,7 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
         "student__middle_name",
         "student__last_name",
     )
-    ordering = ("-last_seen", "-best_seen")
+    ordering = ("-best_seen",)
     list_select_related = ("student", "period__template", "best_camera")
     readonly_fields = (
         "student",
@@ -943,24 +935,6 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
     # Optional: allow supervisors to quickly confirm + set reason from the list
     # list_editable = ("confirmed", "meal_reason_code")
 
-    def last_seen_col(self, obj):
-        return obj.last_seen
-
-    last_seen_col.short_description = "Last seen"
-    last_seen_col.admin_order_field = "last_seen"
-
-    def pass_count_col(self, obj):
-        return obj.pass_count or 0
-
-    pass_count_col.short_description = "Passes"
-    pass_count_col.admin_order_field = "pass_count"
-
-    def last_pass_col(self, obj):
-        return obj.last_pass_at or "—"
-
-    last_pass_col.short_description = "Last pass"
-    last_pass_col.admin_order_field = "last_pass_at"
-
     def _image_url(self, path: str | None) -> str | None:
         """
         Accepts:
@@ -969,7 +943,7 @@ class AttendanceRecordAdmin(ExportMixin, admin.ModelAdmin):
           - full http(s) URL
         Returns a safe web URL.
         """
-
+        import os
         if not path:
             return None
         p = str(path)

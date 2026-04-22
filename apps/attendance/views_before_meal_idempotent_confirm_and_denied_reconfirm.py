@@ -427,21 +427,7 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
                 f"hx-target='closest tr' hx-swap='outerHTML'>Void</button>"
             )
     elif meal and meal.status == MealRecord.STATUS_DENIED:
-        if (
-            is_supervisor
-            and sub
-            and profile
-            and not resolved_blocked
-            and getattr(profile, "allow_supervisor_confirm", False)
-        ):
-            status_html = (
-                "<span class='badge r'>Denied</span><br/>"
-                f"<button hx-post='{confirm_url}' "
-                f"hx-vals='{{\"id\": {rec.id}}}' "
-                f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
-            )
-        else:
-            status_html = "<span class='badge r'>Denied</span>"
+        status_html = "<span class='badge r'>Denied</span>"
     elif meal and meal.status == MealRecord.STATUS_REFUNDED:
         status_html = "<span class='badge'>Refunded</span>"
         if is_supervisor and meal_profile and getattr(meal_profile, "allow_supervisor_confirm", False):
@@ -884,25 +870,9 @@ def confirm_record(request):
         defaults={"status": MealRecord.STATUS_PENDING},
     )
 
-    # Prevent duplicate charging if this row is already confirmed.
-    # A stale browser tab or repeated POST should not debit the wallet again.
-    if meal.status == MealRecord.STATUS_CONFIRMED:
-        media_url = (settings.MEDIA_URL or "").rstrip("/")
-        confirm_url = reverse("attendance:confirm_record")
-        reverse_url = reverse("attendance:reverse_record")
-        html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-        return HttpResponse(
-            html,
-            headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-        )
-
     meal.reversed_at = None
     meal.reversed_by = None
     meal.wallet_refund_transaction = None
-
-    # Clear old denial reason when attempting a fresh confirm/reconfirm
-    meal.reason_code = ""
-    meal.reason_notes = ""
 
     meal.meal_subscription = sub
     meal.meal_profile = profile

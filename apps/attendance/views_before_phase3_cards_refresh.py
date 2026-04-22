@@ -17,7 +17,6 @@ from apps.cameras.models import Camera
 from .models import (
     DashboardTag,
     PeriodTemplate,
-    RecognitionSettings,
     AttendanceEvent,
     AttendanceRecord,
     MealSubscription,
@@ -191,11 +190,11 @@ def _photos_html(gallery_url: str, best_crop_url: str, latest_crop_url: str) -> 
         )
 
     return (
-            "<div class='photos'>"
-            + _ph(gallery_url, "ID")
-            + _ph(best_crop_url, "Best")
-            + _ph(latest_crop_url, "Latest")
-            + "</div>"
+        "<div class='photos'>"
+        + _ph(gallery_url, "ID")
+        + _ph(best_crop_url, "Best")
+        + _ph(latest_crop_url, "Latest")
+        + "</div>"
     )
 
 
@@ -427,21 +426,7 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
                 f"hx-target='closest tr' hx-swap='outerHTML'>Void</button>"
             )
     elif meal and meal.status == MealRecord.STATUS_DENIED:
-        if (
-            is_supervisor
-            and sub
-            and profile
-            and not resolved_blocked
-            and getattr(profile, "allow_supervisor_confirm", False)
-        ):
-            status_html = (
-                "<span class='badge r'>Denied</span><br/>"
-                f"<button hx-post='{confirm_url}' "
-                f"hx-vals='{{\"id\": {rec.id}}}' "
-                f"hx-target='closest tr' hx-swap='outerHTML'>Reconfirm</button>"
-            )
-        else:
-            status_html = "<span class='badge r'>Denied</span>"
+        status_html = "<span class='badge r'>Denied</span>"
     elif meal and meal.status == MealRecord.STATUS_REFUNDED:
         status_html = "<span class='badge'>Refunded</span>"
         if is_supervisor and meal_profile and getattr(meal_profile, "allow_supervisor_confirm", False):
@@ -562,87 +547,13 @@ def meal_page(request):
 
     period_cards = _build_period_cards(default_periods, default_cameras)
 
-    rs = RecognitionSettings.get_solo()
-
     ctx = {
         "default_periods": ",".join(default_periods),
         "default_cameras": ",".join(default_cameras),
         "show_empty_notice": (not default_periods or not default_cameras),
         "period_cards": period_cards,
-        "pass_gap_window_sec": int(getattr(rs, "pass_gap_window_sec", 120) or 120),
     }
     return render(request, "attendance/dash/meal.html", ctx)
-
-
-@login_required
-@require_GET
-def meal_period_cards(request):
-    if not _is_meal_supervisor(request.user):
-        return HttpResponseForbidden("Requires meal_supervisor")
-
-    period_param = request.GET.get("period", "")
-    camera_param = request.GET.get("camera", "")
-
-    selected_periods = [p.strip() for p in period_param.split(",") if p.strip()]
-    selected_cameras = [c.strip() for c in camera_param.split(",") if c.strip()]
-
-    # Fall back to meal-tag defaults if nothing passed
-    if not selected_periods or not selected_cameras:
-        meal_tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
-        if meal_tag:
-            if not selected_periods:
-                selected_periods = list(
-                    PeriodTemplate.objects
-                    .filter(usage_tags=meal_tag)
-                    .order_by("order")
-                    .values_list("name", flat=True)
-                )
-            if not selected_cameras:
-                selected_cameras = list(
-                    Camera.objects
-                    .filter(usage_tags=meal_tag, is_active=True)
-                    .order_by("name")
-                    .values_list("name", flat=True)
-                )
-
-    period_cards = _build_period_cards(selected_periods, selected_cameras)
-
-    html = []
-    for card in period_cards:
-        classes = ["period-card"]
-        if card.get("selected"):
-            classes.append("selected")
-        if card.get("is_active_now"):
-            classes.append("active-now")
-        else:
-            classes.append("dimmed")
-
-        badge = "ACTIVE" if card.get("is_active_now") else "PERIOD"
-
-        html.append(
-            f"""
-            <div
-              class="{' '.join(classes)}"
-              data-period-name="{escape(card['name'])}"
-              data-selected="{'1' if card.get('selected') else '0'}"
-              title="{escape(card['label'])} ({escape(card['start'])} - {escape(card['end'])})"
-            >
-              <div class="pc-top">
-                <div class="pc-title">{escape(card['label'])}</div>
-                <div class="pc-badge">{badge}</div>
-              </div>
-              <div class="pc-time">{escape(card['start'])} – {escape(card['end'])}</div>
-              <div class="pc-counts">
-                <span><em>Rec</em> <b>{card['recognized_count']}</b></span>
-                <span><em>DR</em> <b>{card['date_range_count']}</b></span>
-                <span><em>Wal</em> <b>{card['wallet_count']}</b></span>
-                <span class="blk"><em>Blk</em> <b>{card['blocked_count']}</b></span>
-              </div>
-            </div>
-            """
-        )
-
-    return HttpResponse("".join(html))
 
 
 @login_required
@@ -884,25 +795,9 @@ def confirm_record(request):
         defaults={"status": MealRecord.STATUS_PENDING},
     )
 
-    # Prevent duplicate charging if this row is already confirmed.
-    # A stale browser tab or repeated POST should not debit the wallet again.
-    if meal.status == MealRecord.STATUS_CONFIRMED:
-        media_url = (settings.MEDIA_URL or "").rstrip("/")
-        confirm_url = reverse("attendance:confirm_record")
-        reverse_url = reverse("attendance:reverse_record")
-        html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-        return HttpResponse(
-            html,
-            headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-        )
-
     meal.reversed_at = None
     meal.reversed_by = None
     meal.wallet_refund_transaction = None
-
-    # Clear old denial reason when attempting a fresh confirm/reconfirm
-    meal.reason_code = ""
-    meal.reason_notes = ""
 
     meal.meal_subscription = sub
     meal.meal_profile = profile
@@ -931,10 +826,7 @@ def confirm_record(request):
         confirm_url = reverse("attendance:confirm_record")
         reverse_url = reverse("attendance:reverse_record")
         html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-        return HttpResponse(
-            html,
-            headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-        )
+        return HttpResponse(html)
 
     if sub and profile:
         if profile.mode == MealRecord.MODE_DATE_RANGE:
@@ -971,10 +863,7 @@ def confirm_record(request):
                 confirm_url = reverse("attendance:confirm_record")
                 reverse_url = reverse("attendance:reverse_record")
                 html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-                return HttpResponse(
-                    html,
-                    headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-                )
+                return HttpResponse(html)
 
             meal.price_base_iqd = price
             meal.discount_iqd = 0
@@ -1079,10 +968,7 @@ def confirm_record(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
     html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-    return HttpResponse(
-        html,
-        headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-    )
+    return HttpResponse(html)
 
 
 @login_required
@@ -1168,10 +1054,7 @@ def reverse_record(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
     html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-    return HttpResponse(
-        html,
-        headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-    )
+    return HttpResponse(html)
 
 
 @login_required
@@ -1237,7 +1120,4 @@ def enable_postpaid(request):
     confirm_url = reverse("attendance:confirm_record")
     reverse_url = reverse("attendance:reverse_record")
     html = _row_html(rec, media_url, True, confirm_url, reverse_url)
-    return HttpResponse(
-        html,
-        headers={"HX-Trigger": '{"meal:refresh_cards": true}'}
-    )
+    return HttpResponse(html)

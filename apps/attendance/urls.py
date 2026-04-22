@@ -23,6 +23,7 @@ urlpatterns = [
     # NEW — Meal Supervisor panel
     path("dash/meal/", views.meal_page, name="meal_page"),
     path("dash/meal/stream/", views.meal_stream_rows, name="meal_stream_rows"),
+    path("dash/meal/period-cards/", views.meal_period_cards, name="meal_period_cards"),
     path("dash/meal/confirm/", views.confirm_record, name="confirm_record"),
     path("dash/meal/reverse/", views.reverse_record, name="reverse_record"),
     # path("dash/meal/enable-postpaid/", views.enable_postpaid, name="enable_postpaid"),
