@@ -53,14 +53,6 @@
       th {
           text-align: start;
           font-size: 15px;
-          position: sticky;
-          top: 0;
-          background: #0f0f0f;
-          z-index: 8;
-      }
-
-      thead th {
-          top: 0;
       }
 
       .small {
@@ -480,157 +472,6 @@
           opacity: .65;
           margin-right: 4px;
       }
-
-      .live-status-strip {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          align-items: center;
-          margin-top: 10px;
-          margin-bottom: 6px;
-      }
-
-      .live-chip {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          padding: 6px 10px;
-          border: 1px solid #2f2f2f;
-          border-radius: 9999px;
-          background: #161616;
-          font-size: 12px;
-          line-height: 1;
-          min-height: 28px;
-          box-sizing: border-box;
-          white-space: nowrap;
-      }
-
-      .live-chip .dot {
-          width: 10px;
-          height: 10px;
-          border-radius: 9999px;
-          display: inline-block;
-          background: #666;
-          box-shadow: 0 0 0 1px rgba(255, 255, 255, .05) inset;
-      }
-
-      .live-chip.ok .dot {
-          background: #16a34a;
-      }
-
-      .live-chip.warn .dot {
-          background: #f59e0b;
-      }
-
-      .live-chip.bad .dot {
-          background: #dc2626;
-      }
-
-      .live-chip .label {
-          opacity: .72;
-      }
-
-      .live-chip .value {
-          font-weight: 700;
-          color: #fff;
-      }
-
-      .live-chip .meta {
-          opacity: .72;
-      }
-
-      .camera-health-panel {
-          display: inline-flex;
-          align-items: center;
-          min-height: 28px;
-          box-sizing: border-box;
-          padding: 6px 10px;
-          border: 1px solid #2f2f2f;
-          border-radius: 9999px;
-          background: #161616;
-          font-size: 12px;
-          line-height: 1;
-      }
-
-      .camera-health-title {
-          display: inline-flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 12px;
-          font-weight: 700;
-          cursor: pointer;
-          user-select: none;
-          margin-bottom: 0;
-          white-space: nowrap;
-      }
-
-      .camera-health-panel:not(.collapsed) {
-          border-radius: 10px;
-          align-items: flex-start;
-          flex-direction: column;
-      }
-
-      .camera-health-grid {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-      }
-
-      .camera-health-item {
-          display: inline-flex;
-          align-items: center;
-          gap: 7px;
-          padding: 5px 9px;
-          border: 1px solid #333;
-          border-radius: 999px;
-          background: #191919;
-          font-size: 12px;
-      }
-
-      .camera-health-item .dot {
-          width: 9px;
-          height: 9px;
-          border-radius: 999px;
-          background: #666;
-      }
-
-      .camera-health-item.ok .dot {
-          background: #16a34a;
-      }
-
-      .camera-health-item.warn .dot {
-          background: #f59e0b;
-      }
-
-      .camera-health-item.bad .dot {
-          background: #dc2626;
-      }
-
-      .camera-health-panel.collapsed #cameraHealthBody {
-          display: none;
-      }
-
-      .top-notice-chip {
-          display: inline-flex;
-          align-items: center;
-          min-height: 28px;
-          box-sizing: border-box;
-          padding: 6px 10px;
-          border-radius: 9999px;
-          border: 1px solid #4a3f16;
-          background: #25210e;
-          color: #fef3c7;
-          font-size: 12px;
-          line-height: 1;
-          white-space: nowrap;
-      }
-
-      .top-notice-chip.danger {
-          border-color: rgba(220, 38, 38, .55);
-          background: rgba(220, 38, 38, .14);
-          color: #fecaca;
-      }
-
   </style>
 </head>
 <body>
@@ -643,59 +484,6 @@
   </form>
   <strong>Meal — Live</strong>
   <span id="live-counts" class="small" style="margin-left:8px;"></span>
-
-  <div class="live-status-strip" id="liveStatusStrip">
-    <div id="chipDashboard" class="live-chip warn"
-         title="Dashboard connection between this browser and the server. Green=recent successful refresh, yellow=delayed, red=no recent successful refresh. In paged/manual mode it does not auto-refresh.">
-      <span class="dot"></span>
-      <span class="label">Dashboard</span>
-      <span class="value" id="dashboardStatusText">Starting…</span>
-      <span class="meta" id="dashboardStatusMeta">—</span>
-    </div>
-
-    <div id="chipCamera" class="live-chip warn"
-         title="Freshness of the latest visible table row under the current filters. This is not per-camera health. Green=latest visible row is recent, yellow=stale, red=no recent visible row.">
-      <span class="dot"></span>
-      <span class="label">Visible row</span>
-      <span class="value" id="cameraStatusText">Pending</span>
-      <span class="meta" id="cameraStatusMeta">—</span>
-    </div>
-
-    <div id="chipDataAge" class="live-chip warn"
-         title="Age of the latest visible row in the table. Green=recent, yellow=older, red=stale or no row.">
-      <span class="dot"></span>
-      <span class="label">Data age</span>
-      <span class="value" id="dataAgeText">—</span>
-      <span class="meta" id="dataAgeMeta">latest row</span>
-    </div>
-
-    <div id="cameraHealthPanel" class="camera-health-panel collapsed"
-         title="Per-camera recognition freshness from the server database. Green=recent AttendanceEvent, yellow=stale, red=no recent events or no data.">
-      <div id="cameraHealthToggle" class="camera-health-title">
-        📷 Camera Health
-        <span class="small k">click to expand</span>
-      </div>
-
-      <div id="cameraHealthBody"
-           hx-get="{% url 'attendance:meal_camera_health' %}"
-           hx-trigger="load, every 10s, meal:refresh_cards from:body"
-           hx-target="#cameraHealthBody"
-           hx-swap="innerHTML">
-        <div class="small k">Loading camera health…</div>
-      </div>
-    </div>
-    <div id="mealTagNotice"
-         class="top-notice-chip warn"
-         style="{% if show_empty_notice %}display:inline-flex;{% else %}display:none;{% endif %}"
-         title="The meal dashboard needs selected PeriodTemplates and Cameras. If this appears, check meal usage tags in Admin or select camera/period manually.">
-      ⚠ No meal-tagged periods/cameras
-    </div>
-    <div id="staleBanner" class="top-notice-chip danger" style="display:none;"
-         title="This browser has not received a successful dashboard refresh recently. This can indicate PC-to-server network delay, server delay, or paused/broken polling.">
-      ⚠ Dashboard delayed:
-      <b id="staleBannerAge">—</b>
-    </div>
-  </div>
 
   <div class="toolbar-rows small">
     <div class="toolbar-row primary-controls">
@@ -830,6 +618,13 @@
   <input type="hidden" name="page_size" id="page_size_input" value="20">
 </form>
 
+{% if show_empty_notice %}
+  <div class="notice"
+       style="margin:8px 0; padding:8px; background:#fff8db; border:1px solid #f1e8a8; border-radius:6px;">
+    No PeriodTemplates/Cameras tagged with <b>meal</b>. Set tags in Admin and reload.
+  </div>
+{% endif %}
+
 <table>
   <thead>
   <tr>
@@ -896,39 +691,9 @@
     const periodCardsWrap = $('periodCards');
     const periodsToggle = $('periodsToggle');
 
-    const chipDashboard = $('chipDashboard');
-    const chipCamera = $('chipCamera');
-    const chipDataAge = $('chipDataAge');
-
-    const dashboardStatusText = $('dashboardStatusText');
-    const dashboardStatusMeta = $('dashboardStatusMeta');
-
-    const cameraStatusText = $('cameraStatusText');
-    const cameraStatusMeta = $('cameraStatusMeta');
-
-    const dataAgeText = $('dataAgeText');
-    const dataAgeMeta = $('dataAgeMeta');
-
-    const staleBanner = $('staleBanner');
-    const staleBannerAge = $('staleBannerAge');
-    const mealTagNotice = $('mealTagNotice');
-
-    const cameraHealthPanel = $('cameraHealthPanel');
-    const cameraHealthToggle = $('cameraHealthToggle');
-
-    let lastSuccessfulLoadAt = null;
-    let lastRequestStartedAt = null;
-    let latestRowSeenAt = null;
-    let latestRowCameraName = null;
-    let latestResponseHadRows = false;
-
     document.body.addEventListener('htmx:configRequest', (evt) => {
       const m = document.cookie.match(/(?:^|;)\s*csrftoken=([^;]+)/);
       if (m) evt.detail.headers['X-CSRFToken'] = decodeURIComponent(m[1]);
-    });
-
-    cameraHealthToggle.addEventListener('click', () => {
-      cameraHealthPanel.classList.toggle('collapsed');
     });
 
     const PERIODS_VIEW_STATES = ['full', 'compact', 'summary', 'mini'];
@@ -1007,7 +772,6 @@
     function updatePeriods() {
       const vals = getSelectedPeriodCards();
       periodInp.value = vals.join(',');
-      refreshMealTagNotice();
     }
 
     function updateEligible() {
@@ -1016,7 +780,6 @@
 
     function updateCamera() {
       cameraHid.value = (cameraInp.value || '').trim();
-      refreshMealTagNotice();
     }
 
     function updateMinScore() {
@@ -1076,11 +839,6 @@
       }
 
       resetPage();
-      latestRowSeenAt = null;
-      latestRowCameraName = null;
-      latestResponseHadRows = false;
-      refreshLiveIndicators();
-      refreshMealTagNotice();
       htmx.trigger(driver, 'refresh');
     }
 
@@ -1161,144 +919,6 @@
       htmx.trigger(driver, 'refresh');
     });
 
-    function setChipState(chip, level) {
-      chip.classList.remove('ok', 'warn', 'bad');
-      chip.classList.add(level);
-    }
-
-    function fmtAge(ms) {
-      if (ms == null) return '—';
-      const s = Math.max(0, Math.floor(ms / 1000));
-      if (s < 60) return `${s}s ago`;
-      const m = Math.floor(s / 60);
-      const r = s % 60;
-      return `${m}m ${r}s ago`;
-    }
-
-    function parseLatestTimeFromRow() {
-      const cell = rowsBody.querySelector('tr td:nth-child(10)');
-      if (!cell) return null;
-
-      const txt = cell.textContent || '';
-      const m = txt.match(/Latest:\s*([0-9]{2}):([0-9]{2}):([0-9]{2})/i);
-      if (!m) return null;
-
-      const now = new Date();
-      const d = new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        parseInt(m[1], 10),
-        parseInt(m[2], 10),
-        parseInt(m[3], 10),
-        0
-      );
-      return d;
-    }
-
-    function parseLatestCameraFromRow() {
-      const cell = rowsBody.querySelector('tr td:nth-child(4)');
-      if (!cell) return null;
-
-      const txt = cell.textContent || '';
-      const m = txt.match(/Latest:\s*([^\n\r]+)/i);
-      if (!m) return null;
-
-      return m[1].trim();
-    }
-
-    function refreshLiveIndicators() {
-      const manualMode = modeSel.value === 'all_paged';
-      const now = Date.now();
-
-      if (manualMode) {
-        setChipState(chipDashboard, 'ok');
-        dashboardStatusText.textContent = 'Manual';
-        dashboardStatusMeta.textContent = 'paged mode';
-        staleBanner.style.display = 'none';
-        staleBannerAge.textContent = '—';
-      } else if (lastSuccessfulLoadAt) {
-        const age = now - lastSuccessfulLoadAt;
-        if (age <= 5000) {
-          setChipState(chipDashboard, 'ok');
-          dashboardStatusText.textContent = 'Live';
-        } else if (age <= 15000) {
-          setChipState(chipDashboard, 'warn');
-          dashboardStatusText.textContent = 'Delayed';
-        } else {
-          setChipState(chipDashboard, 'bad');
-          dashboardStatusText.textContent = 'Disconnected';
-        }
-        dashboardStatusMeta.textContent = fmtAge(age);
-
-        if (age > 15000) {
-          staleBanner.style.display = 'inline-flex';
-          staleBannerAge.textContent = fmtAge(age);
-        } else {
-          staleBanner.style.display = 'none';
-          staleBannerAge.textContent = '—';
-        }
-      } else {
-        setChipState(chipDashboard, 'warn');
-        dashboardStatusText.textContent = 'Starting…';
-        dashboardStatusMeta.textContent = '—';
-      }
-
-      if (latestRowSeenAt) {
-        const rowAge = now - latestRowSeenAt.getTime();
-        if (rowAge <= 10000) {
-          setChipState(chipDataAge, 'ok');
-        } else if (rowAge <= 30000) {
-          setChipState(chipDataAge, 'warn');
-        } else {
-          setChipState(chipDataAge, 'bad');
-        }
-        dataAgeText.textContent = fmtAge(rowAge);
-      } else {
-        setChipState(chipDataAge, 'warn');
-        dataAgeText.textContent = '—';
-      }
-
-      const selectedCameraText = (cameraInp.value || 'default cameras').trim() || '—';
-
-      if (latestRowSeenAt) {
-        const camAge = now - latestRowSeenAt.getTime();
-
-        if (camAge <= 10000) {
-          setChipState(chipCamera, 'ok');
-          cameraStatusText.textContent = 'Fresh';
-        } else if (camAge <= 30000) {
-          setChipState(chipCamera, 'warn');
-          cameraStatusText.textContent = 'Stale';
-        } else {
-          setChipState(chipCamera, 'bad');
-          cameraStatusText.textContent = 'No recent row';
-        }
-
-        cameraStatusMeta.textContent = `${latestRowCameraName || selectedCameraText} · ${fmtAge(camAge)}`;
-      } else {
-        setChipState(chipCamera, 'bad');
-        cameraStatusText.textContent = 'No row';
-        cameraStatusMeta.textContent = selectedCameraText;
-      }
-    }
-
-    function refreshMealTagNotice() {
-      const hasPeriodCards = periodCardsWrap.querySelectorAll('.period-card').length > 0;
-
-      // This warning means: dashboard default meal-tag setup is incomplete.
-      // It should not disappear only because the camera input has text.
-      if (hasPeriodCards && latestResponseHadRows) {
-        mealTagNotice.style.display = 'none';
-      } else if (hasPeriodCards && modeSel.value !== 'latest') {
-        mealTagNotice.style.display = 'inline-flex';
-      } else if (!hasPeriodCards) {
-        mealTagNotice.style.display = 'inline-flex';
-      } else {
-        mealTagNotice.style.display = latestResponseHadRows ? 'none' : 'inline-flex';
-      }
-    }
-
     document.addEventListener('DOMContentLoaded', () => {
       hydratePeriodsView();
       hydrateCardsFromDefaults();
@@ -1312,7 +932,6 @@
       updateEligible();
       updateCamera();
       updateMinScore();
-      refreshMealTagNotice();
 
       applyMode();
     });
@@ -1320,15 +939,7 @@
     document.body.addEventListener('htmx:afterSwap', (evt) => {
       if (evt.target !== rowsBody) return;
 
-      lastSuccessfulLoadAt = Date.now();
-      latestRowSeenAt = parseLatestTimeFromRow();
-      latestRowCameraName = parseLatestCameraFromRow();
-      refreshLiveIndicators();
-      refreshMealTagNotice();
-
-      const actualRows = rowsBody.querySelectorAll('tr').length;
-      latestResponseHadRows = actualRows > 0;
-      liveCnt.textContent = `${actualRows} row(s)`;
+      liveCnt.textContent = `${rowsBody.querySelectorAll('tr').length} row(s)`;
 
       if (modeSel.value === 'latest') {
         const trig = evt.detail.xhr.getResponseHeader('HX-Trigger');
@@ -1404,26 +1015,6 @@
           modal.hidden = true;
           if (img) img.src = '';
         }
-      }
-    });
-
-    setInterval(refreshLiveIndicators, 1000);
-    setInterval(refreshMealTagNotice, 1000);
-    document.body.addEventListener('htmx:beforeRequest', (evt) => {
-      if (evt.target === driver) {
-        lastRequestStartedAt = Date.now();
-      }
-    });
-
-    document.body.addEventListener('htmx:responseError', (evt) => {
-      if (evt.target === driver) {
-        refreshLiveIndicators();
-      }
-    });
-
-    document.body.addEventListener('htmx:sendError', (evt) => {
-      if (evt.target === driver) {
-        refreshLiveIndicators();
       }
     });
   })();

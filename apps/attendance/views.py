@@ -17,6 +17,7 @@ from apps.cameras.models import Camera
 from .models import (
     DashboardTag,
     PeriodTemplate,
+    PeriodOccurrence,
     RecognitionSettings,
     AttendanceEvent,
     AttendanceRecord,
@@ -221,6 +222,14 @@ def _build_period_cards(default_periods, default_cameras):
 
     now = timezone.localtime()
     today = now.date()
+    occurrences = {
+        occ.template_id: occ
+        for occ in PeriodOccurrence.objects.filter(
+            template__in=periods,
+            date=today,
+            is_school_day=True,
+        ).select_related("template")
+    }
     tomorrow = today + timedelta(days=1)
 
     tz = timezone.get_current_timezone()
@@ -274,14 +283,23 @@ def _build_period_cards(default_periods, default_cameras):
     now_t = now.time()
 
     for pt in periods:
-        st = getattr(pt, "start_time", None)
-        et = getattr(pt, "end_time", None)
-        is_active_now = False
-        if st and et:
-            try:
-                is_active_now = st <= now_t <= et
-            except Exception:
-                is_active_now = False
+        occ = occurrences.get(pt.id)
+
+        if occ:
+            st_dt = getattr(occ, "start_dt", None)
+            et_dt = getattr(occ, "end_dt", None)
+
+            st_local = timezone.localtime(st_dt) if st_dt else None
+            et_local = timezone.localtime(et_dt) if et_dt else None
+
+            st = st_local.time() if st_local else getattr(pt, "start_time", None)
+            et = et_local.time() if et_local else getattr(pt, "end_time", None)
+
+            is_active_now = bool(st_local and et_local and st_local <= now <= et_local)
+        else:
+            st = getattr(pt, "start_time", None)
+            et = getattr(pt, "end_time", None)
+            is_active_now = False
 
         cards.append({
             "name": pt.name,
@@ -428,11 +446,11 @@ def _row_html(rec, media_url, is_supervisor, confirm_url, reverse_url):
             )
     elif meal and meal.status == MealRecord.STATUS_DENIED:
         if (
-            is_supervisor
-            and sub
-            and profile
-            and not resolved_blocked
-            and getattr(profile, "allow_supervisor_confirm", False)
+                is_supervisor
+                and sub
+                and profile
+                and not resolved_blocked
+                and getattr(profile, "allow_supervisor_confirm", False)
         ):
             status_html = (
                 "<span class='badge r'>Denied</span><br/>"
@@ -642,6 +660,72 @@ def meal_period_cards(request):
             """
         )
 
+    return HttpResponse("".join(html))
+
+
+@login_required
+@require_GET
+def meal_camera_health(request):
+    if not _is_meal_supervisor(request.user):
+        return HttpResponseForbidden("Requires meal_supervisor")
+
+    tag = DashboardTag.objects.filter(slug=DashboardTag.MEAL).first()
+    if not tag:
+        return HttpResponse("<div class='small k'>No meal dashboard tag found.</div>")
+
+    now = timezone.now()
+
+    cameras = list(
+        Camera.objects
+        .filter(usage_tags=tag, is_active=True)
+        .order_by("name")
+    )
+
+    html = []
+    html.append("<div class='camera-health-grid'>")
+
+    for cam in cameras:
+        latest_event = (
+            AttendanceEvent.objects
+            .filter(camera=cam)
+            .order_by("-ts", "-id")
+            .first()
+        )
+
+        if latest_event and latest_event.ts:
+            age_sec = int((now - latest_event.ts).total_seconds())
+
+            if age_sec <= 15:
+                level = "ok"
+                label = "Fresh"
+            elif age_sec <= 60:
+                level = "warn"
+                label = "Stale"
+            else:
+                level = "bad"
+                label = "No recent events"
+
+            if age_sec < 60:
+                age_txt = f"{age_sec}s ago"
+            else:
+                age_txt = f"{age_sec // 60}m {age_sec % 60}s ago"
+        else:
+            level = "bad"
+            label = "No data"
+            age_txt = "—"
+
+        html.append(
+            f"""
+            <div class="camera-health-item {level}">
+              <span class="dot"></span>
+              <b>{escape(cam.name)}</b>
+              <span>{label}</span>
+              <span class="k">{age_txt}</span>
+            </div>
+            """
+        )
+
+    html.append("</div>")
     return HttpResponse("".join(html))
 
 
