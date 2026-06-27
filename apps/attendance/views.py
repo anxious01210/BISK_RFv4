@@ -842,6 +842,24 @@ def meal_stream_rows(request):
     at = _parse_any(request.GET.get("after_ts"))
     totals = None
 
+    meal_bucket = (request.GET.get("meal_bucket") or "").strip().lower()
+    if mode == "all" and meal_bucket:
+        if meal_bucket == "dr":
+            qs = qs.filter(
+                meal_record__status=MealRecord.STATUS_CONFIRMED,
+                meal_record__mode_snapshot=MealRecord.MODE_DATE_RANGE,
+            )
+        elif meal_bucket == "wallet":
+            qs = qs.filter(
+                meal_record__status=MealRecord.STATUS_CONFIRMED,
+                meal_record__mode_snapshot=MealRecord.MODE_WALLET,
+            )
+        elif meal_bucket == "blocked":
+            qs = qs.filter(meal_record__status=MealRecord.STATUS_DENIED)
+        elif meal_bucket == "rec":
+            # Rec = all AttendanceRecord rows after current period/camera/date filters.
+            pass
+
     if mode == "latest":
         if at:
             qs = qs.filter(last_seen__gte=at)

@@ -711,6 +711,16 @@
         <input id="cameraInp" placeholder="Dept_01,Dept_02" style="width:220px;">
       </label>
 
+      <label id="bucket-wrap">Bucket
+        <select id="bucketSel" title="Filter All records by meal bucket">
+          <option value="" selected>All</option>
+          <option value="rec">Rec</option>
+          <option value="dr">DR</option>
+          <option value="wallet">Wal</option>
+          <option value="blocked">Blk</option>
+        </select>
+      </label>
+
       <label>Eligible only
         <input id="eligibleChk" type="checkbox">
       </label>
@@ -820,6 +830,7 @@
   <input type="hidden" name="last_n" id="last_n" value="">
   <input type="hidden" name="period" id="period" value="{{ default_periods }}">
   <input type="hidden" name="camera" id="camera" value="{{ default_cameras }}">
+  <input type="hidden" name="meal_bucket" id="meal_bucket" value="">
   <input type="hidden" name="eligible_only" id="eligible_only" value="">
   <input type="hidden" name="min_score" id="min_score" value="">
   <input type="hidden" name="q" id="q" value="">
@@ -871,6 +882,8 @@
     const modeInput = $('mode_input');
     const lastN = $('last_n');
     const cameraInp = $('cameraInp');
+    const bucketSel = $('bucketSel');
+    const bucketHid = $('meal_bucket');
     const eligible = $('eligibleChk');
     const minScore = $('minScore');
     const sinceSel = $('sinceSel');
@@ -1019,6 +1032,12 @@
       refreshMealTagNotice();
     }
 
+    function updateBucket() {
+      if (bucketHid && bucketSel) {
+        bucketHid.value = (bucketSel.value || '').trim();
+      }
+    }
+
     function updateMinScore() {
       minScoreHid.value = (minScore.value || '').trim();
     }
@@ -1064,6 +1083,12 @@
       $('poll-wrap').style.display = (m === 'latest' || isAllLive(m)) ? '' : 'none';
       pageSizeWrap.style.display = (paged || isAllLive(m)) ? '' : 'none';
       pager.style.display = paged ? 'inline-flex' : 'none';
+      if (bucketSel) {
+        bucketSel.disabled = !(paged || isAllLive(m));
+        bucketSel.title = (paged || isAllLive(m))
+          ? 'Filter All records by bucket'
+          : 'Bucket filter is available in All records modes';
+      }
 
       if (m === 'latest' || isAllLive(m)) {
         setDriver(pollTriggerStr(), 'innerHTML');
@@ -1095,6 +1120,15 @@
       resetCursor();
       htmx.trigger(driver, 'refresh');
     });
+
+    if (bucketSel) {
+      bucketSel.addEventListener('change', () => {
+        updateBucket();
+        resetCursor();
+        resetPage();
+        htmx.trigger(driver, 'refresh');
+      });
+    }
 
     minScore.addEventListener('change', () => {
       updateMinScore();
@@ -1311,6 +1345,7 @@
       updatePeriods();
       updateEligible();
       updateCamera();
+      updateBucket();
       updateMinScore();
       refreshMealTagNotice();
 

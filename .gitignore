@@ -43,3 +43,14 @@ media/logs/
 # Flask stuff:
 instance/
 .webassets-cache
+
+# Local/dev files
+.django-completion-cache.json
+tree_n.txt
+migration_backup/
+*.bak
+tree.txt
+__pycache__/
+*.pyc
+media/
+db.sqlite3
