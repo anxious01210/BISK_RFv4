@@ -447,6 +447,29 @@ Status: Living document
 
 ---
 
+
+
+---
+
+## ADR-016: Identity models live in a dedicated `apps.identity` application
+
+**Status:** Accepted
+
+**Context:** As BISK_RFv4 grows into an ERP platform, identity will be shared across attendance, meals, finance, academics, HR, portals, and future modules. Keeping `Person` and related identity models inside the `attendance` app would create unnecessary coupling.
+
+**Decision:** The long-term home for `Person`, `RoleType`, `PersonRole`, `StudentProfile`, `StaffProfile`, and future identity models is a dedicated `apps.identity` Django application. Existing attendance models will reference these models via foreign keys. The initial implementation may remain in `attendance` temporarily for incremental migration, but all new architectural work should target `apps.identity`.
+
+**Consequences:**
+
+- Identity becomes reusable across all domains.
+- Attendance becomes a consumer of identity instead of owning it.
+- Future ERP modules can depend on `apps.identity` without importing attendance.
+
+**Related documents:**
+
+- `docs/architecture/person_identity_architecture.md`
+- `docs/agent/ARCHITECTURE.md`
+
 ## ADR Index
 
 | ADR | Title | Phase |
@@ -466,3 +489,4 @@ Status: Living document
 | 013 | Legacy LMS is business reference, not code to copy | All |
 | 014 | Implementation must be incremental and backward compatible | All |
 | 015 | Do not delete Student model early | Phase 1–2 |
+| 016 | Identity models live in `apps.identity` | Phase 1 |

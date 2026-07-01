@@ -31,6 +31,7 @@ The current major goal is to introduce a robust Person architecture before imple
 - Keep existing student/meal/wallet workflows working.
 - Use service-layer business logic.
 - Update docs after meaningful work.
+- Never introduce a new model without first deciding which domain app owns it.
 
 ## AI session persistence
 
@@ -90,10 +91,15 @@ python manage.py check
 
 ## Current architecture direction
 
-Target:
+BISK_RFv4 is evolving into a full ERP/LMS/portal platform. New models must have clear domain ownership before implementation.
+
+Current approved target:
 
 ```text
-Person
+apps.identity
+├── Person
+├── RoleType
+├── PersonRole
 ├── StudentProfile
 ├── StaffProfile
 └── Future profile types
@@ -102,13 +108,35 @@ Person
 Eventually:
 
 ```text
-Wallet → Person
-MealSubscription → Person
-MealRecord → Person
-Discounts → Person
+apps.attendance.AttendanceRecord → apps.identity.Person
+apps.attendance.FaceEmbedding → apps.identity.Person
+Wallet → apps.identity.Person
+MealSubscription → apps.identity.Person
+MealRecord → apps.identity.Person
+Discounts → apps.identity.Person
 ```
 
 Do this incrementally. Do not delete the current Student model early.
+
+## Domain ownership rule
+
+Before adding any model, decide which domain app owns it.
+
+Examples:
+
+| Domain app | Owns |
+|---|---|
+| `apps.identity` | Person, RoleType, PersonRole, profiles |
+| `apps.attendance` | AttendanceRecord, AttendanceEvent, FaceEmbedding |
+| `apps.academic` | AcademicYear, Grade, Section, Subject, Term |
+| `apps.finance` | Invoice, Receipt, Installment, Payment |
+| `apps.meal` | MealProfile, MealSubscription, MealRecord |
+| `apps.wallet` | Wallet, WalletTransaction |
+| `apps.transport` | BusRoute, BusAssignment |
+| `apps.portal` | Portal views/API-facing profile access |
+| `apps.communication` | Notifications, messages, templates |
+
+If ownership is unclear, stop and ask for architectural review before implementing.
 
 ## Session report requirements
 

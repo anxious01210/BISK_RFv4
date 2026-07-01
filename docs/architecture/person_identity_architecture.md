@@ -2,7 +2,7 @@
 
 Date: 2026-06-30
 Branch: feature/person-architecture
-Status: Draft — architecture blueprint
+Status: Version 1.0 Candidate — aligned with dedicated identity app plan
 
 ---
 
@@ -35,7 +35,9 @@ The core principle: **one identity, many roles, optional login.**
 | **Backward compatibility always** | Never break existing Student-based code during migration. Dual-write, proxy models, and compat properties. |
 | **Incremental delivery** | Each phase is independently deployable. No big-bang migrations. |
 | **AcademicYear awareness** | Enrollments, subscriptions, and assignments are scoped to academic years. The model is designed now but implemented later. |
-| **Multi-tenant ready** | Organization/School/Campus hierarchy is designed into the identity model but activated when needed. |
+| **Multi-tenant ready** | Organization/School/Campus hierarchy is designed conceptually but activated only when needed. |
+| **Domain ownership first** | Identity models live in `apps.identity`; attendance, finance, academics, portal, HR, and future modules depend on identity, not the other way around. |
+| **Transitional fields are temporary** | `StudentProfile.grade`, `has_meal`, and `has_bus` are Phase 1 compatibility mirrors. New features should not treat them as long-term source-of-truth fields. |
 
 ---
 
@@ -90,9 +92,9 @@ class Campus(models.Model):
 
 ### Current implementation
 
-Not implemented. Person will have an optional `school` FK and `ext_id` field prepared for future multi-tenant activation.
+Not implemented. Phase 1 does **not** add `Organization`, `School`, `Campus`, `Department`, `Person.school`, or `Person.ext_id`.
 
-Person models (StudentProfile, StaffProfile) will NOT require a School FK initially. They become required when multi-tenant is activated.
+Identity models will live in `apps.identity`. Multi-school fields are intentionally deferred until the Organization/School/Campus models exist and a real multi-school requirement is implemented.
 
 ---
 
@@ -131,21 +133,36 @@ Not implemented. AcademicYear is referenced in design diagrams and model comment
 
 Person is the **core business identity**. It represents a real human being in the school ecosystem.
 
+In Phase 1, Person is owned by the dedicated Django app:
+
+```text
+apps.identity
+```
+
+Attendance, finance, academics, portal, HR, and future modules should depend on `apps.identity`, not on `apps.attendance`.
+
 ### Design
 
 ```python
+# apps/identity/models.py
+
 class Person(models.Model):
     # --- Identity ---
     h_code = models.CharField(
-        max_length=32, unique=True,
-        help_text="Unique human-readable identifier. Replaces Student.h_code."
+        max_length=32,
+        unique=True,
+        db_index=True,
+        help_text="Unique human-readable identifier. Replaces Student.h_code.",
     )
     first_name = models.CharField(max_length=100, blank=True, default="")
     middle_name = models.CharField(max_length=100, blank=True, default="")
     last_name = models.CharField(max_length=100, blank=True, default="")
     gender = models.CharField(
-        max_length=6, choices=[("MALE", "male"), ("FEMALE", "female")],
-        blank=True, null=True, db_index=True
+        max_length=6,
+        choices=[("MALE", "male"), ("FEMALE", "female")],
+        blank=True,
+        null=True,
+        db_index=True,
     )
     date_of_birth = models.DateField(blank=True, null=True)
 
@@ -156,37 +173,32 @@ class Person(models.Model):
 
     # --- Photo ---
     photo = models.ImageField(
-        upload_to="person_photos/", blank=True,
-        help_text="Official portrait photo."
+        upload_to="person_photos/",
+        blank=True,
+        help_text="Official portrait photo.",
     )
 
     # --- Status ---
     is_active = models.BooleanField(
-        default=True, db_index=True,
-        help_text="Deactivate to soft-delete a person."
+        default=True,
+        db_index=True,
+        help_text="Deactivate to soft-delete a person.",
     )
 
     # --- Auth bridge (Phase 1 only) ---
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,
-        null=True, blank=True,
+        null=True,
+        blank=True,
         related_name="person",
         help_text="Optional link to a login account.",
     )
 
     # --- Multi-school / ERP future ---
-    ext_id = models.CharField(
-        max_length=64, blank=True, default="",
-        help_text="External ERP or cross-system identifier.",
-    )
-    school = models.ForeignKey(
-        "attendance.School",                            # future model
-        on_delete=models.SET_NULL,
-        null=True, blank=True,
-        related_name="persons",
-        help_text="Primary school/campus affiliation (future multi-tenant).",
-    )
+    # Do NOT add school/ext_id in Phase 1.
+    # They are deferred until Organization/School/Campus and external ERP/SIS
+    # integration are implemented.
 
     # --- Metadata ---
     created_at = models.DateTimeField(auto_now_add=True)
@@ -215,8 +227,8 @@ class Person(models.Model):
 | No `username` field | `auth.User` handles usernames. Person uses `h_code` as the natural key. |
 | No `password` field | Person is NOT the auth model (Option D hybrid). Passwords stay on `auth.User`. |
 | `user` FK is nullable | A child in kindergarten does not need login access. |
-| `school` FK is nullable | Multi-tenant is future. A Person can exist without school affiliation initially. |
-| `ext_id` for ERP | Prepares for integration with external SIS/ERP systems. |
+| No `school` FK in Phase 1 | A Person may eventually have roles in multiple schools; school scoping belongs later on roles/assignments when Organization/School/Campus exists. |
+| No `ext_id` in Phase 1 | External ERP/SIS integration is deferred until a real integration is implemented. |
 
 ---
 
@@ -241,17 +253,17 @@ auth.User ──(optional O2O)──→ Person
 - All authentication flows remain unchanged.
 - `request.user` is still `auth.User`.
 - Login accounts are created manually or via management commands.
-- A `post_save` signal on `auth.User` syncs key fields to the linked `Person` (if one exists).
-- A `post_save` signal on `Person` creates an `auth.User` if one is needed (e.g., for staff).
+- Sync signals are postponed in Phase 1 to avoid unnecessary bidirectional complexity.
+- Login accounts can be linked through migration/admin/management commands.
 
 #### Phase 2 (future — after squash + preparation)
 
 ```
-Person(AbstractUser) with AUTH_USER_MODEL = "attendance.Person"
+Person(AbstractUser) with AUTH_USER_MODEL = "identity.Person"
 ```
 
 - Set `AUTH_USER_MODEL` in settings.
-- Copy existing `auth_user` data into `attendance_person`.
+- Copy existing `auth_user` data into `identity_person`.
 - Update the 3 FK fields that reference `settings.AUTH_USER_MODEL`.
 - Drop the `user` O2O bridge from Person.
 - Drop the `auth_user` table.
@@ -285,32 +297,56 @@ A single `person_type` field (`student`, `staff`, `parent`, etc.) cannot represe
 ### Design
 
 ```python
+# apps/identity/models.py
+
 class RoleType(models.Model):
     ROLE_STUDENT = "student"
     ROLE_STAFF = "staff"
     ROLE_TEACHER = "teacher"
     ROLE_PARENT = "parent"
+    ROLE_GUARDIAN = "guardian"
     ROLE_GUEST = "guest"
     ROLE_VENDOR = "vendor"
+    ROLE_ADMINISTRATOR = "administrator"
+    ROLE_FINANCE = "finance"
+    ROLE_HR = "hr"
+    ROLE_PRINCIPAL = "principal"
+    ROLE_VICE_PRINCIPAL = "vice_principal"
+    ROLE_LIBRARIAN = "librarian"
+    ROLE_NURSE = "nurse"
 
     ROLE_CHOICES = [
         (ROLE_STUDENT, "Student"),
         (ROLE_STAFF, "Staff"),
         (ROLE_TEACHER, "Teacher"),
         (ROLE_PARENT, "Parent"),
+        (ROLE_GUARDIAN, "Guardian"),
         (ROLE_GUEST, "Guest"),
         (ROLE_VENDOR, "Vendor"),
+        (ROLE_ADMINISTRATOR, "Administrator"),
+        (ROLE_FINANCE, "Finance"),
+        (ROLE_HR, "HR"),
+        (ROLE_PRINCIPAL, "Principal"),
+        (ROLE_VICE_PRINCIPAL, "Vice Principal"),
+        (ROLE_LIBRARIAN, "Librarian"),
+        (ROLE_NURSE, "Nurse"),
     ]
 
     code = models.CharField(
-        max_length=32, unique=True, choices=ROLE_CHOICES,
+        max_length=32,
+        unique=True,
+        choices=ROLE_CHOICES,
         help_text="Machine-readable role code.",
     )
     name = models.CharField(
         max_length=100,
-        help_text="Human-readable role name (e.g., 'Student', 'Teacher').",
+        help_text="Human-readable role name.",
     )
     is_active = models.BooleanField(default=True)
+    is_system = models.BooleanField(
+        default=False,
+        help_text="Seeded/system roles should not be renamed or deleted casually.",
+    )
 
     class Meta:
         ordering = ["code"]
@@ -323,32 +359,32 @@ class RoleType(models.Model):
 
 ## 8. PersonRole Model
 
-PersonRole links a Person to a RoleType, optionally scoped to an AcademicYear and/or School.
+PersonRole links a Person to a RoleType. In Phase 1 it is not scoped to AcademicYear or School because those models are not implemented yet. Future versions can add AcademicYear/School scoping when the academic and multi-school domains are introduced.
 
 ### Design
 
 ```python
+# apps/identity/models.py
+
 class PersonRole(models.Model):
     person = models.ForeignKey(
-        Person, on_delete=models.CASCADE,
+        Person,
+        on_delete=models.CASCADE,
         related_name="roles",
     )
     role_type = models.ForeignKey(
-        RoleType, on_delete=models.PROTECT,
+        RoleType,
+        on_delete=models.PROTECT,
         related_name="person_roles",
     )
-    academic_year = models.ForeignKey(
-        AcademicYear, on_delete=models.CASCADE,
-        null=True, blank=True,                 # null = ongoing/permanent role
-        related_name="person_roles",
-        help_text="Academic year this role is active for. Null = not time-bound.",
-    )
-    school = models.ForeignKey(
-        School, on_delete=models.CASCADE,
-        null=True, blank=True,
-        related_name="person_roles",
-        help_text="School/campus this role applies to (future multi-tenant).",
-    )
+
+    # --- Validity window ---
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+
+    # Future scoping fields — NOT IMPLEMENTED IN PHASE 1:
+    # academic_year = ForeignKey(AcademicYear, null=True)  # Phase 3+
+    # school = ForeignKey(School, null=True)               # Phase 5+
 
     # --- Status ---
     is_active = models.BooleanField(default=True, db_index=True)
@@ -358,18 +394,19 @@ class PersonRole(models.Model):
     assigned_at = models.DateTimeField(auto_now_add=True)
     assigned_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL, null=True, blank=True,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
     )
 
     class Meta:
-        unique_together = [
-            ("person", "role_type", "academic_year", "school"),
-        ]
+        unique_together = [("person", "role_type")]
         indexes = [
             models.Index(fields=["person", "is_active"]),
             models.Index(fields=["role_type", "is_active"]),
+            models.Index(fields=["start_date", "end_date"]),
         ]
-        ordering = ["person", "role_type", "-academic_year__start_date"]
+        ordering = ["person", "role_type"]
 
     def __str__(self):
         return f"{self.person.h_code} → {self.role_type.code}"
@@ -379,8 +416,8 @@ class PersonRole(models.Model):
 
 | Pattern | Example |
 |---|---|
-| Active student this year | `PersonRole(person=X, role_type=student, academic_year=2026)` |
-| Staff member (ongoing) | `PersonRole(person=Y, role_type=staff, academic_year=None)` |
+| Active student | `PersonRole(person=X, role_type=student, is_active=True)` |
+| Staff member | `PersonRole(person=Y, role_type=staff, is_active=True)` |
 | Staff + Parent | Two PersonRole rows for Z: one staff, one parent |
 | Student becomes staff next year | Old student role closed, new staff role opened |
 
@@ -390,29 +427,38 @@ class PersonRole(models.Model):
 
 StudentProfile extends Person with student-specific data. It is the eventual replacement for the current `Student` model.
 
+Important: `grade`, `homeroom`, `has_meal`, and `has_bus` are **transitional compatibility mirrors** from the current `Student` model. New features should not treat them as long-term source-of-truth fields. Grade/homeroom move to `StudentEnrollment`; meal status moves to meal subscriptions; bus status moves to the future transport domain.
+
 ### Design
 
 ```python
+# apps/identity/models.py
+
 class StudentProfile(models.Model):
     person = models.OneToOneField(
-        Person, on_delete=models.CASCADE,
-        primary_key=True,                       # shares PK with Person
+        Person,
+        on_delete=models.CASCADE,
+        primary_key=True,
         related_name="student_profile",
     )
 
-    # --- Academic ---
+    # --- Transitional compatibility fields ---
+    # These mirror current Student fields during Phase 1 only.
+    # Long-term source of truth:
+    # - grade/homeroom → StudentEnrollment + AcademicYear
+    # - has_meal → MealSubscription / meal domain
+    # - has_bus → Transport domain
     grade = models.CharField(max_length=32, blank=True, null=True, db_index=True)
     homeroom = models.CharField(max_length=64, blank=True, default="")
-
-    # --- Flags (denormalized, synced by signals) ---
     has_meal = models.BooleanField(default=False, db_index=True)
     has_bus = models.BooleanField(default=False, db_index=True)
 
     # --- Legacy ---
     legacy_student = models.OneToOneField(
-        "attendance.Student",                   # current Student model
+        "attendance.Student",
         on_delete=models.SET_NULL,
-        null=True, blank=True,
+        null=True,
+        blank=True,
         related_name="migrated_to",
         help_text="Temporary backlink to original Student record during migration.",
     )
@@ -446,27 +492,34 @@ StaffProfile extends Person with staff-specific data.
 ### Design
 
 ```python
+# apps/identity/models.py
+
 class StaffProfile(models.Model):
     person = models.OneToOneField(
-        Person, on_delete=models.CASCADE,
+        Person,
+        on_delete=models.CASCADE,
         primary_key=True,
         related_name="staff_profile",
     )
 
     # --- Employment ---
     employee_id = models.CharField(
-        max_length=32, blank=True, default="",
+        max_length=32,
+        blank=True,
+        default="",
         help_text="HR/ERP employee identifier.",
     )
     job_title = models.CharField(max_length=100, blank=True, default="")
-    department = models.CharField(max_length=100, blank=True, default="")
     hire_date = models.DateField(null=True, blank=True)
 
     # --- Flags ---
     is_teacher = models.BooleanField(
         default=False,
-        help_text="If true, this staff member can be assigned teaching periods.",
+        help_text="If true, this staff member can later be assigned teaching periods.",
     )
+
+    # Department is intentionally omitted in Phase 1.
+    # It belongs later to StaffAssignment / HR / Academic domain models.
 
     # --- Metadata ---
     created_at = models.DateTimeField(auto_now_add=True)
@@ -784,26 +837,32 @@ Phase 3+, not in the first Person migration.
 
 ### Design for multi-tenant
 
-The identity model is designed to support multi-school without schema changes:
+The identity model is designed so multi-school support can be added later without forcing a redesign, but Phase 1 does **not** add multi-school fields.
 
-| Element | Multi-school support |
-|---|---|
-| `Person.school` | Optional FK. Null = single-school mode. |
-| `PersonRole.school` | Scopes a role to a specific school. |
-| `StudentProfile` | Inherits school from Person. |
-| `StaffProfile` | Inherits school from Person. |
-| `h_code` uniqueness | Change from `unique=True` to `unique_together=[("school", "h_code")]` when multi-tenant is activated. |
-| `ext_id` | Cross-system identifier for syncing with external school SIS/ERP. |
+| Element | Phase 1 | Future multi-school support |
+|---|---|---|
+| `Person.school` | Not implemented | Add only when `Organization`, `School`, and `Campus` exist and the ownership decision is confirmed |
+| `PersonRole.school` | Not implemented | Add when roles must be scoped per school/campus |
+| `StudentProfile` | No school FK | Inherits school context through future enrollment/role scope |
+| `StaffProfile` | No school FK | Inherits school context through future assignment/role scope |
+| `h_code` uniqueness | Globally unique | Revisit when multi-school mode is activated |
+| `ext_id` | Not implemented | Add when external SIS/ERP integration requires it |
+
+### Why no `Person.school` in Phase 1?
+
+A Person may eventually hold roles across multiple schools, campuses, or organizations. Therefore, school scoping should usually belong to `PersonRole`, `StudentEnrollment`, `StaffAssignment`, or other domain-specific assignment models rather than being forced onto the Person identity itself too early.
 
 ### What changes when multi-school is activated
 
-1. `AUTH_USER_MODEL` may need a `school` FK (or each school has its own auth realm).
-2. All business queries become scoped by `school_id`.
-3. Django `django-tenants` or similar library for schema-per-tenant.
+1. Create `Organization`, `School`, and `Campus`.
+2. Decide whether school scoping belongs to Person, PersonRole, Enrollment, Assignment, or all of them.
+3. Add required FKs only where real business queries need them.
+4. Decide whether `h_code` remains globally unique or becomes unique per school.
+5. Consider tenant middleware or schema-per-tenant only when the deployment model requires it.
 
 ### Implementation order
 
-Not implemented in the first Person migration. The `school` FK and `ext_id` field are prepared but nullable.
+Not implemented in the first Person migration.
 
 ---
 
@@ -936,8 +995,8 @@ These are explicitly **excluded from the first Person migration** (Phase 1):
 
 | Feature | Why deferred |
 |---|---|
-| `AUTH_USER_MODEL = "attendance.Person"` | Irreversible on existing database. Deferred to Phase 2. |
-| `Organization` / `School` / `Campus` models | Multi-tenant not needed yet. `Person.school` FK is nullable. |
+| `AUTH_USER_MODEL = "identity.Person"` | Irreversible on existing database. Deferred to Phase 2. |
+| `Organization` / `School` / `Campus` models | Multi-tenant not needed yet. No `Person.school` FK in Phase 1. |
 | `AcademicYear` model | Not needed until enrollment and subscription scoping require it. |
 | `StudentEnrollment` | Replaces `is_active` flag. Deferred until AcademicYear exists. |
 | `StaffAssignment` | Deferred until AcademicYear exists. |
@@ -968,12 +1027,12 @@ These are explicitly **excluded from the first Person migration** (Phase 1):
 
 | Step | Deliverable |
 |---|---|
-| Create `Person` model | Identity fields, optional `user` O2O, `school` FK, `ext_id` |
-| Create `RoleType` model | Seeded with student, staff, teacher, parent |
-| Create `PersonRole` model | M2M through with year/school scoping |
+| Create `Person` model | Identity fields and optional `user` O2O only; no `school` FK or `ext_id` in Phase 1 |
+| Create `RoleType` model | Seeded system roles including student, staff, teacher, parent, guardian, guest, vendor, administrator, finance, HR, principal, vice principal, librarian, nurse |
+| Create `PersonRole` model | M2M through model with status and optional validity dates; year/school scoping deferred |
 | Create `StudentProfile` model | Student-specific fields, `legacy_student` backlink |
 | Create `StaffProfile` model | Staff-specific fields |
-| Add auth.User ↔ Person sync signal | Bidirectional sync |
+| Auth.User ↔ Person sync signal | Deferred; avoid bidirectional sync in Phase 1 |
 | Data migration: `Student` → `Person` + `Profile` | For every existing Student |
 | Data migration: link existing `auth.User` → `Person` | Link 4 existing users |
 | Add `PersonAdmin` + `StudentProfileAdmin` | Admin interface |
@@ -1034,7 +1093,7 @@ These are explicitly **excluded from the first Person migration** (Phase 1):
 |---|---|
 | Create `Organization`, `School`, `Campus` | Full legal/physical hierarchy |
 | Create domain-owned Department model if needed | Academic/HR/finance/operations department concept |
-| Activate `Person.school` FK | Required |
+| Decide and implement school scoping | Possibly PersonRole/Enrollment/Assignment, not automatically Person |
 | Change `h_code` uniqueness to `unique_together` | Multi-school scope |
 | Add tenant middleware | Request scoping |
 | **Risk** | High — significant architectural change |
@@ -1078,16 +1137,15 @@ MealRecord ────────► AttendanceRecord (no direct Person FK)
 | `middle_name` | `middle_name` | — |
 | `last_name` | `last_name` | — |
 | `gender` | `gender` | — |
-| `grade` | — | `grade` |
-| `has_meal` | — | `has_meal` |
-| `has_bus` | — | `has_bus` |
+| `grade` | — | `grade` (transitional; future StudentEnrollment) |
+| `has_meal` | — | `has_meal` (transitional; future meal domain) |
+| `has_bus` | — | `has_bus` (transitional; future transport domain) |
 | `is_active` | `is_active` | — |
 | — | `email` | — |
 | — | `phone` | — |
 | — | `date_of_birth` | — |
 | — | `photo` | — |
 | — | `user` (O2O to auth.User) | — |
-| — | `ext_id` | — |
 | — | — | `homeroom` |
 | — | — | `legacy_student` |
 | — | — | `person` (PK) |
