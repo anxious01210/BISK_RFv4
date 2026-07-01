@@ -54,3 +54,10 @@ __pycache__/
 *.pyc
 media/
 db.sqlite3
+
+# Local/manual backups
+backups/
+*.sqlite3
+*.sql
+*.sql.gz
+*.dump
