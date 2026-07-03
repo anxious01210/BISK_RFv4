@@ -66,3 +66,8 @@ backups/
 .tmp/
 *.tar.gz
 *.zip
+
+# Raw OpenCode session logs are local only
+.ai/sessions/opencode/*_opencode_session.txt
+!.ai/sessions/opencode/SESSION_SUMMARY_TEMPLATE.md
+!.ai/sessions/opencode/*_session_summary.md

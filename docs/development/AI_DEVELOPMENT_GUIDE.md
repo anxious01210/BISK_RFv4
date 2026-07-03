@@ -235,6 +235,63 @@ tar -czf .tmp/reviews/identity_review_2026-07-03.tar.gz -C .tmp/reviews identity
 
 ---
 
+# OpenCode Session Logs
+
+OpenCode produces raw session logs (terminal captures of the full AI
+interaction). These logs are useful for debugging but must not bloat the
+Git repository.
+
+## Rules
+
+1. **Raw OpenCode session logs should not be committed if they are large.**
+   Raw logs are verbose and grow quickly.
+
+2. **Raw logs should be stored locally under `.tmp/opencode/`** because
+   `.tmp/` is ignored by Git. This keeps them available locally without
+   polluting the repository.
+
+3. **Committed session records under `.ai/sessions/opencode/` should be
+   concise Markdown summaries, not huge raw logs.** Use the
+   `SESSION_SUMMARY_TEMPLATE.md` template located in that directory.
+
+4. **A session summary must include:**
+   - Task name
+   - Date/time
+   - Tools/model used
+   - Files changed
+   - Decisions made
+   - Tests/checks run
+   - Review archive path
+   - Final outcome
+
+5. **If a raw session log is important, keep it locally or archive it
+   outside Git** (e.g., in `.tmp/opencode/` or an external archive). Do not
+   commit the raw `.txt` capture.
+
+6. **Avoid committing session files larger than 5 MB.** If a session file
+   exceeds 5 MB, replace it with a concise Markdown summary.
+
+7. **Never commit session files larger than 50 MB.** This is a hard limit.
+   A 50 MB+ session file must not enter version control under any
+   circumstance.
+
+## Process
+
+When an OpenCode session completes:
+
+1. Save the raw log to `.tmp/opencode/` (it is gitignored).
+2. Create a concise Markdown summary under `.ai/sessions/opencode/` using
+   the template.
+3. Verify the summary file size is well under 5 MB before committing.
+4. Never `git add` raw `.txt` session captures.
+
+## Template
+
+Use `.ai/sessions/opencode/SESSION_SUMMARY_TEMPLATE.md` as the starting
+point for every committed session summary.
+
+---
+
 # Long-Term Vision
 
 BISK_RFv4 is intended to become a modular ERP platform.
