@@ -45,6 +45,7 @@ INSTALLED_APPS += [
     "import_export",
     "rest_framework",
     "django_filters",
+    "apps.identity",
     "apps.cameras",
     "apps.scheduler",
     # If INSTALLED_APPS has "apps.attendance", Django uses a default AppConfig and will not execute our ready() logic that auto‑creates media folders.
