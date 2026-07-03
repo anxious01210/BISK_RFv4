@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 from pathlib import Path
 import os
+import sys
 import warnings
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -118,6 +119,15 @@ DATABASES = {
     #     'NAME': BASE_DIR / 'db.sqlite3',
     # }
 }
+
+# Use a dedicated CREATEDB-enabled role for test runs when configured.
+# Only affects `manage.py test`; normal DB_USER/DB_PASSWORD behavior is unchanged.
+if "test" in sys.argv:
+    _test_user = os.getenv("TEST_DB_USER")
+    _test_password = os.getenv("TEST_DB_PASSWORD")
+    if _test_user and _test_password:
+        DATABASES["default"]["USER"] = _test_user
+        DATABASES["default"]["PASSWORD"] = _test_password
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
