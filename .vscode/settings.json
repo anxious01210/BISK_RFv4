@@ -1,29 +1,35 @@
 {
     "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-
     "python.analysis.typeCheckingMode": "basic",
     "python.analysis.diagnosticMode": "workspace",
-
     "python.analysis.extraPaths": [
         "${workspaceFolder}"
     ],
-
     "editor.formatOnSave": true,
-
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit",
+            "source.fixAll.ruff": "explicit"
+        }
+    },
+    "black-formatter.path": [
+        "${workspaceFolder}/.venv/bin/black"
+    ],
+    "ruff.path": [
+        "${workspaceFolder}/.venv/bin/ruff"
+    ],
     "files.exclude": {
         "**/__pycache__": true,
         "**/*.pyc": true,
         "**/.pytest_cache": true,
         "**/.mypy_cache": true
     },
-
     "search.exclude": {
         "**/__pycache__": true,
         "**/.pytest_cache": true,
         "**/.mypy_cache": true
     },
-
     "python.testing.pytestEnabled": false,
-
     "python.testing.unittestEnabled": false
 }
