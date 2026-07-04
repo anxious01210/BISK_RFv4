@@ -5,6 +5,44 @@ Branch: feature/person-architecture
 Version: 1.0 Draft — pending review
 Status: Architecture design only. No code, models, or migrations are produced by this document.
 
+> ⚠️ **SUPERSEDED — TRANSITIONAL / LEGACY DOCUMENT (2026-07-04)**
+>
+> This document is **superseded** for the future meals domain by:
+>
+> → `docs/architecture/meals_domain_architecture.md` (v1.1, authoritative)
+>
+> The meals document is the **authoritative** design for the future meal
+> domain. It reconciles this document with the finalized business
+> requirements and the decided architecture. The two documents disagree
+> on the following decided points; **the meals document wins** in every
+> case:
+>
+> | Topic | This (lunch) document | Authoritative meals v1.1 decision |
+> |---|---|---|
+> | App name | `apps.meal` (singular) | **`apps.meals`** (plural) |
+> | Plan model name | `MealPlan` (with `MealProfile` alias) | **`MealPlan`** is the future model; legacy `attendance.MealProfile` maps to it. `MealProfile` is legacy only. |
+> | Entity naming | `Lunch*` (e.g. `LunchSubscription`, `LunchServiceEvent`) | **`Meal*`** (e.g. `MealSubscription`, `MealServiceEvent`) — student + staff + multiple meal kinds are first-class |
+> | Price resolution ownership | List price in `apps.meal`; **final charge** computed by a "finance/pricing pipeline" (§9) | **Meals owns price resolution** entirely (base + per-Person override + discount composition); Finance records pre-resolved charges only |
+> | Discount caller | "apps.meal calls finance.resolve_discount" (§9.1); finance.charge resolves discounts | **Meals** calls `apps.discounts` directly during `resolve_price`; Finance never calls discounts on the meal code path |
+> | `finance.charge` signature | `finance.charge(..., price_base_iqd=...)` resolving pricing | `finance.charge(*, person, amount_iqd, ...)` recording a **pre-resolved** amount; Finance does not resolve prices |
+> | Date-range vs wallet | Mode on `MealPlan`; both use date ranges (implicitly) | Same — clarified explicitly: both modes may have date ranges; date-range = entitlement (no debit), wallet = per-service charge while active (§10.1) |
+> | Primary / fallback + priority | Priority field; same-priority overlap rejected | Same — clarified: lower number = higher priority = evaluated first; primary-only, fallback-only, both, multi-wallet (§11.4, §11.5) |
+> | Resolver flow | Spread across eligibility + pricing | **Single `resolve_service` flow** (meals doc §13): candidates → period filter → sort by priority → date-range primary → wallet fallback → price → discounts → finance.charge |
+> | Staff meals | Not addressed | **First-class** (`MealSubscription.staff`, `StaffProfile`, staff eligibility/pricing — meals doc §17) |
+> | Same-day multi-meal discounts | Not addressed | **Supported** via `same_day_meals` context (meals doc §19.5) |
+>
+> This lunch document is retained as **historical context** for the
+> legacy `apps.attendance` lunch stack and as a record of the design
+> evolution. **Do not implement from this document.** Implement from
+> `meals_domain_architecture.md` v1.1. Where any statement here
+> conflicts with the meals document, the meals document is correct.
+>
+> The reconciled finance boundary is documented in
+> `finance_domain_architecture.md` v1.1 (Finance records pre-resolved
+> charges only; Finance does not resolve meal prices or call discounts
+> for meals). The cross-app integration rules are in
+> `docs/development/DOMAIN_INTEGRATION_GUIDE.md`.
+
 ---
 
 ## 1. Purpose

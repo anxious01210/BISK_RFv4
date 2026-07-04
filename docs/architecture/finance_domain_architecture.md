@@ -1,18 +1,42 @@
 # Finance Domain Architecture — BISK_RFv4
 
-Date: 2026-07-03
+Date: 2026-07-03 (revised 2026-07-04)
 Branch: feature/person-architecture
-Version: 1.0 Draft — pending review
+Version: 1.1 Draft — pending review
 Status: Architecture design only. No code, models, or migrations are produced by this document.
+
+> **Reconciliation note (2026-07-04):** This document has been revised
+> to reconcile it with the finalized Meals domain architecture
+> (`docs/architecture/meals_domain_architecture.md` v1.1). Under the
+> decided architecture, **Meals owns meal price resolution** and
+> **Finance records pre-resolved meal charges only**. Finance does
+> **not** resolve meal prices and does **not** call the Discounts
+> service for meal pricing. The meal product list price
+> (`MealPeriodPrice`), per-Person overrides
+> (`MealPersonPriceOverride`), and the discount-composition call now
+> all live in `apps.meals`. The `PriceList` / `PricingRule` placeholder
+> in §4.7 is retained for **non-meal** ERP billing (tuition, transport,
+> etc.) but is no longer the owner of meal prices. The future meal app
+> is `apps.meals` (plural) and the meal product model is `MealPlan`
+> (legacy `attendance.MealProfile` maps to it). See
+> `docs/architecture/meals_domain_architecture.md` for the
+> authoritative Meals design.
 
 ---
 
 ## 1. Purpose
 
 This document designs the **Finance domain** for BISK_RFv4 — wallets,
-charges, payments, refunds, adjustments, pricing, discount integration,
-lunch billing, and the foundation for future ERP billing modules (tuition,
-transport, library fines, school shop, event fees, uniforms).
+charges, payments, refunds, adjustments, and the foundation for future
+ERP billing modules (tuition, transport, library fines, school shop,
+event fees, uniforms).
+
+> Domain boundary (decided): **Finance owns wallets, ledger, payments,
+> refunds, charges, and adjustments only.** Finance records money. It
+> does **not** own meal product pricing, meal periods, meal entitlement,
+> meal subscriptions, or discount rules. For meal billing, Finance
+> receives a **pre-resolved** charge amount from Meals and records the
+> ledger row. See `meals_domain_architecture.md` §5 and §20.
 
 The current implementation lives scattered inside `apps.attendance`
 (`Wallet`, `WalletTransaction`, `DiscountProfile`, `DiscountRule`),
@@ -24,14 +48,20 @@ designs a clean `apps.finance` domain that:
 - Enforces an **immutable ledger**: every balance change is a permanent
   `WalletTransaction`; the running balance is a derived/cached value that
   must always be reconstructable from the ledger.
-- Exposes a **service boundary** so the lunch domain (and future ERP
+- Exposes a **service boundary** so the meals domain (and future ERP
   modules) can request charges, refunds, and balance checks without
   embedding wallet math.
-- Bounded discount resolution: finance **consumes** discount results from
-  a future separate discount domain/app (`apps.discounts`) through a
-  service boundary; finance does **not** own discount rules, profiles, or
-  assignments, and the result is returned/snapshotted to the caller —
-  never hardcoded inside individual transactions.
+- **Records pre-resolved charges only.** For meal billing, Meals resolves
+  the price (and, in the future, calls `apps.discounts`) and passes a
+  final `amount_iqd` to `finance.charge`. Finance does **not** resolve
+  meal prices and does **not** call the Discounts service for meal
+  pricing. (Discounts remain a separate future domain, `apps.discounts`,
+  that Meals will call directly when implemented.)
+- Does **not** own discount rules, profiles, or assignments. Discount
+  implementation is a separate future domain (`apps.discounts`); Finance
+  only snapshots a `discount_iqd` value on `Charge` when the caller
+  (Meals) supplies one as part of the pre-resolved amount's audit
+  context.
 
 This is a **design document**, not an implementation order. Each entity
 below is a blueprint for a future, separately-approved implementation step.
@@ -40,13 +70,15 @@ below is a blueprint for a future, separately-approved implementation step.
 
 | In scope | Out of scope |
 |---|---|
-| Wallet, WalletTransaction, Charge, Payment, Refund, Adjustment, PricingRule | AI recognition engine (attendance) |
-| Wallet lifecycle and immutable ledger | Lunch subscription/eligibility models (meal domain) |
-| Transaction model: credit/debit, source module, reversal | Grade/Section/Enrollment models (academics) |
-| Lunch billing integration boundary | Menu/kitchen inventory |
-| Discount integration boundary | Bank/payment-gateway processing |
-| Future ERP billing module support | Full double-entry accounting engine |
-| Licensing & audit support | Payroll / staff salary computation |
+| Wallet, WalletTransaction, Charge, Payment, Refund, Adjustment | AI recognition engine (attendance) |
+| Wallet lifecycle and immutable ledger | Meal subscriptions / eligibility / service events (meals domain) |
+| Transaction model: credit/debit, source module, reversal | Meal product pricing, meal periods, per-Person meal pricing (meals domain) |
+| Meal billing integration boundary (Finance records pre-resolved charges) | Grade/Section/Enrollment models (academics) |
+| Non-meal ERP billing list-price placeholder (`PriceList` / `PricingRule` for tuition/transport/etc.) | Menu/kitchen inventory |
+| Future ERP billing module support | Bank/payment-gateway processing |
+| Licensing & audit support | Full double-entry accounting engine |
+|  | Discount rules/profiles/assignments (future `apps.discounts`; Meals calls it, not Finance) |
+|  | Payroll / staff salary computation |
 
 ### Constraints respected
 
@@ -61,13 +93,21 @@ below is a blueprint for a future, separately-approved implementation step.
 - **Avoid storing only a mutable balance without ledger history**: a
   wallet with a balance column but no transaction rows is forbidden; the
   ledger is the source of truth.
-- **Lunch must not contain direct wallet math**: lunch calls finance
+- **Lunch/meals must not contain direct wallet math**: meals calls finance
   services; it never reads/writes `Wallet.balance` or creates
-  `WalletTransaction` rows directly.
+  `WalletTransaction` rows directly. (Wallet mutations happen only
+  through Finance services.)
+- **Finance records pre-resolved meal charges only.** For meal billing,
+  Meals resolves the price and passes a final `amount_iqd` to
+  `finance.charge`. Finance does **not** resolve meal prices and does
+  **not** call `apps.discounts` for meal pricing. Meals will call
+  `apps.discounts` directly when discounts are implemented.
 - Uses the `services.py` / `selectors.py` / `validators.py` pattern
-  established by `apps.identity` and `apps.academics`.
+  established by `apps.identity` and `apps.academics`, and follows
+  `DOMAIN_INTEGRATION_GUIDE.md`.
 - Follows `education_domain_architecture.md`,
-  `academics_domain_architecture.md`, `lunch_domain_architecture.md`,
+  `academics_domain_architecture.md`, `meals_domain_architecture.md`
+  (authoritative for the meals domain),
   `person_identity_architecture.md`, `PROJECT_ARCHITECTURE.md`, and
   `AI_DEVELOPMENT_GUIDE.md`.
 
@@ -83,8 +123,8 @@ below is a blueprint for a future, separately-approved implementation step.
 | 4 | **Money is auditable** | Every charge, top-up, refund, and adjustment creates a permanent transaction with `balance_before`/`balance_after` snapshots, a source module, a reference, an actor, and a reason. No silent balance changes. |
 | 5 | **Service-layer boundary** | Balance checks, charges, and refunds are performed by `apps.finance.services` (e.g. `charge()`, `refund()`, `check_balance()`). Other domains call these services; they never touch `Wallet.balance` or create `WalletTransaction` rows directly. |
 | 6 | **Workflow as state machine** | Wallet lifecycle (`active`/`suspended`/`closed`) and payment status use explicit `status` enums with documented transitions, not scattered booleans. |
-| 7 | **Domain ownership first** | `apps.finance` owns Wallet/WalletTransaction/Charge/Payment/Refund/Adjustment/PricingRule. Lunch, attendance, and future ERP modules depend on finance via a service boundary; finance does not depend on them. |
-| 8 | **Snapshot only when justified** | Financial snapshots (price, discount, charge, balance before/after) are stored on immutable historical records in the *calling* domain (e.g. `LunchServiceEvent`) because they cannot be reconstructed later; finance itself stores the authoritative ledger. |
+| 7 | **Domain ownership first** | `apps.finance` owns Wallet/WalletTransaction/Charge/Payment/Refund/Adjustment and (for non-meal ERP billing) `PriceList`/`PricingRule`. It does **not** own meal product pricing, meal periods, meal entitlement, or meal subscriptions — those belong to `apps.meals`. It does **not** own discount rules — those belong to future `apps.discounts`. Meals, attendance, and future ERP modules depend on finance via a service boundary; finance does not depend on them. |
+| 8 | **Snapshot only when justified** | Financial snapshots (price, discount, charge, balance before/after) are stored on immutable historical records in the *calling* domain (e.g. `MealServiceEvent`) because they cannot be reconstructed later; finance itself stores the authoritative ledger. |
 | 9 | **display_code in templates** | Wallet/billing reports render `person.display_code`, never legacy `h_code`. |
 | 10 | **No duplicated identity** | No `h_code`, no `first_name`/`last_name`/`grade` on finance entities. Names are read via `wallet.person.full_name`. |
 | 11 | **One logical feature per migration** | Each wallet/transaction schema change is its own migration; no unrelated changes ride along (per `DEVELOPMENT_STANDARDS.md`). |
@@ -100,10 +140,11 @@ apps/finance/
 ├── __init__.py
 ├── apps.py
 ├── models.py        # Wallet, WalletTransaction, Charge, Payment,
-│                    # Refund, Adjustment, PricingRule, PriceList
+│                    # Refund, Adjustment, PriceList, PricingRule (non-meal ERP only)
 ├── admin.py
 ├── services.py      # create_wallet, charge, refund, top_up, adjust,
-│                    # check_balance, resolve_pricing (calls discounts domain)
+│                    # check_balance  (charge records pre-resolved amounts;
+│                    # does NOT resolve meal prices or call discounts)
 ├── selectors.py     # balance_for, transaction_history, ledger_for_person, ...
 ├── validators.py    # sufficient_funds, wallet_active, reversal rules, ...
 └── migrations/
@@ -115,25 +156,31 @@ apps/finance/
 
 ```
 apps.finance ──depends on──► apps.identity   (Person, StudentProfile, StaffProfile)
-apps.finance ──depended on by──► apps.meal           (lunch billing)
+apps.finance ──depended on by──► apps.meals          (meal billing; Meals calls finance)
 apps.finance ──depended on by──► future apps.tuition, apps.transport, apps.shop, ...
 apps.finance ──may consume──► apps.academics  (AcademicYear for year-scoped billing, read-only)
-apps.finance ──may call (service boundary)──► apps.discounts (discount resolution; future)
 ```
 
-> Note: `apps.discounts` does not exist yet. Until it does, `charge()`
-> resolves with `discount_iqd=0`. Finance calls the discount **service
-> interface**, never the discount models directly, so the dependency is on
-> a service boundary, not on `DiscountProfile`/`DiscountRule`.
+> Note: `apps.discounts` does not exist yet. Under the decided
+> architecture, **Finance does not call `apps.discounts`** for meal
+> pricing. Meals calls `apps.discounts` directly during its own
+> `resolve_price` and passes the pre-resolved `final_charge_iqd` to
+> `finance.charge`. Finance only snapshots a `discount_iqd` value on
+> `Charge` when the caller (Meals) supplies one as part of the
+> pre-resolved amount's audit context. For future **non-meal** ERP
+> billing modules that do not perform their own discount resolution,
+> Finance may still expose a `resolve_pricing` helper, but it must not
+> call `apps.discounts` on the meal code path.
 
-`apps.finance` must **not** import from `apps.meal`, `apps.attendance`,
+`apps.finance` must **not** import from `apps.meals`, `apps.attendance`,
 or any future billing module. Those modules call finance; the reverse is
 forbidden to avoid circular ownership. A meal charge is requested by the
-meal domain via `finance.charge(...)`; finance records the ledger and
-returns the transaction; meal stores the snapshot.
+meals domain via `finance.charge(...)` with a **pre-resolved**
+`amount_iqd`; finance records the ledger and returns the transaction;
+meals stores the snapshot.
 
-A dependency `meal → finance` is allowed (meal calls finance). A dependency
-`finance → meal` is **not** allowed.
+A dependency `meals → finance` is allowed (meals calls finance). A
+dependency `finance → meals` is **not** allowed.
 
 ---
 
@@ -274,11 +321,11 @@ class WalletTransaction(models.Model):
     balance before/after the row is applied.
   - `source_module` + `reference_type`/`reference_id` form a **generic
     reference** to the originating object (e.g.
-    `source_module="meal", reference_type="LunchServiceEvent",
-    reference_id=42`). A typed FK to `LunchServiceEvent` is **not** used
-    because finance must not import meal models (circular ownership). The
-    meal domain stores the反向 FK
-    (`LunchServiceEvent.wallet_transaction`) for its own lookups.
+    `source_module="meals", reference_type="MealServiceEvent",
+    reference_id=42`). A typed FK to `MealServiceEvent` is **not** used
+    because finance must not import meals models (circular ownership). The
+    meals domain stores the reverse typed FK
+    (`MealServiceEvent.wallet_transaction`) for its own lookups.
   - `person` is denormalized from `wallet.person` for fast person-scoped
     queries without joining through wallet; it must equal
     `wallet.person_id` (enforced in `clean()`).
@@ -477,13 +524,20 @@ class Adjustment(models.Model):
     balance.
   - Require `reason_code` and (by policy) staff approval.
 
-### 4.7 PricingRule / PriceList (placeholder)
+### 4.7 PricingRule / PriceList (non-meal ERP placeholder)
 
 - **Owner:** `apps.finance`
-- **Purpose:** A **placeholder** for list-price definitions per product,
-  period, and academic year. Eventually this absorbs the legacy
-  `MealProfilePeriodPrice` concept and generalizes it to tuition, transport,
-  etc. For now it is a thin, admin-configurable price source.
+- **Purpose:** A **placeholder** for **non-meal** list-price definitions
+  per product, period, and academic year (tuition, transport, library
+  fines, school shop, event fees, uniforms). This generalizes the
+  legacy `MealProfilePeriodPrice` *concept* to non-meal ERP billing.
+- **Meals is not a consumer of `PriceList` / `PricingRule`.** Under the
+  decided architecture, **meal product pricing lives in `apps.meals`**
+  (`MealPeriodPrice`, `MealPersonPriceOverride`, `MealPlan.default_price_iqd`),
+  not in Finance. The meals domain resolves meal prices itself and passes
+  a pre-resolved `amount_iqd` to `finance.charge`. See
+  `meals_domain_architecture.md` §14–§18. `PriceList` / `PricingRule`
+  must not be used as the source of meal prices.
 - **Conceptual fields:**
 
 ```python
@@ -518,11 +572,16 @@ class PricingRule(models.Model):
 ```
 
 - **Rules:**
-  - `PricingRule` returns the **list price** for a product in a context.
-    Discounts are applied on top by `resolve_pricing` (Section 8).
-  - This is a placeholder; the meal domain's `MealPlanPeriodPrice` remains
-    the source for meal prices until migration, after which meal reads
-    from `PricingRule` where `product_code="meal_lunch"`.
+  - `PricingRule` returns the **list price** for a **non-meal** product in
+    a context. It must not be used for meal products (`product_code`
+    starting with `meal_*`); meal prices live in `apps.meals`.
+  - Discounts for non-meal products may be applied on top by a
+    `resolve_pricing` helper; for **meal** products, Meals resolves
+    prices and discounts itself (see `meals_domain_architecture.md` §14
+    and §19).
+  - This is a placeholder for non-meal ERP billing; the meals domain's
+    `MealPeriodPrice` / `MealPersonPriceOverride` / `MealPlan.default_price_iqd`
+    are the source for meal prices, owned by `apps.meals`.
 
 ### 4.8 Relationship to StudentProfile
 
@@ -644,16 +703,16 @@ active/suspended ──(close)──► closed   (terminal)
 ### 6.4 Reference object
 
 - `reference_type` + `reference_id` form a generic FK to the originating
-  object (e.g. `("LunchServiceEvent", 42)`). Finance does not resolve
-  these to typed objects; the owning domain stores the反向 typed FK
-  (`LunchServiceEvent.wallet_transaction`) for its own joins.
-- A typed FK from `WalletTransaction` to `LunchServiceEvent` is
-  **forbidden** (would create `finance → meal` circular dependency).
+  object (e.g. `("MealServiceEvent", 42)`). Finance does not resolve
+  these to typed objects; the owning domain stores the reverse typed FK
+  (`MealServiceEvent.wallet_transaction`) for its own joins.
+- A typed FK from `WalletTransaction` to `MealServiceEvent` is
+  **forbidden** (would create `finance → meals` circular dependency).
 
 ### 6.5 Audit notes
 
 - Every transaction carries `reason_code`, `notes`, `created_by` (auth.User),
-  and `created_by_staff` (StaffProfile). Lunch-supervisor and finance-staff
+  and `created_by_staff` (StaffProfile). Meals-supervisor and finance-staff
   actions are auditable to a person.
 
 ### 6.6 Reversal strategy
@@ -672,56 +731,76 @@ active/suspended ──(close)──► closed   (terminal)
 
 ---
 
-## 7. Lunch Integration
+## 7. Meals Integration
 
-### 7.1 Lunch requests charge/eligibility from Finance
+### 7.1 Meals passes a pre-resolved charge to Finance
 
-- When a `LunchServiceEvent` is confirmed and `MealPlan.mode == WALLET`,
-  the meal domain calls:
+> Decided boundary: **Meals owns meal price resolution; Finance records
+> pre-resolved charges only.** Finance does **not** resolve meal prices
+> and does **not** call `apps.discounts` on the meal code path. Meals
+> calls `apps.discounts` itself during `resolve_price`
+> (`meals_domain_architecture.md` §14, §19) and passes the resulting
+> `final_charge_iqd` to `finance.charge`.
+
+- When a `MealServiceEvent` is confirmed and `MealPlan.mode == WALLET`,
+  the meals domain resolves the price itself (per-Person / per-period /
+  default), calls `apps.discounts` if available, and then calls Finance
+  with a **pre-resolved** amount:
   ```python
   finance.charge(
       person=student.person,
-      product_code="meal_lunch",
-      price_base_iqd=<from MealPlanPeriodPrice or PricingRule>,
-      source_module="meal",
-      reference_type="LunchServiceEvent",
+      amount_iqd=final_charge_iqd,    # pre-resolved by Meals
+      source_module="meals",
+      reference_type="MealServiceEvent",
       reference_id=service_event.pk,
       academic_year=<current>,
-  ) -> (Charge, WalletTransaction)
+      description=f"meal_lunch base={base} discount={discount_iqd}",
+  ) -> WalletTransaction
   ```
-- Finance resolves pricing (from `PricingRule`), calls the discount
-  service boundary if `apps.discounts` exists (Section 8) to obtain
-  `discount_iqd`, computes `final_charge_iqd`, checks funds/credit,
-  appends the DEBIT (or UNPAID) transaction, updates the wallet balance,
-  and returns the result. Until the discount domain exists,
-  `discount_iqd=0` and `final_charge_iqd=price_base_iqd`.
-- Meal stores the returned `WalletTransaction` FK and the
+- Finance validates the wallet is active and funds/credit suffice (or
+  returns an UNPAID transaction per finance policy), appends the DEBIT
+  row, updates `Wallet.balance_iqd` atomically inside the same
+  transaction, and returns the `WalletTransaction` (with
+  `balance_before`/`after` snapshots) to Meals.
+- Finance does **not** look up `MealPeriodPrice` or
+  `MealPersonPriceOverride`, does **not** consult `MealPlan`, and does
+  **not** call `apps.discounts`. It records the pre-resolved amount.
+- Meals stores the returned `WalletTransaction` FK and the
   price/discount/charge/balance snapshots on the immutable
-  `LunchServiceEvent`.
+  `MealServiceEvent` (`meals_domain_architecture.md` §12, §20).
+- For `MealPlan.mode == DATE_RANGE` subscriptions, Meals makes **no**
+  `finance.charge` call — the service event records `final_charge_iqd = 0`
+  and `price_resolution_source = "date_range_no_charge"`
+  (`meals_domain_architecture.md` §13 step 4a).
 
-### 7.2 Lunch must not own wallet calculations
+### 7.2 Meals must not own wallet calculations
 
-- Meal never reads `Wallet.balance_iqd`, never creates
+- Meals never reads `Wallet.balance_iqd`, never creates
   `WalletTransaction` rows, never computes `balance_before`/`after`.
-- Meal calls `finance.check_balance(person, amount)` to decide whether to
+- Meals calls `finance.check_balance(person, amount)` to decide whether to
   proceed, and `finance.charge(...)` / `finance.refund(...)` to mutate.
+- Wallet mutations happen only through Finance services.
 - The "insufficient funds" policy (`MealPlan.insufficient_funds_mode`)
-  is **meal-domain policy** (how the meal product reacts to a balance
-  state returned by finance); it is not finance logic.
+  is **meals-domain policy** (how the meal product reacts to a balance
+  state returned by finance); it is not finance logic
+  (`meals_domain_architecture.md` §13 step 4b, §17).
 
 ### 7.3 Finance service/selector boundary for balance and charge checks
 
 ```python
 # apps/finance/services.py
-def check_balance(*, person, amount: int = 0) -> tuple[int, bool]:
+def check_balance(*, person, amount_iqd: int = 0) -> tuple[int, bool]:
     """Return (current_balance, sufficient_for_amount)."""
 
-def charge(*, person, product_code, price_base_iqd, source_module,
-           reference_type="", reference_id=None, academic_year=None,
-           description="") -> tuple[Charge, WalletTransaction | None]: ...
+def charge(*, person, amount_iqd: int, source_module: str,
+           reference_type: str = "", reference_id: int | None = None,
+           academic_year=None, description: str = "") -> WalletTransaction:
+    """Record a pre-resolved charge. `amount_iqd` is the final amount to
+    debit, resolved by the caller (e.g. Meals). Finance does NOT resolve
+    pricing and does NOT call discounts for meal charges."""
 
-def refund(*, person, original_charge, amount_iqd=None, reason_code="",
-           approved_by=None) -> tuple[Refund, WalletTransaction]: ...
+def refund(*, person, original_transaction, amount_iqd=None, reason_code="",
+           approved_by=None) -> WalletTransaction: ...
 
 def top_up(*, person, amount_iqd, method="cash", reference="",
            received_by=None) -> tuple[Payment, WalletTransaction]: ...
@@ -738,10 +817,24 @@ def charges_for_person(*, person, product_code=None) -> QuerySet[Charge]: ...
 
 - These are the **only** entry points other domains use. They encapsulate
   the ledger math, the atomic balance update, and the audit snapshots.
+- `charge()` takes `amount_iqd` (the pre-resolved final amount), **not**
+  `price_base_iqd` — Finance does not resolve prices. (Earlier drafts of
+  this document had `charge(..., price_base_iqd=...)` resolving pricing
+  internally; that design is superseded by the Meals v1.1 architecture.)
 
 ---
 
 ## 8. Discount Integration
+
+> Decided boundary (revised): **Finance does not call `apps.discounts`
+> for meal pricing.** Meals calls `apps.discounts` directly during its
+> own `resolve_price` and passes the pre-resolved `final_charge_iqd` to
+> `finance.charge`. Finance may still snapshot a `discount_iqd` value on
+> `Charge` when the caller supplies one (for audit self-containment),
+> but it does not *compute* it. This section is retained to document
+> the boundary and the snapshot semantics; the discount *resolution*
+> ownership has moved to Meals (for meal products) and remains open for
+> future non-meal ERP billing modules.
 
 ### 8.1 Discounts are a separate domain, clearly bounded
 
@@ -754,31 +847,40 @@ def charges_for_person(*, person, product_code=None) -> QuerySet[Charge]: ...
 - Finance **does not own** `DiscountProfile`, `DiscountRule`, or
   `DiscountAssignment`. Finance owns the `Charge` (which may store discount
   *snapshot* fields — see 8.3) and the ledger, not discount rule logic.
-- Discount implementation is **deferred** until after the Finance + Lunch
-  foundation is in place, unless a concrete requirement forces it earlier.
-  Until then, `charge()` resolves with `discount_iqd=0` and
-  `final_charge_iqd=price_base`.
+- **Meals calls `apps.discounts` for meal pricing**, not Finance. Finance
+  records the pre-resolved amount. For future **non-meal** ERP billing
+  modules that do not perform their own discount resolution, the question
+  of who calls `apps.discounts` is deferred (open question Q14).
+- Discount implementation is **deferred** until after the Finance + Meals
+  foundation is in place, unless a concrete requirement forces it
+  earlier. Until then, the Meals `resolve_price` discount call is a no-op
+  stub returning `discount_iqd=0` (`meals_domain_architecture.md` §19.6).
 
-### 8.2 Finance consumes discount results through a service boundary
+### 8.2 Meals consumes discount results; Finance records the pre-resolved amount
 
-- When the discount domain exists, finance calls it during `charge()`
-  resolution through a service boundary:
+- When the discount domain exists, **Meals** calls it during
+  `resolve_price` (`meals_domain_architecture.md` §14.2, §19):
   ```python
   discounts.resolve(person, price_base, product_code,
                      academic_year, context) -> (discount_iqd,
                      final_charge_iqd, applied_profiles)
   ```
   This function lives in `apps.discounts.services`, **not** in
-  `apps.finance`. Finance imports the discount service interface, not the
-  discount models.
-- The caller (e.g. meal) passes `price_base_iqd` to `finance.charge(...)`;
-  finance internally calls the discount service, obtains `discount_iqd` +
-  `final_charge_iqd`, and snapshots the result on the `Charge`.
-- The result is also propagated (via the returned transaction reference)
-  to the calling domain's immutable record (e.g.
-  `LunchServiceEvent.discount_iqd`).
-- Until `apps.discounts` exists, `charge()` skips the discount call and
-  charges the full `price_base_iqd`.
+  `apps.finance` and **not** in `apps.meals` (Meals imports the discount
+  service interface, not the discount models).
+- Meals passes the resulting `final_charge_iqd` to `finance.charge(...)`.
+  Finance records the pre-resolved amount and may snapshot the
+  `discount_iqd` on `Charge` if Meals supplies it (for audit
+  self-containment). Finance does **not** call `apps.discounts`.
+- The result is also snapshotted on Meals' immutable `MealServiceEvent`
+  (`meals_domain_architecture.md` §12).
+- Until `apps.discounts` exists, Meals' `resolve_price` skips the
+  discount call and charges the full `price_base_iqd`; Finance sees
+  `amount_iqd = price_base_iqd`.
+- **Finance does not call `apps.discounts` on the meal code path.** An
+  earlier draft of this section described `finance.charge` calling the
+  discount service internally; that design is superseded by the Meals
+  v1.1 architecture.
 
 ### 8.3 Charge may store discount snapshots, not discount rule logic
 
@@ -794,14 +896,14 @@ def charges_for_person(*, person, product_code=None) -> QuerySet[Charge]: ...
   the `reference` to the `Charge` that broke down price/discount/final. It
   stores no discount fields at all.
 
-### 8.4 Lunch must not own discount logic either
+### 8.4 Meals calls Discounts directly; Finance does not
 
-- The lunch domain calls `finance.charge(...)` and receives the resolved
-  `discount_iqd` snapshot; it never calls the discount domain directly and
-  never computes discounts.
-- Lunch stores the discount *snapshot* on its immutable
-  `LunchServiceEvent` for audit; it does not own the rules that produced
-  it.
+- The meals domain calls `apps.discounts` directly during `resolve_price`
+  and receives the resolved `discount_iqd`; it never asks Finance to
+  compute discounts. Finance records the pre-resolved `amount_iqd` only.
+- Meals stores the discount *snapshot* on its immutable
+  `MealServiceEvent` for audit; it does not own the rules that produced
+  it (`meals_domain_architecture.md` §19.4).
 
 ### 8.5 Discount types (resolved by the discount domain, not finance)
 
@@ -820,13 +922,14 @@ types; finance only receives the final `discount_iqd`:
 ## 9. Future ERP Support
 
 The finance domain is designed so future billing modules plug in via the
-**same service boundary** lunch uses, without finance needing to know
+**same service boundary** meals uses, without finance needing to know
 they exist.
 
 | Future module | Product code example | Integration |
 |---|---|---|
-| Tuition | `tuition_2026_term1` | Calls `finance.charge(person, product_code, price_base, source_module="tuition", ...)`; finance settles from wallet or records UNPAID for invoiced billing. |
-| Transportation | `transport_term1` | Same pattern; `PricingRule.grade` may scope bus-fee-by-grade. |
+| Meals (current) | `meal_lunch`, `meal_breakfast` | Meals resolves price + discounts itself, passes `amount_iqd` (pre-resolved) to `finance.charge`. See `meals_domain_architecture.md`. |
+| Tuition | `tuition_2026_term1` | Calls `finance.charge(person, amount_iqd, source_module="tuition", ...)`; the module resolves its own price (or uses `PricingRule`) and passes a pre-resolved amount. Finance settles from wallet or records UNPAID for invoiced billing. |
+| Transportation | `transport_term1` | Same pattern; `PricingRule.grade` may scope bus-fee-by-grade for non-meal products. |
 | Library fines | `library_fine_overdue` | Same pattern; `source_module="library"`. |
 | School shop | `shop_item_42` | Same pattern; `source_module="shop"`. |
 | Event fees | `event_field_trip_7` | Same pattern; `source_module="events"`. |
@@ -835,7 +938,10 @@ they exist.
 ### Why this works
 
 - Each module calls `finance.charge(...)` with its own `source_module` and
-  `product_code`. Finance records the ledger and returns the transaction.
+  a **pre-resolved** `amount_iqd`. Finance records the ledger and returns
+  the transaction. (For meal products, Meals resolves the price itself;
+  for non-meal products, the calling module may use `PricingRule` or its
+  own price source.)
 - No new finance model is needed per module; `Charge.product_code` +
   `source_module` distinguish them.
 - Reports group by `source_module`/`product_code` without finance importing
@@ -853,33 +959,39 @@ they exist.
 |---|---|
 | `Wallet`, `WalletTransaction` | Ledger and balance anchor. |
 | `Charge`, `Payment`, `Refund`, `Adjustment` | Billing/money-in/money-out/correction records. |
-| `PriceList`, `PricingRule` | List-price definitions. |
-| `charge()`, `refund()`, `top_up()`, `adjust()`, `check_balance()` services | Ledger math lives here. |
+| `PriceList`, `PricingRule` | **Non-meal** ERP list-price definitions (tuition, transport, etc.). Meal prices live in `apps.meals`. |
+| `charge()`, `refund()`, `top_up()`, `adjust()`, `check_balance()` services | Ledger math lives here. `charge()` records **pre-resolved** amounts; it does not resolve meal prices or call discounts for meals. |
 
 ### Does NOT belong in `apps.finance`
 
 | Does NOT belong in finance | Where it belongs |
 |---|---|
-| Lunch subscriptions/eligibility/service events | `apps.meal` |
-| Meal plan period prices (until migrated) | `apps.meal` (then `PricingRule`) |
+| Meal subscriptions / eligibility / service events | `apps.meals` (`meals_domain_architecture.md`) |
+| **Meal product pricing** (`MealPeriodPrice`, `MealPersonPriceOverride`, `MealPlan.default_price_iqd`) | `apps.meals` — Meals owns meal price resolution |
+| Meal periods / meal entitlement / date-range vs wallet mode | `apps.meals` |
 | Recognition events/cameras/embeddings | `apps.attendance` |
 | Grade/Section/Enrollment/Placement | `apps.academics` |
 | Person/StudentProfile/StaffProfile identity | `apps.identity` |
 | Period templates/occurrences | `apps.scheduler` |
-| **Discount profiles/rules/assignments** | future `apps.discounts` (finance consumes results via service boundary only) |
+| **Discount profiles/rules/assignments** | future `apps.discounts` (Meals calls it for meal pricing; finance does not call it on the meal code path) |
 | Invoice/Receipt aggregation (future) | future `apps.finance.Invoice` or a separate billing app (Q5) |
 | Bank/payment-gateway processing | future payment-gateway connector (Q8) |
 | Payroll / staff salary | future `apps.hr` / payroll |
 
 ### Boundary justification
 
-- Placing `Wallet.balance` writes in the meal domain would couple meal to
-  the ledger and bypass audit. Hence balance mutation is finance-only.
+- Placing `Wallet.balance` writes in the meals domain would couple meals
+  to the ledger and bypass audit. Hence balance mutation is finance-only
+  (wallet mutations happen only through Finance services).
 - Placing discount rules on `WalletTransaction` would corrupt historical
   rows when rules change. Hence the breakdown lives on `Charge`.
-- A typed FK from `WalletTransaction` to `LunchServiceEvent` would create
-  `finance → meal` circular dependency. Hence generic `reference_type`/
-  `reference_id` + the reverse typed FK on the calling domain.
+- Placing meal product pricing (`MealPeriodPrice`,
+  `MealPersonPriceOverride`) in Finance would couple Finance to
+  meal-product concepts and break the "Finance records money only"
+  invariant. Hence meal price resolution lives in `apps.meals`.
+- A typed FK from `WalletTransaction` to `MealServiceEvent` would create
+  `finance → meals` circular dependency. Hence generic `reference_type`/
+  `reference_id` + the reverse typed FK on the meals domain.
 
 ---
 
@@ -896,10 +1008,11 @@ they exist.
 | Automated reconciliation cron | Implement `recompute_balance` service; auto-run is deferred (Q9). |
 | Multi-currency support | Single currency (IQD) for now; multi-currency is a future expansion. |
 | Payroll / staff salary | Out of scope; future HR/payroll module. |
-| The `apps.discounts` domain (DiscountProfile/DiscountRule/DiscountAssignment) | Deferred until after Finance + Lunch foundation unless a requirement forces it earlier. Finance charges with `discount_iqd=0` until then. |
+| The `apps.discounts` domain (DiscountProfile/DiscountRule/DiscountAssignment) | Deferred until after Finance + Meals foundation unless a requirement forces it earlier. **Meals** calls it for meal pricing; Finance does not call it on the meal code path. Meals resolves with `discount_iqd=0` until then. |
 | Removing legacy `Wallet`/`WalletTransaction` | Keep through dual-FK migration; remove only after verification. |
 | Removing legacy `DiscountProfile`/`DiscountRule` | Keep until `apps.discounts` is built and migration is verified. |
 | Typed FKs from `WalletTransaction` to calling-domain models | Forbidden by design (circular ownership); always use generic reference. |
+| Meal product pricing in `PriceList`/`PricingRule` | Forbidden by the decided architecture. Meal prices live in `apps.meals` (`MealPeriodPrice`, `MealPersonPriceOverride`, `MealPlan.default_price_iqd`). |
 
 ---
 
@@ -1003,13 +1116,25 @@ are **not** actions for this document.
 12. **Generic reference vs. typed FK with `null=True`.** The generic
     `reference_type`/`reference_id` avoids circular imports but loses
     referential integrity. Is a set of nullable typed FKs
-    (`lunch_service_event`, `tuition_invoice`, ...) preferable? Trade-off:
+    (`meal_service_event`, `tuition_invoice`, ...) preferable? Trade-off:
     integrity vs. coupling. Recommendation: generic reference; the calling
     domain holds the reverse typed FK.
 
 13. **AcademicYear on Charge.** Should `Charge.academic_year` be required
     or nullable? Recommendation: nullable until academics is rolled out,
     then recommended for year-scoped reporting.
+
+14. **Discount caller for non-meal ERP billing (revised).** Under the
+    decided architecture, Meals calls `apps.discounts` for meal pricing
+    and Finance records the pre-resolved amount. For future **non-meal**
+    ERP billing modules (tuition, transport, etc.) that do not perform
+    their own discount resolution, who calls `apps.discounts`? Options:
+    (a) each non-meal module calls `apps.discounts` itself (consistent
+    with Meals); (b) Finance exposes a `resolve_pricing` helper for
+    non-meal modules that calls `apps.discounts`. Recommendation: (a)
+    for consistency — each billing module resolves its own discounts and
+    passes a pre-resolved amount to `finance.charge`. Defer the final
+    call until a non-meal billing module is implemented.
 
 ---
 
@@ -1027,10 +1152,10 @@ nothing.
 | 4 | `services.charge` / `refund` / `top_up` / `adjust` / `check_balance` + `selectors.balance_for` / `transaction_history` + validators | steps 2–3 | The service boundary other domains call. |
 | 5 | `Charge`, `Payment`, `Refund`, `Adjustment` models + admin | step 4 | Billing/money records referencing transactions. |
 | 6 | `PriceList` / `PricingRule` (placeholder) + `resolve_pricing` | step 5 | Generalized list-price source. |
-| 7 | Lunch integration: meal calls `finance.charge` / `check_balance` / `refund` (replace dry-run); `discount_iqd=0` until `apps.discounts` exists | step 4, `apps.meal` | Live lunch billing without discounts. |
+| 7 | Meals integration: meals calls `finance.charge` (with pre-resolved `amount_iqd`) / `check_balance` / `refund` (replace dry-run); `discount_iqd=0` until `apps.discounts` exists | step 4, `apps.meals` | Live meal billing without discounts. Finance records pre-resolved charges; Meals owns price resolution. |
 | 8 | Wallet lifecycle services (`suspend`, `reactivate`, `close`) + `recompute_balance` reconciliation | step 4 | Wallet state machine + audit. |
-| 9 | (Later phase) `apps.discounts` domain: `DiscountProfile` / `DiscountRule` / `DiscountAssignment` migrated from `apps.attendance` + `discounts.resolve(...)` service boundary | Finance + Lunch foundations verified | Discount resolution; finance.charge calls it. |
-| 10 | Finance ↔ discounts integration: `charge()` calls `discounts.resolve(...)`, snapshots `discount_iqd` on `Charge` | step 9 | Live discounts in billing. |
+| 9 | (Later phase) `apps.discounts` domain: `DiscountProfile` / `DiscountRule` / `DiscountAssignment` migrated from `apps.attendance` + `discounts.resolve(...)` service boundary | Finance + Meals foundations verified | Discount resolution. **Meals** calls it for meal pricing; Finance does not call it on the meal code path. |
+| 10 | Meals ↔ discounts integration: Meals' `resolve_price` calls `discounts.resolve(...)`, snapshots `discount_iqd` on `MealServiceEvent`, passes pre-resolved `final_charge_iqd` to `finance.charge` | step 9 | Live discounts in meal billing. (Finance's `Charge` snapshots `discount_iqd` only when Meals supplies it.) |
 | 11 | (Later phase) `Invoice`/`Receipt` aggregation | step 5 | Multi-charge billing periods (Q5). |
 | 12 | (Later phase) Payment-gateway connector | step 5 | Online card/bank payments (Q8). |
 | 13 | (Later phase) Legacy `Wallet`/`WalletTransaction` removal | steps 2–8 verified | Drop legacy wallet tables. |
@@ -1040,16 +1165,20 @@ nothing.
 
 - `Wallet` (step 2) and `WalletTransaction` (step 3) precede the service
   boundary (step 4) because the services operate on them.
-- The service boundary (step 4) is the unblocker for lunch integration
+- The service boundary (step 4) is the unblocker for meals integration
   (step 7); it can happen before `Charge`/`Payment`/`Refund`/`Adjustment`
   (step 5) by operating on raw transactions, but step 5 is recommended
   first for clean audit records.
-- Lunch billing (step 7) ships **without** discounts (`discount_iqd=0`);
-  the `apps.discounts` domain (step 9) is built only after the Finance +
-  Lunch foundation is verified, per the deferral rule in Section 8.1.
-- Finance↔discounts integration (step 10) is the point at which
-  `charge()` begins calling `discounts.resolve(...)`; until then, the
-  discount call is a no-op.
+- Meal billing (step 7) ships **without** discounts (`discount_iqd=0`);
+  Meals resolves the price itself and passes a pre-resolved `amount_iqd`
+  to `finance.charge`. The `apps.discounts` domain (step 9) is built only
+  after the Finance + Meals foundation is verified, per the deferral rule
+  in Section 8.1.
+- Meals↔discounts integration (step 10) is the point at which Meals'
+  `resolve_price` begins calling `discounts.resolve(...)` and passing
+  the pre-resolved `final_charge_iqd` to `finance.charge`; until then,
+  the discount call is a no-op in Meals. Finance never calls
+  `discounts.resolve(...)` on the meal code path.
 - Legacy removal (steps 13–14) is last and conditional on full
   verification; wallet legacy and discount legacy are removed
   independently.
@@ -1082,9 +1211,9 @@ nothing.
 - **Person-staffed actions:** `created_by`/`created_by_staff`/
   `approved_by` identify the human behind each balance change, supporting
   segregation-of-duties audits.
-- **Snapshot on caller:** the calling domain (e.g. meal) stores an
+- **Snapshot on caller:** the calling domain (e.g. meals) stores an
   immutable financial snapshot (price/discount/charge/balance) on its own
-  historical record, so lunch-service audit and wallet-ledger audit are
+  historical record, so meal-service audit and wallet-ledger audit are
   independently verifiable and cross-referenceable via
   `WalletTransaction.reference_id`.
 
@@ -1179,8 +1308,9 @@ historical truth of that moment.
 |---|---|---|
 | Wallet balance (cached) | `apps.finance` (Wallet) | Fast reads; reconciled against ledger. |
 | Transaction rows (authoritative) | `apps.finance` (WalletTransaction) | Immutable ledger; source of truth. |
-| Price/discount/charge breakdown | `apps.finance` (Charge) | Immutable billing record per product instance. |
-| Lunch service financial snapshot | `apps.meal` (LunchServiceEvent) | Immutable historical truth of the meal service; cross-references `WalletTransaction` via FK. |
+| Price/discount/charge breakdown | `apps.finance` (Charge) | Immutable billing record per product instance. For meal products, Meals computes the breakdown and passes a pre-resolved `amount_iqd`; Finance snapshots it on `Charge` only when the caller supplies it. |
+| Meal service financial snapshot | `apps.meals` (`MealServiceEvent`) | Immutable historical truth of the meal service; cross-references `WalletTransaction` via reverse typed FK. Owned by Meals, not Finance. |
+| Meal product pricing (`MealPeriodPrice`, `MealPersonPriceOverride`, `MealPlan.default_price_iqd`) | `apps.meals` | Meals owns meal price resolution. Finance does not own meal prices. |
 | Grade/section at charge time | `apps.academics` (read) / snapshot on `Charge` if needed | Finance does not own academic data. |
 | Person identity (name/code) | `apps.identity` (Person) | Finance reads via `wallet.person.full_name`. |
 
@@ -1195,19 +1325,23 @@ the owning rows.
 ```
 docs/development/PROJECT_ARCHITECTURE.md            (standards)
 docs/development/AI_DEVELOPMENT_GUIDE.md            (AI workflow)
+docs/development/DOMAIN_INTEGRATION_GUIDE.md       (cross-app integration rules)
 docs/architecture/person_identity_architecture.md   (identity foundation — implemented)
 docs/architecture/erp_foundation_architecture.md    (top-level ERP blueprint)
 docs/architecture/education_domain_architecture.md  (education domain — broad)
 docs/architecture/academics_domain_architecture.md  (academics domain — enrollment/section)
-docs/architecture/lunch_domain_architecture.md      (lunch domain — subscriptions/eligibility)
+docs/architecture/meals_domain_architecture.md      (meals domain — AUTHORITATIVE for meals: app `apps.meals`, `MealPlan`, price resolution, resolver flow)
+docs/architecture/lunch_domain_architecture.md      (legacy/transitional lunch design — superseded by meals_domain_architecture.md for the future meals app)
 docs/architecture/finance_domain_architecture.md    (THIS document — finance/wallet/ledger)
 ```
 
 This document is consistent with all of the above. Where they describe
 implemented models, this document references them; where they describe
 future models, this document narrows the finance subset and adds ledger,
-wallet-lifecycle, lunch/discount integration, ERP-billing, audit, and
-open-question detail specific to the finance domain.
+wallet-lifecycle, meals/discount integration, ERP-billing, audit, and
+open-question detail specific to the finance domain. The meals domain
+pricing placement is governed by `meals_domain_architecture.md`, which
+is authoritative where this document and it might otherwise disagree.
 
 ---
 
