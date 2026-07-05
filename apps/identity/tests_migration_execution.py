@@ -392,3 +392,202 @@ class NoAttendanceMutationTests(MigrationExecutionBaseData):
         before = LegacyStudent.objects.count()
         migrate_student(self.student)
         self.assertEqual(LegacyStudent.objects.count(), before)
+
+
+# ===========================================================================
+# Bulk migration — migrate_all_students()
+# ===========================================================================
+
+from apps.identity.migration_execution import (
+    BulkMigrationError,
+    BulkMigrationResult,
+    migrate_all_students,
+)
+
+
+class BulkMigrationBaseData(TestCase):
+    def setUp(self):
+        self.students = []
+        for i in range(5):
+            s = LegacyStudent.objects.create(
+                h_code=f"H-BLK{i:02d}",
+                first_name=f"Student{i}",
+                last_name="Bulk",
+                gender="MALE" if i % 2 == 0 else "FEMALE",
+                grade=f"G{i}",
+                has_meal=(i % 2 == 0),
+                has_bus=False,
+                is_active=True,
+            )
+            self.students.append(s)
+        # One blocked student (missing first_name + last_name).
+        self.blocked = LegacyStudent.objects.create(
+            h_code="H-BLK99",
+            first_name="",
+            last_name="",
+        )
+
+
+class BulkAllSuccessfulTests(BulkMigrationBaseData):
+    def test_all_migrated(self):
+        result = migrate_all_students()
+        self.assertIsInstance(result, BulkMigrationResult)
+        self.assertEqual(result.total_students, 6)  # 5 ready + 1 blocked
+        self.assertEqual(result.migrated, 5)
+        self.assertEqual(result.already_migrated, 0)
+        self.assertEqual(result.failed, 1)  # blocked student
+        self.assertEqual(result.blocked, 0)
+        self.assertEqual(len(result.results), 5)
+        self.assertEqual(len(result.errors), 1)
+
+    def test_summary_counts_correct(self):
+        result = migrate_all_students()
+        # total = migrated + already_migrated + failed
+        self.assertEqual(
+            result.total_students,
+            result.migrated + result.already_migrated + result.failed,
+        )
+
+    def test_error_has_blocked_student(self):
+        result = migrate_all_students()
+        err = result.errors[0]
+        self.assertIsInstance(err, BulkMigrationError)
+        self.assertEqual(err.h_code, "H-BLK99")
+        self.assertIn("first_name", err.error)
+
+
+class BulkAlreadyMigratedTests(BulkMigrationBaseData):
+    def test_already_migrated_counted(self):
+        # Pre-migrate 2 students.
+        migrate_student(self.students[0])
+        migrate_student(self.students[1])
+
+        result = migrate_all_students()
+        self.assertEqual(result.migrated, 3)  # 5 - 2 already done
+        self.assertEqual(result.already_migrated, 2)
+        self.assertEqual(result.failed, 1)  # blocked
+
+    def test_idempotent_repeated_run(self):
+        migrate_all_students()
+        result = migrate_all_students()
+        self.assertEqual(result.migrated, 0)
+        self.assertEqual(result.already_migrated, 5)
+        self.assertEqual(result.failed, 1)  # blocked still fails
+
+
+class BulkDuplicateDetectionTests(BulkMigrationBaseData):
+    def test_duplicate_person_code_blocks_batch(self):
+        # Create a Person with the same code as a student but not linked.
+        create_person(code="H-BLK00", first_name="Conflict", last_name="Person")
+
+        with self.assertRaises(ValidationError) as ctx:
+            migrate_all_students()
+
+        self.assertIn("duplicate", str(ctx.exception).lower())
+        # No students migrated.
+        from apps.identity.migration_planning import is_migrated
+        self.assertFalse(is_migrated(self.students[0]))
+
+    def test_duplicate_profile_code_blocks_batch(self):
+        # Create a StudentProfile with a conflicting code.
+        person = create_person(code="P-CONFLICT", first_name="C", last_name="P")
+        create_student_profile(
+            person=person, code="H-BLK00",
+        )
+
+        with self.assertRaises(ValidationError):
+            migrate_all_students()
+
+
+class BulkFailureContinuesTests(BulkMigrationBaseData):
+    def test_one_failed_student_continues_batch(self):
+        result = migrate_all_students()
+        # The blocked student failed, but the other 5 succeeded.
+        self.assertEqual(result.migrated, 5)
+        self.assertEqual(result.failed, 1)
+
+    def test_failed_student_not_migrated(self):
+        result = migrate_all_students()
+        from apps.identity.migration_planning import is_migrated
+        self.assertFalse(is_migrated(self.blocked))
+
+    def test_successful_students_migrated(self):
+        result = migrate_all_students()
+        from apps.identity.migration_planning import is_migrated
+        for s in self.students:
+            self.assertTrue(is_migrated(s), f"{s.h_code} should be migrated")
+
+
+class BulkLimitTests(BulkMigrationBaseData):
+    def test_limit_3(self):
+        result = migrate_all_students(limit=3)
+        self.assertEqual(result.total_students, 3)
+        self.assertEqual(result.migrated, 3)
+
+    def test_limit_0(self):
+        result = migrate_all_students(limit=0)
+        self.assertEqual(result.total_students, 0)
+        self.assertEqual(result.migrated, 0)
+
+    def test_limit_greater_than_total(self):
+        result = migrate_all_students(limit=100)
+        self.assertEqual(result.total_students, 6)
+        self.assertEqual(result.migrated, 5)
+
+
+class BulkCustomQuerysetTests(BulkMigrationBaseData):
+    def test_custom_queryset_filters(self):
+        # Only migrate students with has_meal=True (students 0, 2, 4).
+        qs = LegacyStudent.objects.filter(has_meal=True).order_by("h_code")
+        result = migrate_all_students(student_queryset=qs)
+        self.assertEqual(result.total_students, 3)
+        self.assertEqual(result.migrated, 3)
+
+    def test_custom_queryset_excludes_blocked(self):
+        # Exclude the blocked student.
+        qs = LegacyStudent.objects.exclude(h_code="H-BLK99").order_by("h_code")
+        result = migrate_all_students(student_queryset=qs)
+        self.assertEqual(result.total_students, 5)
+        self.assertEqual(result.migrated, 5)
+        self.assertEqual(result.failed, 0)
+
+
+class BulkTransactionIsolationTests(BulkMigrationBaseData):
+    def test_one_transaction_per_student(self):
+        """If student #2 fails, students #1 and #3 should still be
+        committed (each has its own transaction)."""
+        # Make student #2 fail by deleting RoleType before that
+        # specific call. We can't easily mock inside the loop, but
+        # we can verify that a blocked student doesn't prevent others.
+        result = migrate_all_students()
+        # The blocked student (H-BLK99) failed, but all 5 ready
+        # students were committed.
+        self.assertEqual(result.migrated, 5)
+        self.assertEqual(result.failed, 1)
+
+        # Verify the first and last students are persisted.
+        from apps.identity.migration_planning import is_migrated
+        self.assertTrue(is_migrated(self.students[0]))
+        self.assertTrue(is_migrated(self.students[4]))
+
+
+class BulkNoAttendanceMutationTests(BulkMigrationBaseData):
+    def test_student_fields_unchanged(self):
+        before_h = self.students[0].h_code
+        before_first = self.students[0].first_name
+
+        migrate_all_students()
+
+        self.students[0].refresh_from_db()
+        self.assertEqual(self.students[0].h_code, before_h)
+        self.assertEqual(self.students[0].first_name, before_first)
+
+    def test_student_count_unchanged(self):
+        before = LegacyStudent.objects.count()
+        migrate_all_students()
+        self.assertEqual(LegacyStudent.objects.count(), before)
+
+    def test_no_students_deleted(self):
+        migrate_all_students()
+        for s in self.students:
+            self.assertTrue(LegacyStudent.objects.filter(pk=s.pk).exists())

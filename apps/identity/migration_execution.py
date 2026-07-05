@@ -1,63 +1,69 @@
-"""Identity migration execution — single-student migration.
+"""Identity migration execution — single-student and bulk migration.
 
-This module implements the **write** path for migrating one legacy
-``attendance.Student`` into the new identity domain
+This module implements the **write** path for migrating legacy
+``attendance.Student`` rows into the new identity domain
 (``Person`` + ``StudentProfile`` + ``PersonRole``). It is the
 execution counterpart to the read-only
 :mod:`apps.identity.migration_planning` module.
 
-**This module migrates ONE student at a time.** Bulk migration
-(iterating all students, one transaction per student) and the
-``execute_identity_migration`` management command are **not**
-implemented here — they are separate future milestones.
+Two layers:
+
+* :func:`migrate_student` — migrates ONE student inside one
+  ``@transaction.atomic`` block. Idempotent, retryable, reuses the
+  existing ``get_or_create_*`` service helpers.
+* :func:`migrate_all_students` — the **orchestration layer**.
+  Iterates all legacy Students, calls ``migrate_student`` per
+  student (one transaction per student), catches per-student
+  failures, and returns a :class:`BulkMigrationResult` summary.
 
 Design goals:
 
 * **One transaction per student.** ``migrate_student`` is wrapped in
-  ``@transaction.atomic``. If any of the three creates (Person,
-  StudentProfile, PersonRole) fails, all three roll back.
-* **Idempotent.** If the student is already migrated
-  (``StudentProfile.legacy_student`` exists), the function returns
-  the existing Person / StudentProfile / PersonRole without creating
-  duplicates. If a previous run partially completed (e.g. Person was
-  created but StudentProfile was not), the function resumes safely
-  via the ``get_or_create_*`` helpers.
-* **Service reuse.** Calls
+  ``@transaction.atomic``. The bulk migrator does NOT wrap the whole
+  batch in one transaction — partial progress is preserved.
+* **Idempotent.** Both layers are safe to re-run. ``migrate_student``
+  skips already-migrated students; ``migrate_all_students`` produces
+  the same result on repeated calls.
+* **Service reuse.** ``migrate_student`` calls
   :func:`~apps.identity.services.get_or_create_person_by_code`,
   :func:`~apps.identity.services.get_or_create_student_profile`, and
-  :func:`~apps.identity.services.get_or_create_role`. No creation
-  logic is duplicated.
+  :func:`~apps.identity.services.get_or_create_role`. The bulk
+  migrator calls ``migrate_student`` — no execution logic is
+  duplicated.
 * **RoleType prerequisite.** Requires ``RoleType(code="student")`` to
-  exist (seeded by the ``0002_seed_roletypes`` data migration). Does
-  NOT create RoleType rows — that's the seed migration's job. Raises
-  ``ValidationError`` if the RoleType is missing.
+  exist (seeded by the ``0002_seed_roletypes`` data migration).
 * **No legacy mutation.** Never writes to ``attendance.Student``.
-* **Planning reuse.** Uses :func:`~apps.identity.migration_planning.validate_migration_data`
-  and :func:`~apps.identity.migration_planning.is_migrated` from the
-  planning module.
+* **Planning reuse.** Uses :func:`~apps.identity.migration_planning.validate_migration_data`,
+  :func:`~apps.identity.migration_planning.is_migrated`,
+  :func:`~apps.identity.migration_planning.detect_duplicate_person_codes`,
+  and :func:`~apps.identity.migration_planning.detect_duplicate_student_profile_codes`.
 
 Usage::
 
-    from apps.identity.migration_execution import migrate_student
+    from apps.identity.migration_execution import migrate_all_students
 
-    result = migrate_student(legacy_student)
-    if result.already_migrated:
-        print(f"{legacy_student.h_code} already migrated")
-    else:
-        print(f"Created: person={result.created_person}, "
-              f"profile={result.created_profile}, role={result.created_role}")
+    result = migrate_all_students()
+    print(f"Total: {result.total_students}")
+    print(f"Migrated: {result.migrated}")
+    print(f"Already migrated: {result.already_migrated}")
+    print(f"Failed: {result.failed}")
+    for err in result.errors:
+        print(f"  FAILED {err.h_code}: {err.error}")
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
+from django.apps import apps as django_apps
 from django.core.exceptions import ValidationError
 from django.db import transaction
 
 from .migration_planning import (
     _normalize_gender,
+    detect_duplicate_person_codes,
+    detect_duplicate_student_profile_codes,
     is_migrated,
     validate_migration_data,
 )
@@ -280,4 +286,191 @@ def _build_already_migrated_result(student) -> MigrationExecutionResult:
         created_profile=False,
         created_role=created_role,
         already_migrated=True,
+    )
+
+
+# ===========================================================================
+# Bulk migration — orchestration layer
+# ===========================================================================
+
+
+@dataclass(frozen=True)
+class BulkMigrationError:
+    """Error record for a single student that failed during bulk
+    migration."""
+
+    student_id: int
+    h_code: str
+    error: str
+
+
+@dataclass(frozen=True)
+class BulkMigrationResult:
+    """Immutable summary of a bulk migration run.
+
+    Returned by :func:`migrate_all_students`. Carries per-student
+    results (successful + already-migrated) and per-student errors
+    (failures that did not abort the batch).
+    """
+
+    total_students: int
+    migrated: int
+    already_migrated: int
+    blocked: int
+    failed: int
+    results: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
+
+
+def migrate_all_students(
+    *,
+    limit: Optional[int] = None,
+    student_queryset=None,
+) -> BulkMigrationResult:
+    """Migrate all legacy ``attendance.Student`` rows into the identity
+    domain.
+
+    **Orchestration responsibilities** (this function does NOT
+    duplicate per-student logic — it calls :func:`migrate_student`):
+
+    1. **Pre-flight duplicate detection.** Calls
+       :func:`~apps.identity.migration_planning.detect_duplicate_person_codes`
+       and
+       :func:`~apps.identity.migration_planning.detect_duplicate_student_profile_codes`.
+       If any duplicates are found, raises ``ValidationError`` listing
+       the conflicting codes. **No students are migrated** if
+       duplicates exist.
+
+    2. **Pre-flight RoleType check.** Resolves
+       ``RoleType(code="student")`` once. Raises ``ValidationError``
+       if missing. (``migrate_student`` also resolves it per-student,
+       but this early check fails fast before any writes.)
+
+    3. **Iterate students.** Builds the queryset (or uses the
+       supplied ``student_queryset``), applies ``limit`` if given,
+       and calls ``migrate_student(student)`` for each.
+
+    4. **One transaction per student.** ``migrate_student`` is
+       ``@transaction.atomic`` — each student is its own transaction.
+       The bulk migrator does **NOT** wrap the whole batch in one
+       transaction. If student #50 fails, students #1–49 are
+       committed and students #51+ are still attempted.
+
+    5. **Catch per-student failures.** If ``migrate_student`` raises,
+       the error is recorded in :attr:`BulkMigrationResult.errors`
+       and the batch continues. The student remains unmigrated.
+
+    6. **Return summary.** :class:`BulkMigrationResult` with counts
+       (``migrated`` / ``already_migrated`` / ``failed``) and the
+       per-student results/errors.
+
+    **Retry behavior:** the function is idempotent. Calling it again
+    after a partial failure will:
+
+    * Skip already-migrated students (``already_migrated`` count
+      increases).
+    * Retry previously-failed students (if the underlying issue is
+      fixed, they succeed; otherwise they fail again).
+    * Not create duplicates (``get_or_create_*`` helpers).
+
+    :param limit: Optional maximum number of students to process.
+        ``None`` means no limit (process all).
+    :param student_queryset: Optional pre-filtered queryset of
+        ``attendance.Student`` rows. If ``None``, all students are
+        used (``Student.objects.all().order_by("h_code")``).
+    :returns: :class:`BulkMigrationResult`.
+    :raises ValidationError: if duplicate Person/StudentProfile codes
+        are detected or RoleType is missing.
+    """
+
+    # ---------------------------------------------------------------
+    # 1. Pre-flight: duplicate detection.
+    # ---------------------------------------------------------------
+    dup_persons = detect_duplicate_person_codes()
+    dup_profiles = detect_duplicate_student_profile_codes()
+
+    if dup_persons or dup_profiles:
+        parts = []
+        if dup_persons:
+            parts.append(
+                f"Duplicate Person codes: {', '.join(dup_persons)}"
+            )
+        if dup_profiles:
+            parts.append(
+                f"Duplicate StudentProfile codes: {', '.join(dup_profiles)}"
+            )
+        raise ValidationError(
+            "Bulk migration aborted — duplicate codes detected. "
+            "Resolve conflicts before migrating. " + " | ".join(parts)
+        )
+
+    # ---------------------------------------------------------------
+    # 2. Pre-flight: RoleType check (resolve once, fail fast).
+    # ---------------------------------------------------------------
+    try:
+        RoleType.objects.get(code="student")
+    except RoleType.DoesNotExist:
+        raise ValidationError(
+            "RoleType with code='student' not found. "
+            "Run the 0002_seed_roletypes migration first."
+        )
+
+    # ---------------------------------------------------------------
+    # 3. Build the queryset.
+    # ---------------------------------------------------------------
+    Student = django_apps.get_model("attendance", "Student")
+
+    if student_queryset is not None:
+        qs = student_queryset
+    else:
+        qs = Student.objects.all().order_by("h_code")
+
+    if limit is not None:
+        qs = qs[:limit]
+
+    # ---------------------------------------------------------------
+    # 4. Iterate — one transaction per student (migrate_student
+    #    has its own @transaction.atomic).
+    # ---------------------------------------------------------------
+    results: list[MigrationExecutionResult] = []
+    errors: list[BulkMigrationError] = []
+    migrated = 0
+    already_migrated = 0
+    failed = 0
+    total = 0
+
+    for student in qs:
+        total += 1
+        try:
+            result = migrate_student(student)
+            results.append(result)
+            if result.already_migrated:
+                already_migrated += 1
+            else:
+                migrated += 1
+        except Exception as exc:
+            # Record the failure and continue. The student's
+            # transaction has already rolled back (migrate_student's
+            # @transaction.atomic). The batch continues.
+            failed += 1
+            h_code = (getattr(student, "h_code", None) or "").strip()
+            errors.append(
+                BulkMigrationError(
+                    student_id=student.pk,
+                    h_code=h_code,
+                    error=str(exc),
+                )
+            )
+
+    # ---------------------------------------------------------------
+    # 5. Return the immutable summary.
+    # ---------------------------------------------------------------
+    return BulkMigrationResult(
+        total_students=total,
+        migrated=migrated,
+        already_migrated=already_migrated,
+        blocked=0,  # blocked students are counted as failed (they raised)
+        failed=failed,
+        results=results,
+        errors=errors,
     )
