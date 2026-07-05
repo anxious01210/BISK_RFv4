@@ -19,7 +19,8 @@ from django.db.models import OuterRef, Subquery, Value
 from django.utils import timezone
 from django.db import models
 from django.db.models import Count
-from apps.attendance.models import PeriodOccurrence, AttendanceRecord, AttendanceEvent, Student
+from apps.attendance.models import PeriodOccurrence, AttendanceRecord, AttendanceEvent
+from apps.identity.models import StudentProfile
 
 
 @staff_member_required
@@ -360,7 +361,7 @@ def system_panel_partial(request):
               .annotate(n=Count("student_id", distinct=True)))
     present_by_period = {row["period_id"]: row["n"] for row in counts}
 
-    total_students = Student.objects.filter(is_active=True).count()
+    total_students = StudentProfile.objects.filter(person__is_active=True).count()
 
     # >>> configurable recent size from GET (?recent=)
     try:
