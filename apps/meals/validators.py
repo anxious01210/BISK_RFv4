@@ -260,3 +260,122 @@ def validate_eligibility_unique_for_person_date(
             _("An eligibility row for person %(person)s on %(date)s already exists.")
             % {"person": person, "date": date}
         )
+
+
+# ===========================================================================
+# Phase 3A — Service event validators
+# ===========================================================================
+
+
+def validate_service_event_role(*, student, staff) -> None:
+    """Exactly one of ``student`` / ``staff`` is set for non-guest
+    service events (§17). A guest event has neither set.
+
+    Same rule as :func:`validate_subscription_role` but named for the
+    service-event context so call sites read clearly.
+    """
+    if student is not None and staff is not None:
+        raise ValidationError(
+            _("A service event cannot reference both student and staff profiles.")
+        )
+
+
+def validate_service_event_snapshot_immutable(
+    *, instance, updating_fields=None
+) -> None:
+    """A persisted ``MealServiceEvent`` in a terminal status must not
+    have its snapshot fields mutated.
+
+    Called from ``MealServiceEvent.clean()`` and from the future
+    Phase 3B workflow services. The rule (§12): once ``status`` reaches
+    a terminal state (CONFIRMED / DENIED / UNPAID / REFUNDED /
+    VOIDED), the price / discount / charge / balance / academic /
+    wallet-transaction-FK fields are immutable. Corrections create a
+    *new* event (e.g. REFUNDED / VOIDED) referencing the original
+    rather than mutating the confirmed row.
+
+    ``instance`` must be a ``MealServiceEvent``. If it has a PK and is
+    in a terminal status, the validator loads the persisted row from
+    the database and compares each immutable snapshot field. If any
+    snapshot field has been changed in-memory on ``instance``, a
+    ``ValidationError`` is raised listing the mutated fields.
+
+    ``updating_fields`` (optional) is the set of field names being
+    updated by a ``save(update_fields=...)`` call. If supplied, only
+    those fields are checked; this lets the workflow services update
+    ``status`` / ``reason_*`` / ``reversed_*`` / ``wallet_refund_transaction``
+    on a terminal event (the refund flow) without tripping the
+    immutability guard on the *original* charge snapshot. The
+    ``wallet_refund_transaction`` field is intentionally mutable on a
+    CONFIRMED event (the refund flow sets it); it is immutable on a
+    REFUNDED event.
+    """
+    from .models import (
+        SERVICE_EVENT_IMMUTABLE_SNAPSHOT_FIELDS,
+        TERMINAL_SERVICE_EVENT_STATUSES,
+        MealServiceEvent,
+    )
+
+    if not isinstance(instance, MealServiceEvent):
+        raise TypeError("instance must be a MealServiceEvent.")
+
+    # Only enforced on persisted instances in a terminal status.
+    if not instance.pk:
+        return
+    if instance.status not in TERMINAL_SERVICE_EVENT_STATUSES:
+        return
+
+    # ``wallet_refund_transaction`` is set by the refund flow on a
+    # CONFIRMED → REFUNDED transition; treat it as mutable on a
+    # CONFIRMED event (the workflow will transition to REFUNDED in the
+    # same transaction). On a REFUNDED event it is fully frozen.
+    mutable_on_confirmed = set()
+    if instance.status == "confirmed":
+        mutable_on_confirmed = {"wallet_refund_transaction"}
+
+    try:
+        persisted = MealServiceEvent.objects.get(pk=instance.pk)
+    except MealServiceEvent.DoesNotExist:
+        return  # Nothing to compare against; let the save proceed.
+
+    # Determine which fields to check.
+    if updating_fields is not None:
+        check_fields = set(updating_fields) & SERVICE_EVENT_IMMUTABLE_SNAPSHOT_FIELDS
+    else:
+        check_fields = set(SERVICE_EVENT_IMMUTABLE_SNAPSHOT_FIELDS)
+
+    check_fields -= mutable_on_confirmed
+
+    mutated = []
+    for field_name in sorted(check_fields):
+        old = getattr(persisted, field_name, None)
+        new = getattr(instance, field_name, None)
+        if old != new:
+            mutated.append(field_name)
+
+    if mutated:
+        raise ValidationError(
+            {
+                "status": _(
+                    "Service event is in terminal status '%(status)s'; the "
+                    "following snapshot fields are immutable and may not be "
+                    "mutated: %(fields)s. Create a new corrective event "
+                    "(e.g. REFUNDED / VOIDED) instead."
+                    % {
+                        "status": instance.status,
+                        "fields": ", ".join(mutated),
+                    }
+                )
+            }
+        )
+
+
+def validate_supervisor_action_target(*, service_event=None, eligibility=None) -> None:
+    """A ``MealSupervisorAction`` must target exactly one of
+    ``service_event`` / ``eligibility`` (or neither for a manual
+    lookup). At most one is set; both set is ambiguous and rejected.
+    """
+    if service_event is not None and eligibility is not None:
+        raise ValidationError(
+            _("A supervisor action cannot target both a service event and an eligibility row.")
+        )

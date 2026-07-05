@@ -7,7 +7,9 @@ from .models import (
     MealPeriodPrice,
     MealPersonPriceOverride,
     MealPlan,
+    MealServiceEvent,
     MealSubscription,
+    MealSupervisorAction,
 )
 
 
@@ -315,3 +317,192 @@ class MealEligibilityAdmin(admin.ModelAdmin):
         ("Reason", {"fields": ("reason_code", "reason_notes")}),
         ("Audit", {"fields": ("resolved_by", "resolved_at")}),
     )
+
+
+# ===========================================================================
+# Phase 3A — Service event / supervisor action admin
+# ===========================================================================
+
+
+@admin.register(MealServiceEvent)
+class MealServiceEventAdmin(admin.ModelAdmin):
+    list_display = (
+        "person",
+        "date",
+        "status",
+        "meal_plan",
+        "meal_period",
+        "final_charge_iqd",
+        "served_at",
+    )
+    list_display_links = ("person", "date")
+    list_filter = (
+        "status",
+        "date",
+        "meal_plan",
+        "meal_period",
+    )
+    search_fields = (
+        "person__code",
+        "person__first_name",
+        "person__last_name",
+        "student__code",
+        "staff__code",
+        "section_code_snapshot",
+        "grade_code_snapshot",
+        "reason_code",
+        "reason_notes",
+        "price_resolution_source",
+    )
+    ordering = ("-date", "-id")
+    date_hierarchy = "date"
+    readonly_fields = (
+        "created_at",
+        "updated_at",
+        "performed_actions",
+    )
+    autocomplete_fields = (
+        "person",
+        "student",
+        "staff",
+        "eligibility",
+        "subscription",
+        "meal_plan",
+        "meal_period",
+        "served_by",
+        "reversed_by",
+    )
+    fieldsets = (
+        ("Owner", {"fields": ("person", "student", "staff", "date")}),
+        (
+            "Links",
+            {
+                "fields": (
+                    "eligibility",
+                    "subscription",
+                    "meal_plan",
+                    "meal_period",
+                )
+            },
+        ),
+        ("State", {"fields": ("status",)}),
+        (
+            "Price snapshot",
+            {
+                "fields": (
+                    "price_base_iqd",
+                    "price_override_iqd",
+                    "discount_iqd",
+                    "final_charge_iqd",
+                    "price_resolution_source",
+                ),
+            },
+        ),
+        (
+            "Financial snapshot",
+            {
+                "fields": (
+                    "wallet_balance_before_iqd",
+                    "wallet_balance_after_iqd",
+                    "wallet_transaction",
+                    "wallet_refund_transaction",
+                ),
+            },
+        ),
+        (
+            "Academic snapshot",
+            {
+                "fields": (
+                    "grade_code_snapshot",
+                    "section_code_snapshot",
+                    "meal_period_label_snapshot",
+                ),
+                "classes": ("collapse",),
+            },
+        ),
+        ("Reason", {"fields": ("reason_code", "reason_notes")}),
+        (
+            "Service / reversal",
+            {
+                "fields": ("served_at", "served_by", "reversed_at", "reversed_by"),
+                "classes": ("collapse",),
+            },
+        ),
+        (
+            "Audit",
+            {
+                "fields": ("performed_actions", "created_at", "updated_at"),
+                "classes": ("collapse",),
+            },
+        ),
+    )
+
+    @admin.display(description="Supervisor actions")
+    def performed_actions(self, obj):
+        if obj is None or not obj.pk:
+            return "—"
+        actions = obj.supervisor_actions.all()
+        if not actions:
+            return "—"
+        return ", ".join(
+            f"{a.get_action_display()} @ {a.performed_at:%Y-%m-%d %H:%M}"
+            for a in actions
+        )
+
+    def has_delete_permission(self, request, obj=None):
+        # Service events in terminal statuses should not be deleted
+        # (they are immutable historical records). PENDING events may
+        # be deleted by an admin if needed.
+        if obj is None:
+            return True
+        from .models import TERMINAL_SERVICE_EVENT_STATUSES
+        return obj.status not in TERMINAL_SERVICE_EVENT_STATUSES
+
+
+@admin.register(MealSupervisorAction)
+class MealSupervisorActionAdmin(admin.ModelAdmin):
+    list_display = (
+        "action",
+        "service_event",
+        "eligibility",
+        "performed_by",
+        "performed_by_user",
+        "performed_at",
+    )
+    list_display_links = ("action",)
+    list_filter = ("action", "performed_at")
+    search_fields = (
+        "reason_code",
+        "reason_notes",
+        "performed_by__code",
+        "performed_by__person__first_name",
+        "performed_by__person__last_name",
+    )
+    ordering = ("-performed_at", "-id")
+    date_hierarchy = "performed_at"
+    readonly_fields = ("performed_at",)
+    autocomplete_fields = (
+        "service_event",
+        "eligibility",
+        "performed_by",
+        "performed_by_user",
+    )
+    fieldsets = (
+        ("Target", {"fields": ("service_event", "eligibility")}),
+        ("Action", {"fields": ("action", "reason_code", "reason_notes")}),
+        (
+            "Performer",
+            {
+                "fields": ("performed_by", "performed_by_user"),
+            },
+        ),
+        ("Timestamp", {"fields": ("performed_at",), "classes": ("collapse",)}),
+    )
+
+    def has_change_permission(self, request, obj=None):
+        # Audit rows are append-only — never editable.
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        # Audit rows are append-only — never deletable.
+        return False

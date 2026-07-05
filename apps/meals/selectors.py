@@ -377,3 +377,172 @@ def list_eligibilities(
     if decision is not None:
         qs = qs.filter(decision=decision)
     return qs
+
+
+# ===========================================================================
+# Phase 3A — Service event / supervisor action selectors
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# MealServiceEvent
+# ---------------------------------------------------------------------------
+
+def list_service_events(
+    *,
+    person=None,
+    student=None,
+    staff=None,
+    date=None,
+    status=None,
+    meal_plan=None,
+    meal_period=None,
+    section_code_snapshot=None,
+) -> QuerySet:
+    """Read-only service-event query.
+
+    All filters optional. Ordered by ``(-date, -id)`` per the model
+    Meta.
+    """
+    from .models import MealServiceEvent
+
+    qs = MealServiceEvent.objects.select_related(
+        "person",
+        "student",
+        "staff",
+        "eligibility",
+        "subscription",
+        "meal_plan",
+        "meal_period",
+        "wallet_transaction",
+        "wallet_refund_transaction",
+        "served_by",
+        "reversed_by",
+    )
+    if person is not None:
+        qs = qs.filter(person=person)
+    if student is not None:
+        qs = qs.filter(student=student)
+    if staff is not None:
+        qs = qs.filter(staff=staff)
+    if date is not None:
+        qs = qs.filter(date=date)
+    if status is not None:
+        qs = qs.filter(status=status)
+    if meal_plan is not None:
+        qs = qs.filter(meal_plan=meal_plan)
+    if meal_period is not None:
+        qs = qs.filter(meal_period=meal_period)
+    if section_code_snapshot is not None:
+        qs = qs.filter(section_code_snapshot=section_code_snapshot)
+    return qs
+
+
+def service_events_for(*, person, date) -> QuerySet:
+    """All service events for ``(person, date)``."""
+    from .models import MealServiceEvent
+
+    return MealServiceEvent.objects.select_related(
+        "person",
+        "student",
+        "staff",
+        "eligibility",
+        "subscription",
+        "meal_plan",
+        "meal_period",
+        "wallet_transaction",
+        "wallet_refund_transaction",
+    ).filter(person=person, date=date)
+
+
+def service_events_for_section(*, section_code, date) -> QuerySet:
+    """Service events for a section (by snapshot code) on a date."""
+    from .models import MealServiceEvent
+
+    return MealServiceEvent.objects.select_related(
+        "person", "student", "meal_plan", "meal_period"
+    ).filter(section_code_snapshot=section_code, date=date)
+
+
+def get_service_event_by_id(service_event_id):
+    """Single service-event lookup or ``None``."""
+    from .models import MealServiceEvent
+
+    return (
+        MealServiceEvent.objects.select_related(
+            "person",
+            "student",
+            "staff",
+            "eligibility",
+            "subscription",
+            "meal_plan",
+            "meal_period",
+            "wallet_transaction",
+            "wallet_refund_transaction",
+            "served_by",
+            "reversed_by",
+        )
+        .filter(pk=service_event_id)
+        .first()
+    )
+
+
+def confirmed_meals_for(*, person, date) -> QuerySet:
+    """Same-day confirmed meals for a person — used by the future
+    same-day multi-meal discount context (§19.5)."""
+    from .models import MealServiceEvent
+
+    return MealServiceEvent.objects.filter(
+        person=person,
+        date=date,
+        status=MealServiceEvent.Status.CONFIRMED,
+    )
+
+
+# ---------------------------------------------------------------------------
+# MealSupervisorAction
+# ---------------------------------------------------------------------------
+
+def list_supervisor_actions(
+    *,
+    service_event=None,
+    eligibility=None,
+    action=None,
+    performed_by=None,
+) -> QuerySet:
+    """Read-only supervisor-action query."""
+    from .models import MealSupervisorAction
+
+    qs = MealSupervisorAction.objects.select_related(
+        "service_event",
+        "eligibility",
+        "performed_by",
+        "performed_by_user",
+    )
+    if service_event is not None:
+        qs = qs.filter(service_event=service_event)
+    if eligibility is not None:
+        qs = qs.filter(eligibility=eligibility)
+    if action is not None:
+        qs = qs.filter(action=action)
+    if performed_by is not None:
+        qs = qs.filter(performed_by=performed_by)
+    return qs
+
+
+def supervisor_actions_for_service_event(*, service_event) -> QuerySet:
+    """All supervisor actions for a service event, newest first."""
+    from .models import MealSupervisorAction
+
+    return MealSupervisorAction.objects.select_related(
+        "performed_by", "performed_by_user"
+    ).filter(service_event=service_event)
+
+
+def supervisor_actions_for_eligibility(*, eligibility) -> QuerySet:
+    """All supervisor actions for an eligibility row, newest first."""
+    from .models import MealSupervisorAction
+
+    return MealSupervisorAction.objects.select_related(
+        "performed_by", "performed_by_user"
+    ).filter(eligibility=eligibility)

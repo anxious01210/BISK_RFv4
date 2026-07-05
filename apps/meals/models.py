@@ -1,5 +1,6 @@
-"""Meals domain models — Phase 1 (pricing & period foundation)
-and Phase 2 (subscriptions, exceptions, eligibility).
+"""Meals domain models — Phase 1 (pricing & period foundation),
+Phase 2 (subscriptions, exceptions, eligibility), and Phase 3A
+(service event + supervisor action models).
 
 Phase 1 scope:
 * :class:`MealPeriod` — a meal-serving window (wraps a generic period
@@ -23,9 +24,22 @@ Phase 2 scope:
   for ``(person, date)``. Recalculable until a future
   ``MealServiceEvent`` references it, then frozen.
 
+Phase 3A scope:
+* :class:`MealServiceEvent` — the immutable record that a person was
+  actually served a meal on a date (migration target of legacy
+  ``attendance.MealRecord``). Carries the financial-snapshot fields
+  (price / discount / final charge / wallet balance before+after /
+  wallet transaction FKs) and academic-snapshot fields. Immutable
+  once ``status`` reaches a terminal state (CONFIRMED / DENIED /
+  UNPAID / REFUNDED / VOIDED).
+* :class:`MealSupervisorAction` — append-only audit trail of
+  supervisor operations against service events and eligibility rows.
+
 Out of scope (later phases):
-* ``MealServiceEvent``, ``MealSupervisorAction``, ``resolve_service``,
-  wallet charging, supervisor workflow, legacy migration, discounts.
+* ``resolve_service`` / ``confirm`` / ``deny`` / ``unconfirm`` /
+  ``refund`` / ``void`` services (Phase 3B), wallet charging /
+  ``finance.charge`` calls (Phase 3B), supervisor dashboard views,
+  legacy migration, discounts.
 """
 
 from django.conf import settings
@@ -621,3 +635,334 @@ class MealEligibility(models.Model):
 
     def __str__(self) -> str:
         return f"{self.person} on {self.date} → {self.decision}"
+
+
+# ===========================================================================
+# Phase 3A — Service event + supervisor action models
+# ===========================================================================
+
+
+# Statuses that mark a MealServiceEvent as "terminal" — once reached,
+# the snapshot fields (price / discount / charge / balance / academic /
+# wallet-transaction FKs) are immutable. Corrections create a new event
+# (e.g. REFUNDED / VOIDED) referencing the original rather than mutating
+# the confirmed row. See meals_domain_architecture.md §12 rules.
+TERMINAL_SERVICE_EVENT_STATUSES = frozenset(
+    {
+        "confirmed",
+        "denied",
+        "unpaid",
+        "refunded",
+        "voided",
+    }
+)
+
+# Snapshot fields that must not change once a MealServiceEvent reaches a
+# terminal status. Used by the immutability validator. ``status`` itself
+# is intentionally excluded — the workflow services transition status
+# (e.g. CONFIRMED → REFUNDED) while keeping the other snapshots frozen.
+SERVICE_EVENT_IMMUTABLE_SNAPSHOT_FIELDS = frozenset(
+    {
+        "price_base_iqd",
+        "price_override_iqd",
+        "discount_iqd",
+        "final_charge_iqd",
+        "price_resolution_source",
+        "wallet_balance_before_iqd",
+        "wallet_balance_after_iqd",
+        "wallet_transaction",
+        "wallet_refund_transaction",
+        "grade_code_snapshot",
+        "section_code_snapshot",
+        "meal_period_label_snapshot",
+        "meal_plan",
+        "meal_period",
+        "subscription",
+        "eligibility",
+        "person",
+        "student",
+        "staff",
+        "date",
+        "served_at",
+        "served_by",
+    }
+)
+
+
+class MealServiceEvent(models.Model):
+    """The immutable record that a person was actually served a meal on
+    a date.
+
+    Migration target for legacy ``attendance.MealRecord`` (freed from
+    its 1:1 coupling to ``AttendanceRecord``). This is the "meal
+    attendance" entity, and the canonical financial-snapshot record
+    for a meal charge. See ``meals_domain_architecture.md`` §12.
+
+    Once ``status`` reaches a terminal state (CONFIRMED / DENIED /
+    UNPAID / REFUNDED / VOIDED), the price, discount, charge, balance,
+    and academic snapshot fields are **immutable**. Corrections create
+    a new event (e.g. a REFUNDED / VOIDED event referencing the
+    original) rather than mutating the confirmed row. The immutability
+    is enforced by :func:`apps.meals.validators.validate_service_event_snapshot_immutable`
+    (called from ``clean()`` and from the future workflow services).
+
+    The ``wallet_transaction`` / ``wallet_refund_transaction`` FKs are
+    created by the **finance domain** (``apps.finance.services.charge``
+    / ``refund``); Meals only stores the resulting reference (§20).
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CONFIRMED = "confirmed", "Confirmed"
+        DENIED = "denied", "Denied"
+        UNPAID = "unpaid", "Unpaid"  # wallet mode, insufficient funds allowed
+        REFUNDED = "refunded", "Refunded"
+        VOIDED = "voided", "Voided"
+
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="meal_service_events",
+    )
+    student = models.ForeignKey(
+        "identity.StudentProfile",
+        on_delete=models.CASCADE,
+        related_name="meal_service_events",
+        null=True,
+        blank=True,
+    )
+    staff = models.ForeignKey(
+        "identity.StaffProfile",
+        on_delete=models.CASCADE,
+        related_name="meal_service_events",
+        null=True,
+        blank=True,
+    )
+    date = models.DateField(db_index=True)
+    eligibility = models.ForeignKey(
+        MealEligibility,
+        on_delete=models.PROTECT,
+        related_name="service_events",
+        null=True,
+        blank=True,
+    )
+    subscription = models.ForeignKey(
+        MealSubscription,
+        on_delete=models.SET_NULL,
+        related_name="service_events",
+        null=True,
+        blank=True,
+    )
+    meal_plan = models.ForeignKey(
+        MealPlan,
+        on_delete=models.SET_NULL,
+        related_name="service_events",
+        null=True,
+        blank=True,
+    )
+    meal_period = models.ForeignKey(
+        MealPeriod,
+        on_delete=models.SET_NULL,
+        related_name="service_events",
+        null=True,
+        blank=True,
+    )
+    # Optional link to the recognition event that triggered the service.
+    # Meals does not run recognition; it consumes the event as input (§6).
+    # During the migration window (until apps.attendance is Person-keyed),
+    # this FK may be null and the legacy attendance_record_id is stored in
+    # reason_notes for traceability (§21.3).
+    recognition_event = models.ForeignKey(
+        "attendance.AttendanceEvent",
+        on_delete=models.SET_NULL,
+        related_name="meal_service_events",
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+
+    # --- immutable price-resolution snapshot (justified: historical record) ---
+    price_base_iqd = models.IntegerField(default=0)
+    price_override_iqd = models.IntegerField(default=0)
+    discount_iqd = models.IntegerField(default=0)
+    final_charge_iqd = models.IntegerField(default=0)
+    price_resolution_source = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        help_text=(
+            "Which rule won: 'period_price' / 'person_override' / "
+            "'default' / 'date_range_no_charge'."
+        ),
+    )
+
+    # --- immutable financial snapshot ---
+    wallet_balance_before_iqd = models.IntegerField(default=0)
+    wallet_balance_after_iqd = models.IntegerField(default=0)
+    wallet_transaction = models.ForeignKey(
+        "finance.WalletTransaction",
+        on_delete=models.PROTECT,
+        related_name="meal_service_events",
+        null=True,
+        blank=True,
+    )
+    wallet_refund_transaction = models.ForeignKey(
+        "finance.WalletTransaction",
+        on_delete=models.PROTECT,
+        related_name="meal_refund_events",
+        null=True,
+        blank=True,
+    )
+
+    # --- immutable academic snapshot at service time (students only) ---
+    grade_code_snapshot = models.CharField(max_length=32, blank=True, default="")
+    section_code_snapshot = models.CharField(max_length=32, blank=True, default="")
+
+    # --- meal-period snapshot (defensive against later MealPeriod edits) ---
+    meal_period_label_snapshot = models.CharField(
+        max_length=64, blank=True, default=""
+    )
+
+    reason_code = models.CharField(max_length=32, blank=True, default="")
+    reason_notes = models.CharField(max_length=200, blank=True, default="")
+    served_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    served_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="served_meal_events",
+    )
+    reversed_at = models.DateTimeField(null=True, blank=True)
+    reversed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reversed_meal_events",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+        indexes = [
+            models.Index(fields=["date", "status"]),
+            models.Index(fields=["person", "date"]),
+            models.Index(fields=["student", "date"]),
+            models.Index(fields=["section_code_snapshot", "date"]),
+            models.Index(fields=["meal_plan", "date"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(final_charge_iqd__gte=0),
+                name="meal_service_event_final_charge_non_negative",
+            ),
+            models.CheckConstraint(
+                check=models.Q(price_base_iqd__gte=0),
+                name="meal_service_event_price_base_non_negative",
+            ),
+            models.CheckConstraint(
+                check=models.Q(discount_iqd__gte=0),
+                name="meal_service_event_discount_non_negative",
+            ),
+            # final_charge_iqd = price_base_iqd - price_override_iqd - discount_iqd
+            # (per §14.1: override_delta is signed relative to the list price;
+            # base is the resolved base, so final = base - discount). We enforce
+            # the simpler invariant final >= 0 here and let the service layer
+            # compute the exact relationship. A tighter constraint will be
+            # added once the pricing semantics are finalized.
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.person} on {self.date} ({self.status})"
+
+    def clean(self):
+        super().clean()
+        from .validators import (
+            validate_service_event_role,
+            validate_service_event_snapshot_immutable,
+        )
+
+        validate_service_event_role(student=self.student, staff=self.staff)
+        validate_service_event_snapshot_immutable(instance=self)
+
+
+class MealSupervisorAction(models.Model):
+    """Append-only audit trail of supervisor operations against service
+    events and eligibility rows.
+
+    See ``meals_domain_architecture.md`` §12.2. Every mutating
+    supervisor operation writes a ``MealSupervisorAction`` row in the
+    same transaction as the state change. This row is **never** edited
+    or deleted — it is the audit record required by the "money is
+    auditable" and "history is append-only" principles.
+
+    ``performed_by`` (StaffProfile) is the business identity of the
+    supervisor; ``performed_by_user`` (auth.User) is the login account.
+    Either may be null. The Phase 3B workflow services will populate
+    one or both when writing audit rows.
+    """
+
+    class Action(models.TextChoices):
+        CONFIRM = "confirm", "Confirm"
+        UNCONFIRM = "unconfirm", "Unconfirm"
+        DENY = "deny", "Deny"
+        REFUND = "refund", "Refund"
+        VOID = "void", "Void"
+        OVERRIDE_ELIGIBLE = "override_eligible", "Override (eligible)"
+        OVERRIDE_DENIED = "override_denied", "Override (denied)"
+        MANUAL_LOOKUP = "manual_lookup", "Manual lookup"
+
+    service_event = models.ForeignKey(
+        MealServiceEvent,
+        on_delete=models.CASCADE,
+        related_name="supervisor_actions",
+        null=True,
+        blank=True,
+    )
+    eligibility = models.ForeignKey(
+        MealEligibility,
+        on_delete=models.CASCADE,
+        related_name="supervisor_actions",
+        null=True,
+        blank=True,
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=Action.choices,
+        db_index=True,
+    )
+    reason_code = models.CharField(max_length=32, blank=True, default="")
+    reason_notes = models.CharField(max_length=200, blank=True, default="")
+    performed_by = models.ForeignKey(
+        "identity.StaffProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="meal_supervisor_actions",
+    )
+    performed_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="meal_supervisor_actions",
+    )
+    performed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-performed_at"]
+        indexes = [
+            models.Index(fields=["service_event", "performed_at"]),
+            models.Index(fields=["action", "performed_at"]),
+        ]
+
+    def __str__(self) -> str:
+        target = self.service_event or self.eligibility
+        return f"{self.get_action_display()} on {target} at {self.performed_at}"
