@@ -1,8 +1,5 @@
-"""Meals domain models — Phase 1 (pricing & period foundation).
-
-This module implements only the pricing/period foundation of the Meals
-domain, per ``docs/architecture/meals_domain_architecture.md`` v1.1
-§9, §10, §15, §16.
+"""Meals domain models — Phase 1 (pricing & period foundation)
+and Phase 2 (subscriptions, exceptions, eligibility).
 
 Phase 1 scope:
 * :class:`MealPeriod` — a meal-serving window (wraps a generic period
@@ -16,11 +13,22 @@ Phase 1 scope:
 * :class:`MealPersonPriceOverride` — a granular per-Person price
   override, optionally scoped to a specific ``MealPeriod``.
 
+Phase 2 scope:
+* :class:`MealSubscription` — a Person's dated entitlement to meals
+  under a :class:`MealPlan` (date-range vs wallet). Supports students
+  and staff, and primary + fallback combinations.
+* :class:`MealException` — a one-time / temporary meal permission or
+  denial (not a subscription).
+* :class:`MealEligibility` — the canonical daily eligibility snapshot
+  for ``(person, date)``. Recalculable until a future
+  ``MealServiceEvent`` references it, then frozen.
+
 Out of scope (later phases):
-* Subscriptions, eligibility, service events, supervisor actions,
-  exceptions, finance integration, legacy migration, discounts.
+* ``MealServiceEvent``, ``MealSupervisorAction``, ``resolve_service``,
+  wallet charging, supervisor workflow, legacy migration, discounts.
 """
 
+from django.conf import settings
 from django.db import models
 
 
@@ -339,3 +347,277 @@ class MealPersonPriceOverride(models.Model):
     def __str__(self) -> str:
         period_part = self.meal_period.label or f"#{self.meal_period_id}" if self.meal_period_id else "any period"
         return f"{self.person} / {self.meal_plan} / {period_part} = {self.price_iqd}"
+
+
+# ===========================================================================
+# Phase 2 — Subscriptions, Exceptions, Eligibility
+# ===========================================================================
+
+
+class MealSubscription(models.Model):
+    """A Person's entitlement to meals under a :class:`MealPlan` for a
+    date range.
+
+    Migration target for legacy ``attendance.MealSubscription``. See
+    ``meals_domain_architecture.md`` §11.
+
+    Supports both students and staff (exactly one of ``student`` /
+    ``staff`` is set for a non-guest subscription; ``person`` is always
+    set), both date-range and wallet plans, and primary + fallback
+    combinations via ``priority`` (lower number = higher priority =
+    evaluated first by the resolver).
+
+    The subscription stores **no** grade/section/name fields — those
+    are read from the current enrollment/placement or snapshotted on
+    the future immutable ``MealServiceEvent``.
+    """
+
+    class Status(models.TextChoices):
+        FUTURE = "future", "Future"
+        ACTIVE = "active", "Active"
+        PAUSED = "paused", "Paused"
+        EXPIRED = "expired", "Expired"
+        CANCELLED = "cancelled", "Cancelled"
+
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="meal_subscriptions",
+    )
+    student = models.ForeignKey(
+        "identity.StudentProfile",
+        on_delete=models.CASCADE,
+        related_name="meal_subscriptions",
+        null=True,
+        blank=True,
+    )
+    staff = models.ForeignKey(
+        "identity.StaffProfile",
+        on_delete=models.CASCADE,
+        related_name="meal_subscriptions",
+        null=True,
+        blank=True,
+    )
+    meal_plan = models.ForeignKey(
+        MealPlan,
+        on_delete=models.PROTECT,
+        related_name="subscriptions",
+        null=True,
+        blank=True,
+    )
+    academic_year = models.ForeignKey(
+        "academics.AcademicYear",
+        on_delete=models.PROTECT,
+        related_name="meal_subscriptions",
+        null=True,
+        blank=True,
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        db_index=True,
+    )
+    start_date = models.DateField(db_index=True)
+    end_date = models.DateField(db_index=True)
+    plan_type = models.CharField(
+        max_length=20,
+        default="monthly",
+        help_text="Reporting label (annual/monthly/other). Does not drive charging.",
+    )
+    source = models.CharField(max_length=40, default="manual", db_index=True)
+    priority = models.PositiveSmallIntegerField(
+        default=1,
+        db_index=True,
+        help_text=(
+            "Order number. Lower = higher priority = evaluated first. "
+            "1=primary, 2=fallback. Same-priority overlapping ACTIVE "
+            "subscriptions for the same person are rejected."
+        ),
+    )
+    notes = models.CharField(max_length=200, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["person", "priority", "start_date", "id"]
+        indexes = [
+            models.Index(fields=["person", "status", "start_date", "end_date"]),
+            models.Index(fields=["student", "status"]),
+            models.Index(fields=["staff", "status"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(end_date__gte=models.F("start_date")),
+                name="meal_subscription_end_after_start",
+            ),
+            models.CheckConstraint(
+                check=models.Q(priority__gte=1),
+                name="meal_subscription_priority_positive",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.person} {self.meal_plan} [{self.start_date} → {self.end_date}] (p{self.priority})"
+
+    def clean(self):
+        super().clean()
+        from .validators import validate_subscription_dates, validate_subscription_role
+
+        validate_subscription_dates(start_date=self.start_date, end_date=self.end_date)
+        validate_subscription_role(student=self.student, staff=self.staff)
+
+
+class MealException(models.Model):
+    """A one-time / temporary meal permission or denial.
+
+    A one-time permission is **not** a :class:`MealSubscription`; it is
+    a ``MealException(kind=ONE_TIME_ELIGIBLE, effective_date=<date>)``.
+    The eligibility resolver checks exceptions after subscriptions, so a
+    person without any subscription can still be eligible for one date
+    via an exception. See ``meals_domain_architecture.md`` §11.2.
+    """
+
+    class Kind(models.TextChoices):
+        ONE_TIME_ELIGIBLE = "one_time_eligible", "One-time eligible"
+        TEMPORARY_DENY = "temporary_deny", "Temporary deny"
+        GUEST_ELIGIBLE = "guest_eligible", "Guest eligible"
+
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="meal_exceptions",
+    )
+    kind = models.CharField(
+        max_length=30,
+        choices=Kind.choices,
+        db_index=True,
+    )
+    effective_date = models.DateField(db_index=True)
+    end_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Optional. Blank = single-day exception (effective_date only).",
+    )
+    meal_plan = models.ForeignKey(
+        MealPlan,
+        on_delete=models.SET_NULL,
+        related_name="exceptions",
+        null=True,
+        blank=True,
+    )
+    reason_code = models.CharField(max_length=32, blank=True, default="")
+    reason_notes = models.CharField(max_length=200, blank=True, default="")
+    approved_by = models.ForeignKey(
+        "identity.StaffProfile",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_meal_exceptions",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-effective_date", "-id"]
+        indexes = [
+            models.Index(fields=["person", "effective_date"]),
+            models.Index(fields=["kind", "is_active"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(end_date__isnull=True)
+                    | models.Q(end_date__gte=models.F("effective_date"))
+                ),
+                name="meal_exception_end_after_effective",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.person} {self.kind} on {self.effective_date}"
+
+    def clean(self):
+        super().clean()
+        from .validators import validate_exception_window
+
+        validate_exception_window(
+            effective_date=self.effective_date, end_date=self.end_date
+        )
+
+
+class MealEligibility(models.Model):
+    """The canonical daily eligibility snapshot for ``(person, date)``.
+
+    See ``meals_domain_architecture.md`` §12.1. Exactly one row per
+    ``(person, date)`` (enforced by ``unique_together``).
+
+    Recalculable until a future ``MealServiceEvent`` references it; once
+    referenced, the row is frozen and corrections are audited via the
+    future ``MealSupervisorAction`` model (Phase 3+).
+    """
+
+    class Decision(models.TextChoices):
+        ELIGIBLE = "eligible", "Eligible"
+        NOT_ELIGIBLE = "not_eligible", "Not eligible"
+        OVERRIDDEN_ELIGIBLE = "overridden_eligible", "Overridden eligible"
+        OVERRIDDEN_DENIED = "overridden_denied", "Overridden denied"
+
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="meal_eligibilities",
+    )
+    student = models.ForeignKey(
+        "identity.StudentProfile",
+        on_delete=models.CASCADE,
+        related_name="meal_eligibilities",
+        null=True,
+        blank=True,
+    )
+    date = models.DateField(db_index=True)
+    decision = models.CharField(
+        max_length=30,
+        choices=Decision.choices,
+        db_index=True,
+    )
+    subscription = models.ForeignKey(
+        MealSubscription,
+        on_delete=models.SET_NULL,
+        related_name="eligibilities",
+        null=True,
+        blank=True,
+    )
+    meal_plan = models.ForeignKey(
+        MealPlan,
+        on_delete=models.SET_NULL,
+        related_name="eligibilities",
+        null=True,
+        blank=True,
+    )
+    grade_code_snapshot = models.CharField(max_length=32, blank=True, default="")
+    section_code_snapshot = models.CharField(max_length=32, blank=True, default="")
+    absence_reason = models.CharField(max_length=40, blank=True, default="")
+    reason_code = models.CharField(max_length=40, blank=True, default="")
+    reason_notes = models.CharField(max_length=200, blank=True, default="")
+    resolved_at = models.DateTimeField(auto_now_add=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_meal_eligibilities",
+    )
+
+    class Meta:
+        unique_together = [["person", "date"]]
+        ordering = ["-date"]
+        indexes = [
+            models.Index(fields=["date", "decision"]),
+            models.Index(fields=["person", "date"]),
+            models.Index(fields=["student", "date"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.person} on {self.date} → {self.decision}"

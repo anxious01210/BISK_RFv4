@@ -1,10 +1,13 @@
 from django.contrib import admin
 
 from .models import (
+    MealEligibility,
+    MealException,
     MealPeriod,
     MealPeriodPrice,
     MealPersonPriceOverride,
     MealPlan,
+    MealSubscription,
 )
 
 
@@ -177,4 +180,138 @@ class MealPersonPriceOverrideAdmin(admin.ModelAdmin):
             "Timestamps",
             {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
         ),
+    )
+
+
+# ===========================================================================
+# Phase 2 — Subscription / Exception / Eligibility admin
+# ===========================================================================
+
+
+@admin.register(MealSubscription)
+class MealSubscriptionAdmin(admin.ModelAdmin):
+    list_display = (
+        "person",
+        "meal_plan",
+        "status",
+        "priority",
+        "start_date",
+        "end_date",
+        "plan_type",
+        "source",
+    )
+    list_display_links = ("person", "meal_plan")
+    list_filter = (
+        "status",
+        "priority",
+        "plan_type",
+        "source",
+        "meal_plan",
+        "academic_year",
+    )
+    search_fields = (
+        "person__code",
+        "person__first_name",
+        "person__last_name",
+        "student__code",
+        "staff__code",
+        "meal_plan__name",
+        "notes",
+    )
+    ordering = ("person", "priority", "start_date", "id")
+    date_hierarchy = "created_at"
+    readonly_fields = ("created_at", "updated_at")
+    autocomplete_fields = (
+        "person", "student", "staff", "meal_plan", "academic_year",
+    )
+    fieldsets = (
+        ("Owner", {"fields": ("person", "student", "staff")}),
+        ("Plan", {"fields": ("meal_plan", "academic_year")}),
+        (
+            "Window",
+            {"fields": ("start_date", "end_date", "priority", "plan_type")},
+        ),
+        ("State", {"fields": ("status", "source")}),
+        ("Notes", {"fields": ("notes",), "classes": ("collapse",)}),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+
+@admin.register(MealException)
+class MealExceptionAdmin(admin.ModelAdmin):
+    list_display = (
+        "person",
+        "kind",
+        "effective_date",
+        "end_date",
+        "meal_plan",
+        "is_active",
+    )
+    list_display_links = ("person", "kind")
+    list_filter = ("kind", "is_active", "meal_plan", "effective_date")
+    search_fields = (
+        "person__code",
+        "person__first_name",
+        "person__last_name",
+        "reason_code",
+        "reason_notes",
+    )
+    ordering = ("-effective_date", "-id")
+    date_hierarchy = "effective_date"
+    readonly_fields = ("created_at", "updated_at")
+    autocomplete_fields = ("person", "meal_plan", "approved_by")
+    fieldsets = (
+        ("Owner", {"fields": ("person",)}),
+        ("Exception", {"fields": ("kind", "meal_plan")}),
+        (
+            "Effective window",
+            {"fields": ("effective_date", "end_date")},
+        ),
+        ("Reason", {"fields": ("reason_code", "reason_notes")}),
+        ("Approval", {"fields": ("approved_by", "is_active")}),
+        (
+            "Timestamps",
+            {"fields": ("created_at", "updated_at"), "classes": ("collapse",)},
+        ),
+    )
+
+
+@admin.register(MealEligibility)
+class MealEligibilityAdmin(admin.ModelAdmin):
+    list_display = (
+        "person",
+        "date",
+        "decision",
+        "subscription",
+        "meal_plan",
+        "resolved_at",
+    )
+    list_display_links = ("person", "date")
+    list_filter = ("decision", "date", "meal_plan")
+    search_fields = (
+        "person__code",
+        "person__first_name",
+        "person__last_name",
+        "student__code",
+        "reason_code",
+        "reason_notes",
+    )
+    ordering = ("-date", "-resolved_at", "-id")
+    date_hierarchy = "date"
+    readonly_fields = ("resolved_at",)
+    autocomplete_fields = (
+        "person", "student", "subscription", "meal_plan", "resolved_by",
+    )
+    fieldsets = (
+        ("Owner", {"fields": ("person", "student", "date")}),
+        ("Decision", {"fields": ("decision", "subscription", "meal_plan")}),
+        ("Academic snapshot", {
+            "fields": ("grade_code_snapshot", "section_code_snapshot"),
+            "classes": ("collapse",),
+        }),
+        ("Reason", {"fields": ("reason_code", "reason_notes")}),
+        ("Audit", {"fields": ("resolved_by", "resolved_at")}),
     )
