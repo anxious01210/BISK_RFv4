@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -117,6 +118,7 @@ def create_student_profile(
     homeroom: str = "",
     has_meal: bool = False,
     has_bus: bool = False,
+    legacy_student=None,
 ) -> StudentProfile:
     code = (code or "").strip()
     validate_student_code(code)
@@ -127,6 +129,7 @@ def create_student_profile(
         homeroom=homeroom or "",
         has_meal=has_meal,
         has_bus=has_bus,
+        legacy_student=legacy_student,
     )
 
 
@@ -194,3 +197,117 @@ def deactivate_person(person: Person) -> Person:
         is_active=False, end_date=timezone.localdate()
     )
     return person
+
+
+# ===========================================================================
+# Get-or-create helpers (idempotent; safe for retry after partial migration)
+# ===========================================================================
+
+
+@transaction.atomic
+def get_or_create_student_profile(
+    *,
+    person: Person,
+    code: str,
+    grade: str = "",
+    homeroom: str = "",
+    has_meal: bool = False,
+    has_bus: bool = False,
+    legacy_student=None,
+) -> tuple[StudentProfile, bool]:
+    """Return ``(StudentProfile, created)`` for the given ``code``.
+
+    Idempotent: if a ``StudentProfile`` with this ``code`` already
+    exists, returns it. If it does not exist, creates it.
+
+    **Unsafe conflict detection:** if a profile with this ``code``
+    exists but belongs to a **different** ``person``, this is an
+    unsafe conflict (two different persons claiming the same student
+    code). A ``ValidationError`` is raised — the conflict is not
+    silently hidden.
+
+    If ``legacy_student`` is supplied and the existing profile has a
+    **different** ``legacy_student``, that is also an unsafe conflict
+    and raises ``ValidationError``.
+    """
+    code = (code or "").strip()
+    existing = StudentProfile.objects.filter(code=code).first()
+
+    if existing is not None:
+        # Unsafe conflict: same code, different person.
+        if existing.person_id != person.pk:
+            raise ValidationError(
+                f"StudentProfile with code {code!r} exists but belongs "
+                f"to a different person (pk={existing.person_id}, "
+                f"expected pk={person.pk})."
+            )
+        # Unsafe conflict: same code, same person, but different
+        # legacy_student link.
+        if (
+            legacy_student is not None
+            and existing.legacy_student_id is not None
+            and existing.legacy_student_id != legacy_student.pk
+        ):
+            raise ValidationError(
+                f"StudentProfile with code {code!r} exists but is linked "
+                f"to a different legacy student "
+                f"(pk={existing.legacy_student_id}, "
+                f"expected pk={legacy_student.pk})."
+            )
+        return existing, False
+
+    # Create new profile. Reuse the existing create service so all
+    # validators run.
+    profile = create_student_profile(
+        person=person,
+        code=code,
+        grade=grade,
+        homeroom=homeroom,
+        has_meal=has_meal,
+        has_bus=has_bus,
+        legacy_student=legacy_student,
+    )
+    return profile, True
+
+
+@transaction.atomic
+def get_or_create_role(
+    *,
+    person: Person,
+    role_type: RoleType,
+    is_active: bool = True,
+    start_date=None,
+    end_date=None,
+    notes: str = "",
+    assigned_by=None,
+) -> tuple[PersonRole, bool]:
+    """Return ``(PersonRole, created)`` for the given
+    ``(person, role_type)`` pair.
+
+    Idempotent: if a ``PersonRole`` for this ``(person, role_type)``
+    already exists, returns it. If it does not exist, creates it via
+    :func:`assign_role` (which runs all validators).
+
+    Does **not** silently hide conflicts — if a ``PersonRole`` exists
+    but with different ``is_active`` / ``start_date`` / ``end_date``
+    values, the existing row is returned unchanged (the caller can
+    inspect it). This is by design: the migration execution should
+    not silently overwrite existing role assignments.
+    """
+    existing = PersonRole.objects.filter(
+        person=person, role_type=role_type
+    ).first()
+
+    if existing is not None:
+        return existing, False
+
+    role = assign_role(
+        person=person,
+        role_type=role_type,
+        is_active=is_active,
+        start_date=start_date,
+        end_date=end_date,
+        notes=notes,
+        assigned_by=assigned_by,
+    )
+    return role, True

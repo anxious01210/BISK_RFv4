@@ -102,8 +102,9 @@ class RoleServicesTests(TestCase):
         self.person = create_person(
             code="P-200", first_name="Role", last_name="Player"
         )
-        self.role_type = RoleType.objects.create(
-            code="student", name="Student"
+        # Use the seeded student RoleType (0002_seed_roletypes).
+        self.role_type, _ = RoleType.objects.get_or_create(
+            code="student", defaults={"name": "Student", "is_system": True}
         )
 
     def test_assign_role(self):
