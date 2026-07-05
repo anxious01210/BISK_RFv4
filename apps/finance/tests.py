@@ -36,6 +36,7 @@ from .selectors import (
     transaction_history,
 )
 from .services import (
+    charge,
     check_balance,
     close_wallet,
     create_charge,
@@ -48,6 +49,7 @@ from .services import (
     record_refund,
     reactivate_wallet,
     recompute_balance,
+    refund,
     resolve_price,
     suspend_wallet,
 )
@@ -855,16 +857,16 @@ class SelectorTests(FinanceBaseData):
         self.assertEqual(adjustments_for_person(person=self.person_student).count(), 1)
 
     def test_check_balance(self):
-        bal, sufficient = check_balance(person=self.person_student, amount=5000)
+        bal, sufficient = check_balance(person=self.person_student, amount_iqd=5000)
         self.assertEqual(bal, 7000)
         self.assertTrue(sufficient)
-        bal, sufficient = check_balance(person=self.person_student, amount=99999)
+        bal, sufficient = check_balance(person=self.person_student, amount_iqd=99999)
         self.assertFalse(sufficient)
 
     def test_check_balance_no_wallet(self):
         Person.objects.create(code="P-NW", first_name="No", last_name="Wallet")
         no_wallet_person = Person.objects.get(code="P-NW")
-        bal, sufficient = check_balance(person=no_wallet_person, amount=1)
+        bal, sufficient = check_balance(person=no_wallet_person, amount_iqd=1)
         self.assertEqual(bal, 0)
         self.assertFalse(sufficient)
 
@@ -911,3 +913,320 @@ class ValidatorUnitTests(TestCase):
     def test_validate_adjustment_reason_required(self):
         with self.assertRaises(ValidationError):
             validate_adjustment_reason_required("  ")
+
+
+# ===========================================================================
+# Pre-resolved-amount services — charge() and refund()
+#
+# These tests cover the Meals-compatible boundary (meals_domain_architecture.md
+# §5, §20): the caller passes a pre-resolved `amount_iqd`; Finance records
+# the ledger row only and does NOT resolve pricing or call discounts.
+# ===========================================================================
+
+
+class ChargeServiceTests(FinanceBaseData):
+    """Tests for the new ``charge()`` pre-resolved-amount service."""
+
+    def setUp(self):
+        super().setUp()
+        self.wallet = create_wallet(person=self.person_student)
+        record_payment(person=self.person_student, amount_iqd=10000)
+
+    # --- happy path --------------------------------------------------
+
+    def test_charge_debits_wallet(self):
+        tx = charge(
+            person=self.person_student,
+            amount_iqd=2500,
+            source_module="meals",
+            reference_type="MealServiceEvent",
+            reference_id=42,
+            academic_year=self.year,
+            description="meal_lunch base=2500 discount=0",
+        )
+        self.assertEqual(tx.tx_type, WalletTransaction.TxType.DEBIT)
+        self.assertEqual(tx.amount_iqd, -2500)
+        self.assertEqual(tx.balance_before_iqd, 10000)
+        self.assertEqual(tx.balance_after_iqd, 7500)
+        self.assertEqual(tx.source_module, "meals")
+        self.assertEqual(tx.reference_type, "MealServiceEvent")
+        self.assertEqual(tx.reference_id, 42)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance_iqd, 7500)
+
+    def test_charge_does_not_create_charge_row(self):
+        # Unlike create_charge(), charge() must NOT create a Charge row.
+        before = Charge.objects.count()
+        charge(
+            person=self.person_student,
+            amount_iqd=1000,
+            source_module="meals",
+        )
+        self.assertEqual(Charge.objects.count(), before)
+
+    # --- zero amount -------------------------------------------------
+
+    def test_charge_zero_amount_records_unpaid(self):
+        tx = charge(
+            person=self.person_student,
+            amount_iqd=0,
+            source_module="meals",
+        )
+        self.assertEqual(tx.tx_type, WalletTransaction.TxType.UNPAID)
+        self.assertEqual(tx.amount_iqd, 0)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance_iqd, 10000)
+
+    # --- insufficient funds -----------------------------------------
+
+    def test_charge_insufficient_funds_rejected(self):
+        with self.assertRaises(ValidationError):
+            charge(
+                person=self.person_student,
+                amount_iqd=100000,
+                source_module="meals",
+            )
+
+    def test_charge_insufficient_funds_unpaid_allowed(self):
+        tx = charge(
+            person=self.person_student,
+            amount_iqd=100000,
+            source_module="meals",
+            allow_unpaid=True,
+        )
+        self.assertEqual(tx.tx_type, WalletTransaction.TxType.UNPAID)
+        self.assertEqual(tx.amount_iqd, 0)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance_iqd, 10000)
+
+    # --- credit limit -----------------------------------------------
+
+    def test_charge_uses_credit_limit(self):
+        # Drain wallet to zero, then charge within credit limit.
+        record_adjustment(
+            person=self.person_student, amount_iqd=-10000, reason_code="drain",
+        )
+        self.wallet.refresh_from_db()
+        self.wallet.credit_limit_iqd = 5000
+        self.wallet.save(update_fields=["credit_limit_iqd"])
+        tx = charge(
+            person=self.person_student,
+            amount_iqd=2500,
+            source_module="meals",
+        )
+        self.assertEqual(tx.tx_type, WalletTransaction.TxType.DEBIT)
+        self.wallet.refresh_from_db()
+        self.assertEqual(self.wallet.balance_iqd, -2500)
+
+    def test_charge_beyond_credit_limit_rejected(self):
+        record_adjustment(
+            person=self.person_student, amount_iqd=-10000, reason_code="drain",
+        )
+        self.wallet.refresh_from_db()
+        self.wallet.credit_limit_iqd = 1000
+        self.wallet.save(update_fields=["credit_limit_iqd"])
+        with self.assertRaises(ValidationError):
+            charge(
+                person=self.person_student,
+                amount_iqd=2000,
+                source_module="meals",
+            )
+
+    # --- validation --------------------------------------------------
+
+    def test_charge_negative_amount_rejected(self):
+        with self.assertRaises(ValidationError):
+            charge(
+                person=self.person_student,
+                amount_iqd=-100,
+                source_module="meals",
+            )
+
+    def test_charge_missing_source_module_rejected(self):
+        with self.assertRaises(ValidationError):
+            charge(
+                person=self.person_student,
+                amount_iqd=100,
+                source_module="",
+            )
+
+    def test_charge_on_suspended_wallet_rejected(self):
+        suspend_wallet(self.wallet)
+        with self.assertRaises(ValidationError):
+            charge(
+                person=self.person_student,
+                amount_iqd=100,
+                source_module="meals",
+            )
+
+    def test_charge_on_closed_wallet_rejected(self):
+        close_wallet(self.wallet)
+        with self.assertRaises(ValidationError):
+            charge(
+                person=self.person_student,
+                amount_iqd=100,
+                source_module="meals",
+            )
+
+    # --- return type -------------------------------------------------
+
+    def test_charge_returns_wallet_transaction_only(self):
+        # The Meals architecture (§20.1) requires a WalletTransaction,
+        # not a tuple.
+        result = charge(
+            person=self.person_student,
+            amount_iqd=500,
+            source_module="meals",
+        )
+        self.assertIsInstance(result, WalletTransaction)
+
+
+class RefundServiceTests(FinanceBaseData):
+    """Tests for the new ``refund()`` transaction-based service."""
+
+    def setUp(self):
+        super().setUp()
+        self.wallet = create_wallet(person=self.person_student)
+        record_payment(person=self.person_student, amount_iqd=10000)
+        self.original_tx = charge(
+            person=self.person_student,
+            amount_iqd=4000,
+            source_module="meals",
+            reference_type="MealServiceEvent",
+            reference_id=7,
+        )
+
+    # --- full refund -------------------------------------------------
+
+    def test_refund_full_amount_default(self):
+        refund_tx = refund(
+            person=self.person_student,
+            original_transaction=self.original_tx,
+            reason_code="supervisor_refund",
+        )
+        self.assertEqual(refund_tx.tx_type, WalletTransaction.TxType.REFUND)
+        self.assertEqual(refund_tx.amount_iqd, 4000)
+        self.assertTrue(refund_tx.is_reversal)
+        self.assertEqual(refund_tx.reverses, self.original_tx)
+        self.wallet.refresh_from_db()
+        # 10000 - 4000 (charge) + 4000 (refund) = 10000
+        self.assertEqual(self.wallet.balance_iqd, 10000)
+
+    def test_refund_explicit_amount(self):
+        refund_tx = refund(
+            person=self.person_student,
+            original_transaction=self.original_tx,
+            amount_iqd=1000,
+            reason_code="partial",
+        )
+        self.assertEqual(refund_tx.amount_iqd, 1000)
+        self.wallet.refresh_from_db()
+        # 10000 - 4000 + 1000 = 7000
+        self.assertEqual(self.wallet.balance_iqd, 7000)
+
+    # --- does NOT create a Refund model row --------------------------
+
+    def test_refund_does_not_create_refund_row(self):
+        # Unlike record_refund(), refund() must NOT create a Refund row.
+        before = Refund.objects.count()
+        refund(
+            person=self.person_student,
+            original_transaction=self.original_tx,
+            reason_code="r",
+        )
+        self.assertEqual(Refund.objects.count(), before)
+
+    # --- person mismatch --------------------------------------------
+
+    def test_refund_person_mismatch_rejected(self):
+        other = Person.objects.create(code="P-OTHER", first_name="O", last_name="O")
+        with self.assertRaises(ValidationError):
+            refund(
+                person=other,
+                original_transaction=self.original_tx,
+                reason_code="r",
+            )
+
+    # --- validation --------------------------------------------------
+
+    def test_refund_zero_amount_rejected(self):
+        with self.assertRaises(ValidationError):
+            refund(
+                person=self.person_student,
+                original_transaction=self.original_tx,
+                amount_iqd=0,
+                reason_code="r",
+            )
+
+    def test_refund_negative_amount_rejected(self):
+        with self.assertRaises(ValidationError):
+            refund(
+                person=self.person_student,
+                original_transaction=self.original_tx,
+                amount_iqd=-100,
+                reason_code="r",
+            )
+
+    def test_refund_non_transaction_rejected(self):
+        with self.assertRaises(TypeError):
+            refund(
+                person=self.person_student,
+                original_transaction="not a transaction",
+                reason_code="r",
+            )
+
+    # --- wallet state ------------------------------------------------
+
+    def test_refund_on_suspended_wallet_rejected(self):
+        suspend_wallet(self.wallet)
+        with self.assertRaises(ValidationError):
+            refund(
+                person=self.person_student,
+                original_transaction=self.original_tx,
+                reason_code="r",
+            )
+
+    # --- return type -------------------------------------------------
+
+    def test_refund_returns_wallet_transaction_only(self):
+        result = refund(
+            person=self.person_student,
+            original_transaction=self.original_tx,
+            reason_code="r",
+        )
+        self.assertIsInstance(result, WalletTransaction)
+
+    # --- reversal chain ----------------------------------------------
+
+    def test_refund_reverses_links_to_original(self):
+        refund_tx = refund(
+            person=self.person_student,
+            original_transaction=self.original_tx,
+            reason_code="r",
+        )
+        self.assertEqual(refund_tx.reverses_id, self.original_tx.pk)
+        # The original transaction is never mutated.
+        self.original_tx.refresh_from_db()
+        self.assertEqual(self.original_tx.amount_iqd, -4000)
+
+
+class CheckBalanceSignatureTests(FinanceBaseData):
+    """Verify the renamed ``amount_iqd`` parameter works by keyword."""
+
+    def test_check_balance_keyword_amount_iqd(self):
+        create_wallet(person=self.person_student)
+        record_payment(person=self.person_student, amount_iqd=5000)
+        bal, sufficient = check_balance(
+            person=self.person_student, amount_iqd=4000
+        )
+        self.assertEqual(bal, 5000)
+        self.assertTrue(sufficient)
+
+    def test_check_balance_keyword_amount_iqd_insufficient(self):
+        create_wallet(person=self.person_student)
+        record_payment(person=self.person_student, amount_iqd=1000)
+        bal, sufficient = check_balance(
+            person=self.person_student, amount_iqd=5000
+        )
+        self.assertEqual(bal, 1000)
+        self.assertFalse(sufficient)

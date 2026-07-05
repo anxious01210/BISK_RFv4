@@ -198,16 +198,21 @@ apply_wallet_transaction = create_wallet_transaction
 # Balance check
 # ---------------------------------------------------------------------------
 
-def check_balance(*, person, amount: int = 0) -> tuple[int, bool]:
+def check_balance(*, person, amount_iqd: int = 0) -> tuple[int, bool]:
     """Return ``(current_balance, sufficient_for_amount)``.
 
     Reads the cached balance (a projection of the ledger). For an
     authoritative reconciliation use :func:`recompute_balance`.
+
+    ``amount_iqd`` is the pre-resolved amount the caller intends to
+    debit (e.g. a meal charge resolved by ``apps.meals``). Finance
+    does NOT resolve pricing here; it only compares the wallet's
+    available balance against the supplied amount.
     """
     wallet = Wallet.objects.filter(person=person).first()
     if wallet is None:
         return 0, False
-    return wallet.balance_iqd, wallet.available_balance_iqd >= amount
+    return wallet.balance_iqd, wallet.available_balance_iqd >= amount_iqd
 
 
 # ---------------------------------------------------------------------------
@@ -654,3 +659,190 @@ def resolve_price(
     if rule is None:
         return None
     return rule.price_iqd
+
+
+# ===========================================================================
+# Pre-resolved-amount services (Meals-compatible boundary)
+#
+# These services implement the Meals v1.1 architecture boundary
+# (``meals_domain_architecture.md`` §5, §20; ``finance_domain_architecture.md``
+# §7.3): the caller (e.g. ``apps.meals``) resolves the price and any
+# discounts itself and passes a **pre-resolved** ``amount_iqd`` to
+# Finance. Finance records the ledger row only — it does NOT resolve
+# pricing, does NOT call ``apps.discounts``, and does NOT import
+# ``apps.meals``.
+#
+# ``create_charge`` / ``record_refund`` above remain unchanged for
+# audit-rich callers (non-meal ERP billing, or callers that want a
+# ``Charge`` / ``Refund`` model row). The services below are the lean,
+# pre-resolved-amount paths Meals needs.
+# ===========================================================================
+
+
+@transaction.atomic
+def charge(
+    *,
+    person,
+    amount_iqd: int,
+    source_module: str,
+    reference_type: str = "",
+    reference_id=None,
+    academic_year=None,
+    description: str = "",
+    allow_unpaid: bool = False,
+    created_by=None,
+    created_by_staff=None,
+) -> WalletTransaction:
+    """Append a signed DEBIT (or UNPAID) row for a **pre-resolved**
+    amount.
+
+    This is the entry point the Meals domain calls (Phase 3+). Meals
+    has already resolved the final charge (base price, per-Person
+    override, discount) and passes ``amount_iqd`` as that final amount.
+    Finance does **not** resolve pricing, does **not** call
+    ``apps.discounts``, and does **not** import ``apps.meals``.
+
+    Behaviour:
+    * If the wallet has sufficient funds (or credit) for ``amount_iqd``,
+      a ``DEBIT`` ledger row is appended (signed: ``-amount_iqd``) and
+      returned.
+    * If funds are insufficient and ``allow_unpaid=True``, an ``UNPAID``
+      row (amount 0) is appended and returned — no balance impact.
+    * If funds are insufficient and ``allow_unpaid=False``, a
+      ``ValidationError`` is raised.
+
+    Unlike :func:`create_charge`, this service does **not** create a
+    ``Charge`` audit row — the caller (Meals) stores its own snapshot
+    on the immutable ``MealServiceEvent``. The ``description`` is
+    preserved on the ledger row's ``notes`` for audit.
+
+    Returns the :class:`WalletTransaction` (with
+    ``balance_before_iqd`` / ``balance_after_iqd`` snapshots) so the
+    caller can store them.
+    """
+    source_module = (source_module or "").strip()
+    amount_iqd = int(amount_iqd)
+    if amount_iqd < 0:
+        from django.core.exceptions import ValidationError
+        raise ValidationError(
+            {"amount_iqd": "charge() requires a non-negative amount_iqd."}
+        )
+    validate_source_module_required(source_module)
+
+    wallet, _ = get_or_create_wallet_for_person(person=person)
+    validate_wallet_person_match(wallet=wallet, person=person)
+    validate_wallet_operational(wallet)
+
+    # Zero charge: append an UNPAID row (amount 0) so the ledger still
+    # records the service event with no balance impact.
+    if amount_iqd == 0:
+        return create_wallet_transaction(
+            wallet=wallet,
+            tx_type=WalletTransaction.TxType.UNPAID,
+            amount_iqd=0,
+            source_module=source_module,
+            reference_type=reference_type or "",
+            reference_id=reference_id,
+            reason_code="zero_charge",
+            notes=description or "",
+            created_by=created_by,
+            created_by_staff=created_by_staff,
+        )
+
+    if wallet.available_balance_iqd >= amount_iqd:
+        return create_wallet_transaction(
+            wallet=wallet,
+            tx_type=WalletTransaction.TxType.DEBIT,
+            amount_iqd=-amount_iqd,
+            source_module=source_module,
+            reference_type=reference_type or "",
+            reference_id=reference_id,
+            reason_code=description or "",
+            created_by=created_by,
+            created_by_staff=created_by_staff,
+        )
+
+    if allow_unpaid:
+        return create_wallet_transaction(
+            wallet=wallet,
+            tx_type=WalletTransaction.TxType.UNPAID,
+            amount_iqd=0,
+            source_module=source_module,
+            reference_type=reference_type or "",
+            reference_id=reference_id,
+            reason_code=description or "",
+            notes="Insufficient funds at charge time.",
+            created_by=created_by,
+            created_by_staff=created_by_staff,
+        )
+
+    from django.core.exceptions import ValidationError
+    raise ValidationError(
+        "Insufficient funds for charge and unpaid charges are not allowed."
+    )
+
+
+@transaction.atomic
+def refund(
+    *,
+    person,
+    original_transaction: WalletTransaction,
+    amount_iqd: Optional[int] = None,
+    reason_code: str = "",
+    approved_by=None,
+    created_by=None,
+) -> WalletTransaction:
+    """Append a ``REFUND`` row that reverses (part of) an original
+    ``DEBIT`` transaction.
+
+    This is the entry point the Meals domain calls for supervisor
+    refunds (Phase 3+). Finance does **not** resolve pricing, does
+    **not** call ``apps.discounts``, and does **not** import
+    ``apps.meals``.
+
+    * ``original_transaction`` is the ``DEBIT`` ``WalletTransaction``
+      returned by :func:`charge`. The refund's ``reverses`` FK points
+      to it (the append-only reversal chain — §6.6).
+    * ``amount_iqd`` is the refund magnitude (positive). If ``None``,
+      the full original magnitude is refunded.
+    * Returns the refund :class:`WalletTransaction`.
+
+    Unlike :func:`record_refund`, this service does **not** create a
+    ``Refund`` audit row keyed to a ``Charge`` — it operates directly
+    on the ledger row, which is the ledger-native reversal operation.
+    """
+    if not isinstance(original_transaction, WalletTransaction):
+        raise TypeError(
+            "original_transaction must be a WalletTransaction instance."
+        )
+
+    # Default: refund the full original magnitude.
+    if amount_iqd is None:
+        amount_iqd = abs(original_transaction.amount_iqd)
+    amount_iqd = int(amount_iqd)
+    validate_positive_amount(amount_iqd)
+
+    wallet = Wallet.objects.select_for_update().select_related("person").get(
+        pk=original_transaction.wallet_id
+    )
+    # The wallet owning the original transaction must belong to ``person``.
+    if wallet.person_id != person.pk:
+        from django.core.exceptions import ValidationError
+        raise ValidationError(
+            {"person": "Refund person must match the original transaction's wallet owner."}
+        )
+    validate_wallet_operational(wallet)
+
+    return create_wallet_transaction(
+        wallet=wallet,
+        tx_type=WalletTransaction.TxType.REFUND,
+        amount_iqd=amount_iqd,
+        source_module=original_transaction.source_module,
+        reference_type="Refund",
+        reference_id=original_transaction.pk,
+        reason_code=reason_code or "",
+        notes=f"Reverses tx #{original_transaction.pk}",
+        reverses=original_transaction,
+        created_by=created_by,
+        created_by_staff=approved_by,
+    )
