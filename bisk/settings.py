@@ -49,6 +49,7 @@ INSTALLED_APPS += [
     "apps.identity",
     "apps.academics",
     "apps.finance",
+    "apps.meals",
     "apps.cameras",
     "apps.scheduler",
     # If INSTALLED_APPS has "apps.attendance", Django uses a default AppConfig and will not execute our ready() logic that auto‑creates media folders.
