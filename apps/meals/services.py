@@ -42,6 +42,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.utils import timezone
 
@@ -1190,3 +1191,515 @@ def _finalize_wallet_zero_charge(
         performed_by_user=created_by,
     )
     return ev
+
+
+# ===========================================================================
+# Phase 3B-2 — Supervisor workflow services
+#
+# Each operation:
+#   1. Locks the MealServiceEvent row (select_for_update).
+#   2. Validates the status transition + MealPlan supervisor-policy flags.
+#   3. Calls finance services where needed (refund, void-with-reversal).
+#   4. Transitions the event status.
+#   5. Writes a MealSupervisorAction audit row in the same transaction.
+#
+# Immutable snapshot fields are never mutated (enforced by
+# validate_service_event_snapshot_immutable). The only mutable snapshot
+# field on a CONFIRMED event is wallet_refund_transaction (the refund
+# flow sets it before transitioning to REFUNDED/VOIDED).
+# ===========================================================================
+
+# Reason codes for supervisor actions.
+REASON_SUPERVISOR_CONFIRM = "supervisor_confirm"
+REASON_SUPERVISOR_DENY = "supervisor_deny"
+REASON_SUPERVISOR_UNCONFIRM = "supervisor_unconfirm"
+REASON_SUPERVISOR_REFUND = "supervisor_refund"
+REASON_SUPERVISOR_VOID = "supervisor_void"
+REASON_SUPERVISOR_OVERRIDE_ELIGIBLE = "supervisor_override_eligible"
+REASON_SUPERVISOR_OVERRIDE_DENIED = "supervisor_override_denied"
+
+
+def _lock_service_event(service_event: MealServiceEvent) -> MealServiceEvent:
+    """Re-load and lock the MealServiceEvent row for the duration of
+    the transaction. Prevents concurrent supervisor actions from
+    racing on the same event.
+
+    Note: ``select_related`` is intentionally omitted because
+    PostgreSQL does not allow ``FOR UPDATE`` on the nullable side of
+    an outer join (several meals FKs are nullable). Callers that need
+    related objects should access them via the locked instance's
+    already-loaded FKs (Django lazy-loads them safely).
+    """
+    return (
+        MealServiceEvent.objects.select_for_update()
+        .get(pk=service_event.pk)
+    )
+
+
+def _write_audit(
+    *,
+    service_event,
+    action: str,
+    reason_code: str,
+    reason_notes: str = "",
+    performed_by=None,
+    performed_by_user=None,
+) -> MealSupervisorAction:
+    """Write a MealSupervisorAction audit row."""
+    return MealSupervisorAction.objects.create(
+        service_event=service_event,
+        action=action,
+        reason_code=reason_code or "",
+        reason_notes=reason_notes or "",
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+
+
+@transaction.atomic
+def confirm_service_event(
+    *,
+    service_event: MealServiceEvent,
+    performed_by=None,
+    performed_by_user=None,
+    reason_code: str = "",
+    reason_notes: str = "",
+) -> MealServiceEvent:
+    """Confirm a PENDING or UNPAID service event.
+
+    For a PENDING wallet-mode event: this is where the supervisor
+    manually confirms the charge. ``finance.charge()`` is called if
+    the event has no ``wallet_transaction`` yet (the charge was not
+    settled by ``resolve_service`` — e.g. an UNPAID event the
+    supervisor is now resolving after a manual payment).
+
+    For a PENDING DATE_RANGE event: transitions directly to CONFIRMED
+    (no wallet call).
+
+    Enforces ``MealPlan.allow_supervisor_confirm``.
+    """
+    from .validators import (
+        validate_service_event_status_transition,
+        validate_supervisor_can_confirm,
+        validate_supervisor_override_reason,
+    )
+
+    ev = _lock_service_event(service_event)
+    meal_plan = ev.meal_plan
+
+    validate_service_event_status_transition(
+        current_status=ev.status, new_status=MealServiceEvent.Status.CONFIRMED
+    )
+    validate_supervisor_can_confirm(meal_plan=meal_plan, reason_code=reason_code)
+    validate_supervisor_override_reason(
+        meal_plan=meal_plan, reason_code=reason_code
+    )
+
+    # If the event was UNPAID (intended charge snapshotted but no debit),
+    # attempt the charge now — the supervisor may have topped up the wallet.
+    if (
+        ev.status == MealServiceEvent.Status.UNPAID
+        and ev.wallet_transaction is None
+        and ev.final_charge_iqd > 0
+    ):
+        from apps.finance.services import charge as finance_charge
+
+        tx = finance_charge(
+            person=ev.person,
+            amount_iqd=ev.final_charge_iqd,
+            source_module=MEALS_SOURCE_MODULE,
+            reference_type="MealServiceEvent",
+            reference_id=ev.pk,
+            description=f"supervisor_confirm base={ev.price_base_iqd}",
+            created_by=performed_by_user,
+        )
+        # wallet_transaction is being populated for the first time (was None).
+        # Use update_fields to narrow the immutability check.
+        ev.wallet_transaction = tx
+        ev.wallet_balance_before_iqd = tx.balance_before_iqd
+        ev.wallet_balance_after_iqd = tx.balance_after_iqd
+        ev.save(update_fields=[
+            "wallet_transaction",
+            "wallet_balance_before_iqd",
+            "wallet_balance_after_iqd",
+        ])
+
+    ev.status = MealServiceEvent.Status.CONFIRMED
+    ev.reason_code = reason_code or REASON_SUPERVISOR_CONFIRM
+    ev.reason_notes = reason_notes or ""
+    if not ev.served_at:
+        ev.served_at = timezone.now()
+    ev.save(update_fields=["status", "reason_code", "reason_notes", "served_at", "updated_at"])
+
+    _write_audit(
+        service_event=ev,
+        action=MealSupervisorAction.Action.CONFIRM,
+        reason_code=reason_code or REASON_SUPERVISOR_CONFIRM,
+        reason_notes=reason_notes,
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+    return ev
+
+
+@transaction.atomic
+def deny_service_event(
+    *,
+    service_event: MealServiceEvent,
+    performed_by=None,
+    performed_by_user=None,
+    reason_code: str = "",
+    reason_notes: str = "",
+) -> MealServiceEvent:
+    """Deny a PENDING service event.
+
+    Enforces ``MealPlan.allow_supervisor_confirm`` (deny is the
+    inverse of confirm — gated by the same flag).
+    """
+    from .validators import (
+        validate_service_event_status_transition,
+        validate_supervisor_can_confirm,
+        validate_supervisor_override_reason,
+    )
+
+    ev = _lock_service_event(service_event)
+    meal_plan = ev.meal_plan
+
+    validate_service_event_status_transition(
+        current_status=ev.status, new_status=MealServiceEvent.Status.DENIED
+    )
+    # Deny uses the confirm flag (supervisor has authority to decide).
+    validate_supervisor_can_confirm(meal_plan=meal_plan, reason_code=reason_code)
+    validate_supervisor_override_reason(
+        meal_plan=meal_plan, reason_code=reason_code
+    )
+
+    ev.status = MealServiceEvent.Status.DENIED
+    ev.reason_code = reason_code or REASON_SUPERVISOR_DENY
+    ev.reason_notes = reason_notes or ""
+    ev.save(update_fields=["status", "reason_code", "reason_notes", "updated_at"])
+
+    _write_audit(
+        service_event=ev,
+        action=MealSupervisorAction.Action.DENY,
+        reason_code=reason_code or REASON_SUPERVISOR_DENY,
+        reason_notes=reason_notes,
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+    return ev
+
+
+@transaction.atomic
+def unconfirm_service_event(
+    *,
+    service_event: MealServiceEvent,
+    performed_by=None,
+    performed_by_user=None,
+    reason_code: str = "",
+    reason_notes: str = "",
+) -> MealServiceEvent:
+    """Unconfirm a CONFIRMED service event.
+
+    Reverses the wallet charge (if any) via ``finance.refund()``, then
+    transitions the event back to PENDING. The ``wallet_refund_transaction``
+    FK is set (mutable on CONFIRMED per the immutability validator).
+
+    Enforces ``MealPlan.allow_supervisor_unconfirm`` and
+    ``MealPlan.require_reason_on_unconfirm``.
+    """
+    from .validators import (
+        validate_service_event_status_transition,
+        validate_supervisor_can_unconfirm,
+    )
+
+    ev = _lock_service_event(service_event)
+    meal_plan = ev.meal_plan
+
+    validate_service_event_status_transition(
+        current_status=ev.status, new_status=MealServiceEvent.Status.PENDING
+    )
+    validate_supervisor_can_unconfirm(meal_plan=meal_plan, reason_code=reason_code)
+
+    # Reverse the wallet charge if one exists.
+    if ev.wallet_transaction is not None:
+        from apps.finance.services import refund as finance_refund
+
+        refund_tx = finance_refund(
+            person=ev.person,
+            original_transaction=ev.wallet_transaction,
+            reason_code=reason_code or REASON_SUPERVISOR_UNCONFIRM,
+            approved_by=performed_by,
+            created_by=performed_by_user,
+        )
+        # wallet_refund_transaction is mutable on CONFIRMED.
+        ev.wallet_refund_transaction = refund_tx
+
+    ev.status = MealServiceEvent.Status.PENDING
+    ev.reason_code = reason_code or REASON_SUPERVISOR_UNCONFIRM
+    ev.reason_notes = reason_notes or ""
+    ev.save(update_fields=[
+        "status", "reason_code", "reason_notes",
+        "wallet_refund_transaction", "updated_at",
+    ])
+
+    _write_audit(
+        service_event=ev,
+        action=MealSupervisorAction.Action.UNCONFIRM,
+        reason_code=reason_code or REASON_SUPERVISOR_UNCONFIRM,
+        reason_notes=reason_notes,
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+    return ev
+
+
+@transaction.atomic
+def refund_service_event(
+    *,
+    service_event: MealServiceEvent,
+    amount_iqd=None,
+    performed_by=None,
+    performed_by_user=None,
+    reason_code: str = "",
+    reason_notes: str = "",
+) -> MealServiceEvent:
+    """Refund a CONFIRMED (charged) service event.
+
+    Calls ``finance.refund()`` to reverse the original DEBIT, stores
+    the refund ``WalletTransaction`` FK on
+    ``MealServiceEvent.wallet_refund_transaction``, and transitions
+    the event to REFUNDED.
+
+    Enforces ``MealPlan.allow_supervisor_refund`` and
+    ``MealPlan.require_reason_on_refund``.
+    """
+    from .validators import (
+        validate_service_event_status_transition,
+        validate_supervisor_can_refund,
+    )
+
+    ev = _lock_service_event(service_event)
+    meal_plan = ev.meal_plan
+
+    validate_service_event_status_transition(
+        current_status=ev.status, new_status=MealServiceEvent.Status.REFUNDED
+    )
+    validate_supervisor_can_refund(meal_plan=meal_plan, reason_code=reason_code)
+
+    if ev.wallet_transaction is None:
+        raise ValidationError(
+            "Cannot refund a service event with no wallet transaction."
+        )
+
+    from apps.finance.services import refund as finance_refund
+
+    refund_tx = finance_refund(
+        person=ev.person,
+        original_transaction=ev.wallet_transaction,
+        amount_iqd=amount_iqd,
+        reason_code=reason_code or REASON_SUPERVISOR_REFUND,
+        approved_by=performed_by,
+        created_by=performed_by_user,
+    )
+    # wallet_refund_transaction is mutable on CONFIRMED.
+    ev.wallet_refund_transaction = refund_tx
+    ev.status = MealServiceEvent.Status.REFUNDED
+    ev.reason_code = reason_code or REASON_SUPERVISOR_REFUND
+    ev.reason_notes = reason_notes or ""
+    ev.reversed_at = timezone.now()
+    ev.reversed_by = performed_by_user
+    ev.save(update_fields=[
+        "status", "reason_code", "reason_notes",
+        "wallet_refund_transaction", "reversed_at", "reversed_by",
+        "updated_at",
+    ])
+
+    _write_audit(
+        service_event=ev,
+        action=MealSupervisorAction.Action.REFUND,
+        reason_code=reason_code or REASON_SUPERVISOR_REFUND,
+        reason_notes=reason_notes,
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+    return ev
+
+
+@transaction.atomic
+def void_service_event(
+    *,
+    service_event: MealServiceEvent,
+    performed_by=None,
+    performed_by_user=None,
+    reason_code: str = "",
+    reason_notes: str = "",
+) -> MealServiceEvent:
+    """Void a service event.
+
+    For a CONFIRMED event with a wallet charge: reverses the charge
+    via ``finance.refund()`` before transitioning to VOIDED. The
+    ``wallet_refund_transaction`` FK is set.
+
+    For PENDING / UNPAID / DENIED events: transitions directly to
+    VOIDED with no wallet call.
+
+    Enforces ``MealPlan.allow_supervisor_refund`` when a charge
+    reversal is needed (voiding a charged event is effectively a
+    refund). For non-charged voids, no supervisor-policy flag is
+    checked (voiding a pending event is an admin correction).
+    """
+    from .validators import (
+        validate_service_event_status_transition,
+        validate_supervisor_can_refund,
+    )
+
+    ev = _lock_service_event(service_event)
+    meal_plan = ev.meal_plan
+
+    validate_service_event_status_transition(
+        current_status=ev.status, new_status=MealServiceEvent.Status.VOIDED
+    )
+
+    # If the event has a wallet charge, reverse it before voiding.
+    if ev.wallet_transaction is not None:
+        # Voiding a charged event is effectively a refund — enforce
+        # the refund policy flags.
+        validate_supervisor_can_refund(meal_plan=meal_plan, reason_code=reason_code)
+
+        from apps.finance.services import refund as finance_refund
+
+        refund_tx = finance_refund(
+            person=ev.person,
+            original_transaction=ev.wallet_transaction,
+            reason_code=reason_code or REASON_SUPERVISOR_VOID,
+            approved_by=performed_by,
+            created_by=performed_by_user,
+        )
+        # wallet_refund_transaction is mutable on CONFIRMED.
+        ev.wallet_refund_transaction = refund_tx
+
+    ev.status = MealServiceEvent.Status.VOIDED
+    ev.reason_code = reason_code or REASON_SUPERVISOR_VOID
+    ev.reason_notes = reason_notes or ""
+    ev.reversed_at = timezone.now()
+    ev.reversed_by = performed_by_user
+    ev.save(update_fields=[
+        "status", "reason_code", "reason_notes",
+        "wallet_refund_transaction", "reversed_at", "reversed_by",
+        "updated_at",
+    ])
+
+    _write_audit(
+        service_event=ev,
+        action=MealSupervisorAction.Action.VOID,
+        reason_code=reason_code or REASON_SUPERVISOR_VOID,
+        reason_notes=reason_notes,
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+    return ev
+
+
+@transaction.atomic
+def supervisor_override(
+    *,
+    person,
+    on_date,
+    decision: str,
+    reason_code: str = "",
+    reason_notes: str = "",
+    performed_by=None,
+    performed_by_user=None,
+    meal_plan=None,
+) -> MealEligibility:
+    """Override the eligibility decision for ``(person, on_date)``.
+
+    Writes a ``MealSupervisorAction(action=OVERRIDE_ELIGIBLE or
+    OVERRIDE_DENIED)`` audit row, then upserts the
+    :class:`MealEligibility` row with the overridden decision.
+
+    If the eligibility row is already frozen (referenced by a
+    ``MealServiceEvent``), the override is rejected — corrections must
+    be audited against the service event, not the eligibility row.
+
+    Enforces ``MealPlan.require_reason_on_override``.
+    """
+    from .models import MealEligibility
+    from .validators import (
+        validate_eligibility_not_frozen,
+        validate_supervisor_override_reason,
+    )
+
+    # Resolve the meal_plan from an existing eligibility row if not supplied.
+    existing = eligibility_for(person=person, on_date=on_date)
+    effective_plan = meal_plan or (existing.meal_plan if existing else None)
+
+    validate_supervisor_override_reason(
+        meal_plan=effective_plan, reason_code=reason_code
+    )
+
+    # The eligibility must not be frozen.
+    if existing is not None:
+        validate_eligibility_not_frozen(eligibility=existing)
+
+    # Map the override decision to the MealEligibility.Decision enum.
+    if decision in (
+        MealEligibility.Decision.OVERRIDDEN_ELIGIBLE,
+        MealEligibility.Decision.OVERRIDDEN_DENIED,
+    ):
+        override_decision = decision
+    elif decision.lower() in ("eligible", "override_eligible"):
+        override_decision = MealEligibility.Decision.OVERRIDDEN_ELIGIBLE
+    elif decision.lower() in ("denied", "override_denied"):
+        override_decision = MealEligibility.Decision.OVERRIDDEN_DENIED
+    else:
+        raise ValidationError(
+            {"decision": f"Unknown override decision: {decision!r}."}
+        )
+
+    action = (
+        MealSupervisorAction.Action.OVERRIDE_ELIGIBLE
+        if override_decision == MealEligibility.Decision.OVERRIDDEN_ELIGIBLE
+        else MealSupervisorAction.Action.OVERRIDE_DENIED
+    )
+
+    default_reason = (
+        REASON_SUPERVISOR_OVERRIDE_ELIGIBLE
+        if override_decision == MealEligibility.Decision.OVERRIDDEN_ELIGIBLE
+        else REASON_SUPERVISOR_OVERRIDE_DENIED
+    )
+
+    # Upsert the eligibility row.
+    if existing is None:
+        existing = MealEligibility.objects.create(
+            person=person,
+            student=getattr(person, "student_profile", None),
+            date=on_date,
+            decision=override_decision,
+            meal_plan=effective_plan,
+            reason_code=reason_code or default_reason,
+            reason_notes=reason_notes or "",
+            resolved_by=performed_by_user,
+        )
+    else:
+        existing.decision = override_decision
+        existing.meal_plan = effective_plan
+        existing.reason_code = reason_code or default_reason
+        existing.reason_notes = reason_notes or ""
+        existing.resolved_by = performed_by_user
+        existing.save(update_fields=[
+            "decision", "meal_plan", "reason_code", "reason_notes",
+            "resolved_by",
+        ])
+
+    # Write the audit row against the eligibility (not a service event).
+    MealSupervisorAction.objects.create(
+        eligibility=existing,
+        action=action,
+        reason_code=reason_code or default_reason,
+        reason_notes=reason_notes or "",
+        performed_by=performed_by,
+        performed_by_user=performed_by_user,
+    )
+    return existing

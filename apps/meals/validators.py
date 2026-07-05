@@ -421,3 +421,92 @@ def validate_eligibility_not_frozen(*, eligibility) -> None:
             )
             % {"person": eligibility.person, "date": eligibility.date}
         )
+
+
+# ===========================================================================
+# Phase 3B-2 — Supervisor workflow validators
+# ===========================================================================
+
+
+def validate_supervisor_can_confirm(*, meal_plan, reason_code="") -> None:
+    """Check ``MealPlan.allow_supervisor_confirm`` before confirming."""
+    if meal_plan is not None and not meal_plan.allow_supervisor_confirm:
+        raise ValidationError(
+            _("Supervisor confirmation is not allowed for plan %(plan)s.")
+            % {"plan": meal_plan}
+        )
+
+
+def validate_supervisor_can_unconfirm(*, meal_plan, reason_code="") -> None:
+    """Check ``MealPlan.allow_supervisor_unconfirm`` and
+    ``require_reason_on_unconfirm`` before unconfirming."""
+    if meal_plan is not None:
+        if not meal_plan.allow_supervisor_unconfirm:
+            raise ValidationError(
+                _("Supervisor unconfirmation is not allowed for plan %(plan)s.")
+                % {"plan": meal_plan}
+            )
+        if meal_plan.require_reason_on_unconfirm and not (reason_code or "").strip():
+            raise ValidationError(
+                _("A reason code is required to unconfirm a service event for plan %(plan)s.")
+                % {"plan": meal_plan}
+            )
+
+
+def validate_supervisor_can_refund(*, meal_plan, reason_code="") -> None:
+    """Check ``MealPlan.allow_supervisor_refund`` and
+    ``require_reason_on_refund`` before refunding."""
+    if meal_plan is not None:
+        if not meal_plan.allow_supervisor_refund:
+            raise ValidationError(
+                _("Supervisor refund is not allowed for plan %(plan)s.")
+                % {"plan": meal_plan}
+            )
+        if meal_plan.require_reason_on_refund and not (reason_code or "").strip():
+            raise ValidationError(
+                _("A reason code is required to refund a service event for plan %(plan)s.")
+                % {"plan": meal_plan}
+            )
+
+
+def validate_supervisor_override_reason(*, meal_plan, reason_code="") -> None:
+    """Check ``MealPlan.require_reason_on_override`` before overriding."""
+    if meal_plan is not None:
+        if meal_plan.require_reason_on_override and not (reason_code or "").strip():
+            raise ValidationError(
+                _("A reason code is required to override eligibility for plan %(plan)s.")
+                % {"plan": meal_plan}
+            )
+
+
+# --- Service-event status-transition rules (§12) ----------------------
+#
+# PENDING → CONFIRMED / DENIED / VOIDED
+# CONFIRMED → REFUNDED / VOIDED (via refund/void)
+# UNPAID → CONFIRMED (supervisor pays manually) / VOIDED
+# DENIED → (terminal, no transition)
+# REFUNDED → (terminal)
+# VOIDED → (terminal)
+
+_SERVICE_EVENT_TRANSITIONS: dict[str, set[str]] = {
+    "pending": {"confirmed", "denied", "voided"},
+    "confirmed": {"refunded", "voided", "pending"},  # pending = unconfirm
+    "unpaid": {"confirmed", "voided"},
+    "denied": set(),
+    "refunded": set(),
+    "voided": set(),
+}
+
+
+def validate_service_event_status_transition(
+    *, current_status: str, new_status: str
+) -> None:
+    """Validate a MealServiceEvent status transition (§12)."""
+    allowed = _SERVICE_EVENT_TRANSITIONS.get(current_status, set())
+    if new_status not in allowed:
+        raise ValidationError(
+            _(
+                "Invalid service event status transition: %(from)s -> %(to)s."
+                % {"from": current_status, "to": new_status}
+            )
+        )
