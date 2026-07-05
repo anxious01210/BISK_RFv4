@@ -546,3 +546,38 @@ def supervisor_actions_for_eligibility(*, eligibility) -> QuerySet:
     return MealSupervisorAction.objects.select_related(
         "performed_by", "performed_by_user"
     ).filter(eligibility=eligibility)
+
+
+# ===========================================================================
+# Phase 3B-1 — Service-resolution selectors
+# ===========================================================================
+
+
+def pending_service_event_for(
+    *, person, date, meal_period=None
+):
+    """Return the most recent PENDING ``MealServiceEvent`` for
+    ``(person, date, meal_period)`` or ``None``.
+
+    ``resolve_service`` uses this to decide whether to create a new
+    event or update an existing PENDING one. Terminal-status events are
+    never returned (they are immutable — §12).
+    """
+    from .models import MealServiceEvent
+
+    qs = MealServiceEvent.objects.filter(
+        person=person,
+        date=date,
+        status=MealServiceEvent.Status.PENDING,
+    )
+    if meal_period is not None:
+        qs = qs.filter(meal_period=meal_period)
+    return qs.order_by("-id").first()
+
+
+def service_event_referenced_by_eligibility(eligibility_id) -> bool:
+    """Return True if any ``MealServiceEvent`` references the given
+    eligibility row. Used by the freeze validator."""
+    from .models import MealServiceEvent
+
+    return MealServiceEvent.objects.filter(eligibility_id=eligibility_id).exists()

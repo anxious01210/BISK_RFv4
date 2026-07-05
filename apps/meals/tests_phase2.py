@@ -752,14 +752,18 @@ class ResolveEligibilityTests(Phase2BaseData):
         elig = resolve_eligibility(
             person=self.person_student, on_date=self.today
         )
-        # Wallet mode is not implemented in Phase 2 → NOT_ELIGIBLE with
-        # the wallet_mode_not_implemented reason.
-        self.assertEqual(elig.decision, MealEligibility.Decision.NOT_ELIGIBLE)
-        self.assertEqual(elig.reason_code, "wallet_mode_not_implemented")
+        # Phase 3B-1: wallet-mode subscriptions now grant ELIGIBLE
+        # (the charging decision — CONFIRMED vs UNPAID vs DENIED — is
+        # made by resolve_service based on insufficient_funds_mode).
+        self.assertEqual(elig.decision, MealEligibility.Decision.ELIGIBLE)
+        self.assertEqual(elig.reason_code, "wallet_subscription")
 
-    # --- Wallet mode (Phase 2 defers to Phase 3) ------------------------
+    # --- Wallet mode (Phase 3B-1 grants ELIGIBLE; charging in resolve_service) ---
 
     def test_wallet_only_subscription_not_eligible_in_phase2(self):
+        # Phase 3B-1 update: wallet-mode subscriptions now grant
+        # ELIGIBLE at the eligibility layer. The charging/deny decision
+        # moved to resolve_service (Phase 3B-1).
         create_subscription(
             person=self.person_student,
             meal_plan=self.plan_wallet,
@@ -771,8 +775,9 @@ class ResolveEligibilityTests(Phase2BaseData):
         elig = resolve_eligibility(
             person=self.person_student, on_date=self.today
         )
-        self.assertEqual(elig.decision, MealEligibility.Decision.NOT_ELIGIBLE)
-        self.assertEqual(elig.reason_code, "wallet_mode_not_implemented")
+        # Phase 3B-1: wallet-mode subscriptions now grant ELIGIBLE.
+        self.assertEqual(elig.decision, MealEligibility.Decision.ELIGIBLE)
+        self.assertEqual(elig.reason_code, "wallet_subscription")
 
     # --- Exceptions -----------------------------------------------------
 

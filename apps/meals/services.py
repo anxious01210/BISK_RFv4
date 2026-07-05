@@ -1,5 +1,6 @@
-"""Meals-domain services — Phase 1 (pricing) and Phase 2 (subscriptions
-+ eligibility).
+"""Meals-domain services — Phase 1 (pricing), Phase 2 (subscriptions
++ eligibility), and Phase 3B-1 (service resolution with wallet
+charging).
 
 Phase 1 implements :func:`resolve_price`, a **pure** function: it
 does not touch the wallet, does not call ``apps.finance``, does not
@@ -15,13 +16,25 @@ Phase 2 adds the subscription lifecycle services (``create_subscription``
 ``resolve_eligibility``. ``resolve_eligibility`` follows §13 step 4a
 (DATE_RANGE primary grants eligibility with no wallet charge) and
 §13 step 5 (exception match) and §13 step 6 (default NOT_ELIGIBLE).
-It does **not** perform wallet-mode charging (§13 step 4b) — that is
-Phase 3's ``resolve_service``.
 
-Out of scope (Phase 3+):
-* ``MealServiceEvent`` / ``MealSupervisorAction`` /
-  ``resolve_service`` / wallet charging / finance calls /
-  supervisor workflow / legacy migration / discounts.
+Phase 3B-1 adds :func:`resolve_service` — the full §13 service
+resolver. It composes ``resolve_eligibility`` + ``resolve_price`` +
+``finance.check_balance`` / ``finance.charge`` and writes the
+immutable :class:`MealServiceEvent` with price + financial snapshots.
+DATE_RANGE plans produce a no-charge CONFIRMED event; WALLET plans
+produce a CONFIRMED (DEBIT) or UNPAID or DENIED event per the
+``MealPlan.insufficient_funds_mode`` policy. Eligibility is frozen
+once a service event references it (§12.1).
+
+Out of scope (Phase 3B-2+):
+* ``confirm`` / ``deny`` / ``unconfirm`` / ``refund`` / ``void``
+  supervisor workflow services (each writing a
+  ``MealSupervisorAction`` audit row).
+* ``finance.refund`` calls (refund flow).
+* Academic-presence / absence gates (§13 step 7) — needs attendance.
+* Supervisor dashboard views.
+* Legacy / data migration.
+* Discounts.
 """
 
 from __future__ import annotations
@@ -30,14 +43,25 @@ from datetime import date
 from typing import Optional
 
 from django.db import transaction
+from django.utils import timezone
 
-from .models import MealPeriod, MealPeriodPrice, MealPersonPriceOverride, MealPlan, MealSubscription
+from .models import (
+    MealEligibility,
+    MealPeriod,
+    MealPeriodPrice,
+    MealPersonPriceOverride,
+    MealPlan,
+    MealServiceEvent,
+    MealSubscription,
+    MealSupervisorAction,
+)
 from .selectors import (
     active_override_for_date,
     active_subscriptions_for,
     eligibility_for,
     exceptions_for,
     get_period_price,
+    pending_service_event_for,
 )
 from .validators import (
     validate_effective_window,
@@ -512,20 +536,20 @@ def resolve_eligibility(*, person, on_date, resolved_by=None) -> "MealEligibilit
             winning_plan = sub.meal_plan
             break
         if sub.meal_plan.mode == MealPlan.Mode.WALLET:
-            # 4b. Wallet mode — Phase 3 territory (resolve_price +
-            # finance.check_balance + finance.charge). In Phase 2 we
-            # cannot charge, so we do NOT grant eligibility; the next
-            # candidate (e.g. a lower-priority DATE_RANGE fallback) is
-            # evaluated. If no other candidate grants eligibility, the
-            # final decision stays NOT_ELIGIBLE with this reason.
-            if decision == MealEligibility.Decision.NOT_ELIGIBLE:
-                reason_code = "wallet_mode_not_implemented"
-                reason_notes = (
-                    "Wallet-mode charging is implemented in Phase 3; "
-                    "no eligibility granted in Phase 2 for wallet plans."
-                )
-            # Continue to next candidate.
-            continue
+            # 4b. Wallet mode — Phase 3B territory (resolve_price +
+            # finance.check_balance + finance.charge). The eligibility
+            # decision is ELIGIBLE (the subscription entitles the person
+            # to a meal); the *charging* decision (CONFIRMED vs UNPAID
+            # vs DENIED on insufficient funds) is made by
+            # ``resolve_service`` based on ``MealPlan.insufficient_funds_mode``.
+            decision = MealEligibility.Decision.ELIGIBLE
+            reason_code = "wallet_subscription"
+            reason_notes = (
+                "Wallet-mode subscription; charging resolved by resolve_service."
+            )
+            winning_subscription = sub
+            winning_plan = sub.meal_plan
+            break
 
     # ---------------------------------------------------------------
     # 5. No subscription granted eligibility → check exceptions.
@@ -566,7 +590,10 @@ def resolve_eligibility(*, person, on_date, resolved_by=None) -> "MealEligibilit
     # ---------------------------------------------------------------
     # 8. Upsert the canonical eligibility row.
     # ---------------------------------------------------------------
-    from .validators import validate_eligibility_unique_for_person_date
+    from .validators import (
+        validate_eligibility_not_frozen,
+        validate_eligibility_unique_for_person_date,
+    )
 
     existing = eligibility_for(person=person, on_date=on_date)
     if existing is None:
@@ -584,8 +611,12 @@ def resolve_eligibility(*, person, on_date, resolved_by=None) -> "MealEligibilit
             reason_notes=reason_notes,
             resolved_by=resolved_by,
         )
+    # Freeze check: once a MealServiceEvent references this eligibility
+    # row, it must not be mutated (§12.1). Corrections are audited via
+    # MealSupervisorAction against the service event.
+    validate_eligibility_not_frozen(eligibility=existing)
     # Update in place (the row is recalculable until referenced by a
-    # future MealServiceEvent — Phase 3 will enforce freezing).
+    # MealServiceEvent — Phase 3B-1's resolve_service sets that FK).
     existing.decision = decision
     existing.subscription = winning_subscription
     existing.meal_plan = winning_plan
@@ -597,3 +628,565 @@ def resolve_eligibility(*, person, on_date, resolved_by=None) -> "MealEligibilit
         "reason_code", "reason_notes", "resolved_by",
     ])
     return existing
+
+
+# ===========================================================================
+# Phase 3B-1 — resolve_service (full §13 resolver with wallet charging)
+# ===========================================================================
+
+# Service-event reason codes (mirrors meals_domain_architecture.md §13).
+REASON_SERVICE_NO_ELIGIBILITY = "no_eligibility"
+REASON_SERVICE_DATE_RANGE_NO_CHARGE = "date_range_no_charge"
+REASON_SERVICE_WALLET_CHARGED = "wallet_charged"
+REASON_SERVICE_WALLET_UNPAID = "wallet_unpaid"
+REASON_SERVICE_INSUFFICIENT_FUNDS = "insufficient_funds"
+REASON_SERVICE_WALLET_ZERO_CHARGE = "wallet_zero_charge"
+
+# Source-module tag used on finance.charge calls and on the
+# WalletTransaction rows it creates.
+MEALS_SOURCE_MODULE = "meals"
+
+
+def _resolve_student_or_staff(person):
+    """Return ``(student, staff)`` for a Person based on attached
+    profiles. Used by ``resolve_service`` to populate the snapshot FKs
+    on the service event."""
+    student = getattr(person, "student_profile", None)
+    staff = getattr(person, "staff_profile", None)
+    return student, staff
+
+
+def _build_service_event_kwargs(
+    *,
+    person,
+    on_date,
+    meal_period,
+    eligibility,
+    subscription,
+    meal_plan,
+    academic_year,
+    created_by,
+):
+    """Build the common kwargs for a MealServiceEvent create/update."""
+    student, staff = _resolve_student_or_staff(person)
+    meal_period_label = ""
+    if meal_period is not None:
+        meal_period_label = meal_period.label or ""
+    return {
+        "person": person,
+        "student": student,
+        "staff": staff,
+        "date": on_date,
+        "eligibility": eligibility,
+        "subscription": subscription,
+        "meal_plan": meal_plan,
+        "meal_period": meal_period,
+        "meal_period_label_snapshot": meal_period_label,
+        "served_by": created_by,
+    }
+
+
+@transaction.atomic
+def resolve_service(
+    *,
+    person,
+    on_date,
+    meal_period=None,
+    academic_year=None,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Resolve meal service for ``(person, on_date, meal_period)``.
+
+    Implements §13 steps 1–8 of the resolver, composing:
+
+    * :func:`resolve_eligibility` — the eligibility decision.
+    * :func:`resolve_price` — the price-resolution (base + override
+      + discount = 0 stub until ``apps.discounts`` exists).
+    * :func:`finance.check_balance` / :func:`finance.charge` — wallet
+      charging for WALLET-mode plans.
+
+    Behaviour:
+
+    * **DATE_RANGE plan wins** → CONFIRMED service event with
+      ``final_charge_iqd = 0`` and no wallet call.
+    * **WALLET plan wins** → resolve price, then:
+        - ``insufficient_funds_mode=DENY`` and insufficient → DENIED.
+        - ``insufficient_funds_mode=ALLOW_UNPAID`` and insufficient →
+          UNPAID (no ``wallet_transaction`` FK; ``final_charge_iqd``
+          snapshotted but no balance impact).
+        - ``insufficient_funds_mode=ALLOW_NEGATIVE`` and within credit
+          limit → CONFIRMED with DEBIT (``finance.charge``).
+        - sufficient → CONFIRMED with DEBIT (``finance.charge``).
+    * **Exception (ONE_TIME / GUEST) wins** → if the exception has a
+      wallet-mode ``meal_plan``, the wallet path runs; otherwise
+      CONFIRMED with no charge.
+    * **NOT_ELIGIBLE** → DENIED service event.
+    * A ``MealSupervisorAction(action=CONFIRM or DENY)`` audit row is
+      written in the same transaction as the state change.
+    * The :class:`MealEligibility` row is referenced (FK) by the
+      service event, freezing it (§12.1). Subsequent
+      ``resolve_eligibility`` calls for the same ``(person, date)``
+      will raise ``ValidationError``.
+
+    If a PENDING service event already exists for
+    ``(person, date, meal_period)``, it is updated in place; otherwise
+    a new one is created. Terminal-status events are never mutated
+    (§12 immutability).
+
+    Returns the :class:`MealServiceEvent`.
+    """
+    # ---------------------------------------------------------------
+    # Step 1: resolve eligibility (writes/upserts the eligibility row).
+    # ---------------------------------------------------------------
+    eligibility = resolve_eligibility(
+        person=person, on_date=on_date, resolved_by=created_by
+    )
+
+    # Locate or create the service event shell (PENDING).
+    event = pending_service_event_for(
+        person=person, date=on_date, meal_period=meal_period
+    )
+
+    common_kwargs = _build_service_event_kwargs(
+        person=person,
+        on_date=on_date,
+        meal_period=meal_period,
+        eligibility=eligibility,
+        subscription=eligibility.subscription,
+        meal_plan=eligibility.meal_plan,
+        academic_year=academic_year,
+        created_by=created_by,
+    )
+
+    # ---------------------------------------------------------------
+    # Step 2: NOT_ELIGIBLE / OVERRIDDEN_DENIED → DENIED event.
+    # ---------------------------------------------------------------
+    if eligibility.decision in (
+        MealEligibility.Decision.NOT_ELIGIBLE,
+        MealEligibility.Decision.OVERRIDDEN_DENIED,
+    ):
+        return _finalize_denied_event(
+            event=event,
+            common_kwargs=common_kwargs,
+            eligibility=eligibility,
+            reason_code=eligibility.reason_code or REASON_SERVICE_NO_ELIGIBILITY,
+            reason_notes=eligibility.reason_notes,
+            recognition_event=recognition_event,
+            created_by=created_by,
+        )
+
+    # ---------------------------------------------------------------
+    # Step 3: ELIGIBLE. Decide based on the winning plan's mode.
+    # ---------------------------------------------------------------
+    meal_plan = eligibility.meal_plan
+
+    # No plan attached (e.g. a guest exception without a plan) →
+    # CONFIRMED with no charge.
+    if meal_plan is None or meal_plan.mode == MealPlan.Mode.DATE_RANGE:
+        return _finalize_date_range_event(
+            event=event,
+            common_kwargs=common_kwargs,
+            eligibility=eligibility,
+            meal_plan=meal_plan,
+            reason_code=REASON_SERVICE_DATE_RANGE_NO_CHARGE,
+            reason_notes="Date-range plan covers the meal; no wallet charge.",
+            recognition_event=recognition_event,
+            created_by=created_by,
+        )
+
+    # ---------------------------------------------------------------
+    # Step 4: WALLET mode — resolve price, then charge the wallet.
+    # ---------------------------------------------------------------
+    return _resolve_wallet_mode(
+        event=event,
+        common_kwargs=common_kwargs,
+        person=person,
+        on_date=on_date,
+        meal_period=meal_period,
+        meal_plan=meal_plan,
+        eligibility=eligibility,
+        academic_year=academic_year,
+        recognition_event=recognition_event,
+        created_by=created_by,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers for resolve_service
+# ---------------------------------------------------------------------------
+
+
+def _create_or_update_pending_event(
+    *,
+    event,
+    common_kwargs,
+    recognition_event=None,
+    status=MealServiceEvent.Status.PENDING,
+    price_base_iqd=0,
+    price_override_iqd=0,
+    discount_iqd=0,
+    final_charge_iqd=0,
+    price_resolution_source="",
+    wallet_balance_before_iqd=0,
+    wallet_balance_after_iqd=0,
+    wallet_transaction=None,
+    wallet_refund_transaction=None,
+    reason_code="",
+    reason_notes="",
+    served_at=None,
+):
+    """Create a new MealServiceEvent or update an existing PENDING one
+    in place. Terminal events are never mutated (immutability — §12)."""
+    fields = {
+        **common_kwargs,
+        "status": status,
+        "price_base_iqd": price_base_iqd,
+        "price_override_iqd": price_override_iqd,
+        "discount_iqd": discount_iqd,
+        "final_charge_iqd": final_charge_iqd,
+        "price_resolution_source": price_resolution_source,
+        "wallet_balance_before_iqd": wallet_balance_before_iqd,
+        "wallet_balance_after_iqd": wallet_balance_after_iqd,
+        "wallet_transaction": wallet_transaction,
+        "wallet_refund_transaction": wallet_refund_transaction,
+        "reason_code": reason_code,
+        "reason_notes": reason_notes,
+        "served_at": served_at,
+        "recognition_event": recognition_event,
+    }
+
+    if event is None:
+        return MealServiceEvent.objects.create(**fields)
+
+    # Update the PENDING event in place. Per §12, PENDING events may be
+    # freely mutated (only terminal statuses are frozen).
+    for key, value in fields.items():
+        setattr(event, key, value)
+    event.save(update_fields=list(fields.keys()))
+    return event
+
+
+def _finalize_denied_event(
+    *,
+    event,
+    common_kwargs,
+    eligibility,
+    reason_code,
+    reason_notes,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Write a DENIED service event + a MealSupervisorAction(DENY) row."""
+    ev = _create_or_update_pending_event(
+        event=event,
+        common_kwargs=common_kwargs,
+        recognition_event=recognition_event,
+        status=MealServiceEvent.Status.DENIED,
+        reason_code=reason_code,
+        reason_notes=reason_notes,
+    )
+    MealSupervisorAction.objects.create(
+        service_event=ev,
+        action=MealSupervisorAction.Action.DENY,
+        reason_code=reason_code,
+        reason_notes=reason_notes,
+        performed_by_user=created_by,
+    )
+    return ev
+
+
+def _finalize_date_range_event(
+    *,
+    event,
+    common_kwargs,
+    eligibility,
+    meal_plan,
+    reason_code,
+    reason_notes,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Write a CONFIRMED no-charge service event for a DATE_RANGE plan
+    + a MealSupervisorAction(CONFIRM) row."""
+    ev = _create_or_update_pending_event(
+        event=event,
+        common_kwargs=common_kwargs,
+        recognition_event=recognition_event,
+        status=MealServiceEvent.Status.CONFIRMED,
+        price_base_iqd=0,
+        price_override_iqd=0,
+        discount_iqd=0,
+        final_charge_iqd=0,
+        price_resolution_source=reason_code,
+        reason_code=reason_code,
+        reason_notes=reason_notes,
+        served_at=timezone.now(),
+    )
+    MealSupervisorAction.objects.create(
+        service_event=ev,
+        action=MealSupervisorAction.Action.CONFIRM,
+        reason_code=reason_code,
+        reason_notes=reason_notes,
+        performed_by_user=created_by,
+    )
+    return ev
+
+
+def _resolve_wallet_mode(
+    *,
+    event,
+    common_kwargs,
+    person,
+    on_date,
+    meal_period,
+    meal_plan,
+    eligibility,
+    academic_year,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Resolve a WALLET-mode plan: price → check_balance → charge.
+
+    Implements §13 step 4b."""
+    # 4b.1 Resolve the price (pure function — no wallet calls).
+    if meal_period is not None:
+        base, override_delta, source = resolve_price(
+            person=person,
+            meal_plan=meal_plan,
+            meal_period=meal_period,
+            on_date=on_date,
+        )
+    else:
+        # No meal_period supplied — fall back to the plan default.
+        base = meal_plan.default_price_iqd
+        override_delta = 0
+        source = SOURCE_DEFAULT if base > 0 else SOURCE_DEFAULT_ZERO
+
+    # Until apps.discounts exists, discount_iqd = 0 (§19.6).
+    discount_iqd = 0
+    final_charge_iqd = max(0, base - discount_iqd)
+
+    # 4b.2 Check balance via finance (no wallet mutation).
+    from apps.finance.services import check_balance as finance_check_balance
+
+    balance, sufficient = finance_check_balance(
+        person=person, amount_iqd=final_charge_iqd
+    )
+
+    insufficient_funds_mode = meal_plan.insufficient_funds_mode
+
+    # 4b.3 Decide per MealPlan.insufficient_funds_mode.
+    if final_charge_iqd == 0:
+        # Zero charge — confirm with no wallet call.
+        return _finalize_wallet_zero_charge(
+            event=event,
+            common_kwargs=common_kwargs,
+            base=base,
+            override_delta=override_delta,
+            discount_iqd=discount_iqd,
+            final_charge_iqd=0,
+            source=source,
+            recognition_event=recognition_event,
+            created_by=created_by,
+        )
+
+    if sufficient or (
+        insufficient_funds_mode == MealPlan.InsufficientFundsMode.ALLOW_NEGATIVE
+    ):
+        # Sufficient funds (or ALLOW_NEGATIVE within credit limit) → charge.
+        return _finalize_wallet_charged(
+            event=event,
+            common_kwargs=common_kwargs,
+            person=person,
+            meal_plan=meal_plan,
+            academic_year=academic_year,
+            base=base,
+            override_delta=override_delta,
+            discount_iqd=discount_iqd,
+            final_charge_iqd=final_charge_iqd,
+            source=source,
+            balance_before=balance,
+            recognition_event=recognition_event,
+            created_by=created_by,
+        )
+
+    # Insufficient funds.
+    if insufficient_funds_mode == MealPlan.InsufficientFundsMode.ALLOW_UNPAID:
+        return _finalize_wallet_unpaid(
+            event=event,
+            common_kwargs=common_kwargs,
+            base=base,
+            override_delta=override_delta,
+            discount_iqd=discount_iqd,
+            final_charge_iqd=final_charge_iqd,
+            source=source,
+            balance_before=balance,
+            recognition_event=recognition_event,
+            created_by=created_by,
+        )
+
+    # DENY mode (default) → DENIED event.
+    return _finalize_denied_event(
+        event=event,
+        common_kwargs=common_kwargs,
+        eligibility=eligibility,
+        reason_code=REASON_SERVICE_INSUFFICIENT_FUNDS,
+        reason_notes=(
+            f"Insufficient funds: balance {balance}, required {final_charge_iqd}."
+        ),
+        recognition_event=recognition_event,
+        created_by=created_by,
+    )
+
+
+def _finalize_wallet_charged(
+    *,
+    event,
+    common_kwargs,
+    person,
+    meal_plan,
+    academic_year,
+    base,
+    override_delta,
+    discount_iqd,
+    final_charge_iqd,
+    source,
+    balance_before,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Charge the wallet via finance.charge and write a CONFIRMED
+    service event with the wallet-transaction FK + balance snapshots."""
+    from apps.finance.services import charge as finance_charge
+
+    # 4b.3.1 Charge (DEBIT). If insufficient (ALLOW_NEGATIVE beyond
+    # limit), finance.charge raises ValidationError — we let it
+    # propagate so the caller sees the finance-layer rejection.
+    tx = finance_charge(
+        person=person,
+        amount_iqd=final_charge_iqd,
+        source_module=MEALS_SOURCE_MODULE,
+        reference_type="MealServiceEvent",
+        reference_id=None,  # set below after the event is persisted
+        academic_year=academic_year,
+        description=f"meal_lunch base={base} discount={discount_iqd}",
+        created_by=created_by,
+    )
+
+    ev = _create_or_update_pending_event(
+        event=event,
+        common_kwargs=common_kwargs,
+        recognition_event=recognition_event,
+        status=MealServiceEvent.Status.CONFIRMED,
+        price_base_iqd=base,
+        price_override_iqd=override_delta,
+        discount_iqd=discount_iqd,
+        final_charge_iqd=final_charge_iqd,
+        price_resolution_source=source,
+        wallet_balance_before_iqd=tx.balance_before_iqd,
+        wallet_balance_after_iqd=tx.balance_after_iqd,
+        wallet_transaction=tx,
+        reason_code=REASON_SERVICE_WALLET_CHARGED,
+        reason_notes=f"Charged {final_charge_iqd} IQD (tx #{tx.pk}).",
+        served_at=timezone.now(),
+    )
+
+    # The ledger row's reference_id could not be set to the event PK at
+    # charge time (the event didn't exist yet). The ledger row is
+    # immutable, so we cannot update it now; the reverse relationship
+    # (MealServiceEvent.wallet_transaction → WalletTransaction) is the
+    # canonical link. Finance's generic reference_type="MealServiceEvent"
+    # + reference_id=None is acceptable for the audit trail.
+
+    MealSupervisorAction.objects.create(
+        service_event=ev,
+        action=MealSupervisorAction.Action.CONFIRM,
+        reason_code=REASON_SERVICE_WALLET_CHARGED,
+        reason_notes=f"Wallet charged {final_charge_iqd} IQD.",
+        performed_by_user=created_by,
+    )
+    return ev
+
+
+def _finalize_wallet_unpaid(
+    *,
+    event,
+    common_kwargs,
+    base,
+    override_delta,
+    discount_iqd,
+    final_charge_iqd,
+    source,
+    balance_before,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Write an UNPAID service event (insufficient funds allowed)."""
+    ev = _create_or_update_pending_event(
+        event=event,
+        common_kwargs=common_kwargs,
+        recognition_event=recognition_event,
+        status=MealServiceEvent.Status.UNPAID,
+        price_base_iqd=base,
+        price_override_iqd=override_delta,
+        discount_iqd=discount_iqd,
+        final_charge_iqd=final_charge_iqd,
+        price_resolution_source=source,
+        wallet_balance_before_iqd=balance_before,
+        wallet_balance_after_iqd=balance_before,  # no balance impact
+        wallet_transaction=None,
+        reason_code=REASON_SERVICE_WALLET_UNPAID,
+        reason_notes=(
+            f"Insufficient funds allowed as UNPAID; intended charge {final_charge_iqd} IQD."
+        ),
+    )
+    MealSupervisorAction.objects.create(
+        service_event=ev,
+        action=MealSupervisorAction.Action.CONFIRM,
+        reason_code=REASON_SERVICE_WALLET_UNPAID,
+        reason_notes="Insufficient funds; recorded as UNPAID.",
+        performed_by_user=created_by,
+    )
+    return ev
+
+
+def _finalize_wallet_zero_charge(
+    *,
+    event,
+    common_kwargs,
+    base,
+    override_delta,
+    discount_iqd,
+    final_charge_iqd,
+    source,
+    recognition_event=None,
+    created_by=None,
+) -> MealServiceEvent:
+    """Write a CONFIRMED service event for a zero-charge wallet plan
+    (e.g. default_price_iqd=0). No wallet call."""
+    ev = _create_or_update_pending_event(
+        event=event,
+        common_kwargs=common_kwargs,
+        recognition_event=recognition_event,
+        status=MealServiceEvent.Status.CONFIRMED,
+        price_base_iqd=base,
+        price_override_iqd=override_delta,
+        discount_iqd=discount_iqd,
+        final_charge_iqd=final_charge_iqd,
+        price_resolution_source=source,
+        wallet_balance_before_iqd=0,
+        wallet_balance_after_iqd=0,
+        wallet_transaction=None,
+        reason_code=REASON_SERVICE_WALLET_ZERO_CHARGE,
+        reason_notes="Wallet plan with zero charge; no wallet call.",
+        served_at=timezone.now(),
+    )
+    MealSupervisorAction.objects.create(
+        service_event=ev,
+        action=MealSupervisorAction.Action.CONFIRM,
+        reason_code=REASON_SERVICE_WALLET_ZERO_CHARGE,
+        reason_notes="Zero charge; no wallet call.",
+        performed_by_user=created_by,
+    )
+    return ev

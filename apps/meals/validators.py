@@ -379,3 +379,45 @@ def validate_supervisor_action_target(*, service_event=None, eligibility=None) -
         raise ValidationError(
             _("A supervisor action cannot target both a service event and an eligibility row.")
         )
+
+
+# ===========================================================================
+# Phase 3B-1 — Eligibility freezing
+# ===========================================================================
+
+
+def validate_eligibility_not_frozen(*, eligibility) -> None:
+    """A ``MealEligibility`` row that is referenced by a
+    ``MealServiceEvent`` is **frozen** and must not be mutated.
+
+    Per ``meals_domain_architecture.md`` §12.1: "Recalculable before
+    service; the row may be recomputed/overwritten by
+    ``resolve_eligibility`` at any time **before** a
+    ``MealServiceEvent`` references it. Frozen once referenced: once a
+    ``MealServiceEvent`` references the eligibility, the row is frozen
+    and must not be mutated. Further corrections are audited through
+    ``MealSupervisorAction`` records against the (immutable) service
+    event."
+
+    This validator is called by ``resolve_eligibility`` before upserting
+    an existing row. If the row is already referenced by a service
+    event, the validator raises ``ValidationError`` and the eligibility
+    is left unchanged. ``resolve_service`` sets ``MealServiceEvent.eligibility``
+    *after* resolving eligibility, so the freeze takes effect on the
+    next ``resolve_eligibility`` call for the same ``(person, date)``.
+    """
+    from .models import MealServiceEvent
+
+    if eligibility is None or not eligibility.pk:
+        return  # Nothing to freeze-check on an unsaved row.
+
+    referenced = MealServiceEvent.objects.filter(eligibility=eligibility).exists()
+    if referenced:
+        raise ValidationError(
+            _(
+                "Eligibility for person %(person)s on %(date)s is frozen "
+                "(referenced by a MealServiceEvent). Further corrections must "
+                "be audited via MealSupervisorAction against the service event."
+            )
+            % {"person": eligibility.person, "date": eligibility.date}
+        )
