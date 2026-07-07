@@ -171,6 +171,18 @@ class PeriodOccurrence(models.Model):
 
 class AttendanceRecord(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="attendance_records",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Identity Person this record belongs to. Backfilled from student via "
+            "StudentProfile.legacy_student. Nullable during the dual-FK transition window."
+        ),
+    )
     period = models.ForeignKey(PeriodOccurrence, on_delete=models.CASCADE)
     first_seen = models.DateTimeField()
     last_seen = models.DateTimeField()
@@ -195,8 +207,11 @@ class AttendanceRecord(models.Model):
     last_pass_at = models.DateTimeField(blank=True, null=True, db_index=True)  # new
 
     class Meta:
-        unique_together = [("student", "period")]
-        indexes = [models.Index(fields=["student", "period"])]
+        unique_together = [("student", "period"), ("person", "period")]
+        indexes = [
+            models.Index(fields=["student", "period"]),
+            models.Index(fields=["person", "period"]),
+        ]
 
 
 class AttendanceEvent(models.Model):

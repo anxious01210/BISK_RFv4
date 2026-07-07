@@ -255,3 +255,166 @@ the `(person, period)` unique_together + index (mirroring the existing
 document at `.tmp/reviews/2026-07-07_attendance-identity-design/attendance_
 identity_adoption_design.md` §4.3 + §10 S7–S9.
 
+---
+
+## M3 — AttendanceRecord person FK (attendance identity adoption)
+
+Date: 2026-07-07
+Branch: `feature/person-architecture`
+Phase: 1.5 (Person architecture) — Attendance Identity adoption, milestone M3.
+
+### Context
+
+The third and final attendance identity-adoption step (M3) introduces a
+nullable `person` FK on `apps.attendance.AttendanceRecord`, alongside the
+legacy `student` FK. This is the most complex milestone because
+`AttendanceRecord` carries the only **upsert invariant** in the attendance
+domain (`unique_together [("student", "period")]` + `get_or_create(student=...,
+period=...)`). M3 follows the dual-FK additive pattern proven in M1/M2 but
+takes a conservative approach to the upsert: the key stays `(student, period)`,
+and `person` is added to the `defaults` dict + defensively set on found
+records.
+
+### Schema changes
+
+- `apps.attendance.models.AttendanceRecord.person` — nullable FK to
+  `apps.identity.Person`, `on_delete=CASCADE`, `db_index=True`,
+  `related_name="attendance_records"`.
+- New coexisting `unique_together = [("person", "period")]` alongside the
+  existing `[("student", "period")]`. PostgreSQL allows multiple NULLs in a
+  UNIQUE constraint, so unmigrated records (person=NULL) don't conflict.
+- New coexisting `Index(fields=["person", "period"])` alongside the existing
+  `Index(fields=["student", "period"])`.
+
+### Migrations
+
+- `0036_attendancerecord_person` — schema migration (AddField), auto-generated.
+  Dependencies: `attendance 0035_attendanceevent_person_backfill`,
+  `identity 0002_seed_roletypes`.
+- `0037_attendancerecord_person_backfill` — data migration that backfills
+  `AttendanceRecord.person_id` from `StudentProfile.legacy_student_id` →
+  `Person.id`. Idempotent (`filter(person__isnull=True)`), batched
+  (`chunk_size=500`), grouped `update(pk__in=...)` per `person_id` to minimize
+  write traffic on the largest attendance table. Reverse is a no-op. Logic
+  lives in `_0037_helper.py` so tests can import it.
+- `0038_attendancerecord_person_unique` — constraint migration (auto-generated
+  by `makemigrations`, renamed from Django's default name to match the
+  expected scope). Adds `AlterUniqueTogether` (both `(student, period)` and
+  `(person, period)`) + `AddIndex` for `(person, period)`. Dependencies:
+  `attendance 0037`, `cameras 0009`, `identity 0002`.
+
+### Service-layer changes
+
+- `apps.attendance.services.py::_write_from_match` — **conservative dual-write**:
+  - The `get_or_create` upsert key **remains `(student, period)`**. It is NOT
+    switched to `(person, period)` — that is deferred to design step S9 after
+    reconciliation confirms all records have `person_id` set.
+  - `person=person` is added to the `defaults` dict so new records get
+    `person_id` set on creation.
+  - In the `if not created` block, `rec.person_id` is defensively set to
+    `person.pk` when `rec.person_id is None` and `person is not None` (edge
+    case: student migrated after the 0037 backfill ran).
+  - A `person_id_set` flag tracks whether `person_id` was changed; the flag is
+    used to include `"person_id"` in the `save(update_fields=...)` call of the
+    re-register window short-circuit path.
+  - The default update path uses `rec.save()` (no `update_fields`), so
+    `person_id` is always saved there.
+
+### Critical design decision: upsert key NOT switched
+
+M3 deliberately does NOT switch the upsert key from `(student, period)` to
+`(person, period)`. The hazard (design R3): if a record exists with
+`person=NULL` (created before backfill, or the student was migrated after
+backfill), a person-keyed `get_or_create(person=P, period=O)` would NOT find
+it, try to CREATE a new one, and violate the existing `(student, period)`
+unique constraint → `IntegrityError`. The safe approach keeps the
+`(student, period)` key and uses `defaults` + defensive set. The key switch
+is deferred to design step S9.
+
+### No read-path / API / admin / serializer / resource / bridge change
+
+- `apps/attendance.api.py` — unchanged.
+- `apps/attendance.admin.py` — unchanged. `AttendanceRecordAdmin` keeps
+  `student__*` search/display.
+- `apps/attendance.views.py` — unchanged. All subqueries filter on
+  `student_id` (FK intact).
+- `apps/attendance.serializers.py` — unchanged. Sources from `obj.student.*`.
+- `apps/attendance.resources.py` — unchanged.
+- `apps.meals.integrations.attendance` — unchanged. Bridge stays fallback-only.
+
+### Tests
+
+- `apps/attendance/tests.py` — 39 new tests across 8 classes (M3 sections):
+  - `AttendanceRecordPersonFKTests` — schema, FK config, related_name,
+    db_index, unique_together + index coexistence.
+  - `AttendanceRecordConstraintTests` — `(person, period)` unique constraint
+    behavior (duplicate raises, NULL allowed, different persons allowed,
+    different periods allowed).
+  - `RecordDualWriteDefaultsTests` — new records get person via defaults;
+    existing records found by `(student, period)` get person_id defensively
+    set; person_id not overwritten when already set; unmigrated stays NULL;
+    no duplicate records created.
+  - `RecordReregisterWindowTests` — defensive `person_id` set persisted via
+    `save(update_fields=...)` in the re-register short-circuit path.
+  - `UpsertInvariantRegressionTests` — multiple events same student+period =
+    1 record; mixed migrated/unmigrated = 2 records; multi-period tie.
+  - `RecordBackfillMigrationTests` — 0037 backfill forwards/backwards
+    (idempotent, skips unmigrated, noop reverse, batches).
+  - `RecordReadPathRegressionTests` — admin list unchanged, serializer sources
+    student.
+  - `RecordBridgeFallbackRegressionTests` — bridge resolves Person via the
+    backlink when record.person is NULL or set.
+
+### Verification
+
+- `python manage.py check` — clean (1 expected warning: GlobalResourceSettings).
+- `python manage.py makemigrations --check --dry-run` — no changes detected.
+- `apps.attendance.tests` — 101/101 tests OK (26 M1 + 36 M2 + 39 M3; no
+  regression).
+- `apps.meals.tests_integrations_attendance` — 20/20 tests OK (no regression).
+
+### Files modified
+
+- `apps/attendance/models.py`
+- `apps/attendance/services.py`
+- `apps/attendance/tests.py`
+- `docs/agent/CHANGELOG_AI.md`
+
+### Files added
+
+- `apps/attendance/migrations/0036_attendancerecord_person.py`
+- `apps/attendance/migrations/0037_attendancerecord_person_backfill.py`
+- `apps/attendance/migrations/_0037_helper.py`
+- `apps/attendance/migrations/0038_attendancerecord_person_unique.py`
+
+### Reversibility
+
+- `migrate attendance 0035` reverses `0036` (AddField → drops column),
+  `0037` (RunPython noop), and `0038` (AlterUniqueTogether + AddIndex →
+  drops constraint + index). The `student` FK and the existing
+  `(student, period)` invariant are untouched.
+- Code revert restores the original `get_or_create` defaults (without
+  `person`) and removes the defensive `person_id` set.
+- The only irreversible step (`student` FK drop) is design step S13, a
+  separate approved release.
+
+### Pre-deployment check
+
+Before applying the constraint migration (0038) on production, run:
+```sql
+SELECT person_id, period_id, COUNT(*)
+FROM attendance_attendancerecord
+WHERE person_id IS NOT NULL
+GROUP BY person_id, period_id
+HAVING COUNT(*) > 1;
+```
+If this returns rows, resolve the duplicates before applying 0038.
+
+### Next milestone
+
+S9 — switch the `AttendanceRecord` upsert key from `(student, period)` to
+`(person, period)` when `person` is non-null. This is deferred until
+reconciliation confirms every record whose Student is migrated has
+`person_id` set. See the design document §4.3 + §10 S9 and the M3 readiness
+review's special warning section.
+

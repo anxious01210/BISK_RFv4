@@ -174,10 +174,15 @@ def _write_from_match(
         )
 
         # Upsert the per-period record
+        # M3 identity adoption: upsert STILL keys on (student, period) — do NOT
+        # switch to (person, period) until S9 (after reconciliation confirms all
+        # records have person_id set). person is added to defaults so new records
+        # get it set; found records get person_id defensively set below.
         rec, created = AttendanceRecord.objects.get_or_create(
             student=student,
             period=occ,
             defaults=dict(
+                person=person,
                 first_seen=ts_local,
                 last_seen=ts_local,
                 best_seen=ts_local,
@@ -193,6 +198,14 @@ def _write_from_match(
         )
 
         if not created:
+            # M3 defensive: ensure person_id is set on records created before
+            # backfill (edge case: student migrated after the 0037 backfill ran).
+            # Track whether we changed person_id so we can include it in
+            # save(update_fields=...) calls below.
+            person_id_set = False
+            if person is not None and rec.person_id is None:
+                rec.person_id = person.pk
+                person_id_set = True
             # Re-register window logic (unchanged)
             if rs and getattr(rs, "re_register_window_sec", None):
                 delta = (ts_local - rec.last_seen).total_seconds()
@@ -202,7 +215,10 @@ def _write_from_match(
                         if (score or 0.0) < (rec.best_score or 0.0) + need:
                             rec.last_seen = max(rec.last_seen, ts_local)
                             rec.sightings = (rec.sightings or 0) + 1
-                            rec.save(update_fields=["last_seen", "sightings"])
+                            update_fields = ["last_seen", "sightings"]
+                            if person_id_set:
+                                update_fields.append("person_id")
+                            rec.save(update_fields=update_fields)
                             if first_event is None:
                                 first_event, first_record = ev, rec
                             wrote += 1
