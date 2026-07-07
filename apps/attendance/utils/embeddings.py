@@ -456,6 +456,11 @@ def enroll_student_from_folder(
     except Student.DoesNotExist:
         return {"ok": False, "reason": f"Active student not found for H_CODE={h_code}"}
 
+    # M1 identity adoption: resolve Person via StudentProfile.legacy_student
+    # backlink. None when the student is not yet migrated to identity.
+    from apps.attendance.services import _resolve_person_from_student
+    person = _resolve_person_from_student(st)
+
     notes = build_enroll_notes(
         k_used=len(embs),
         det_size=det,
@@ -493,6 +498,10 @@ def enroll_student_from_folder(
         "enroll_runtime_ms": int((time.time() - t0) * 1000),
         "enroll_notes": notes,
     }
+    # M1 dual-write: populate person when the student is migrated to identity.
+    # person is None for unmigrated students (legacy student path keeps working).
+    if person is not None:
+        payload["person"] = person
 
     with transaction.atomic():
         qs_active = (FaceEmbedding.objects

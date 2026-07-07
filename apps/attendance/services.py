@@ -19,6 +19,32 @@ from .models import (
 )
 
 
+def _resolve_person_from_student(student):
+    """Resolve ``identity.Person`` from a legacy ``attendance.Student`` via
+    the ``StudentProfile.legacy_student`` backlink.
+
+    Read-only. Returns ``None`` if the student has not been migrated to the
+    identity domain yet (i.e. no ``StudentProfile`` link exists). This is
+    expected in production until the Phase 1.5 identity data migration runs
+    for that student.
+
+    Used by the M1 dual-write path (``enroll_student_from_folder``,
+    ``EnrollView``) to set ``FaceEmbedding.person`` alongside the legacy
+    ``student`` FK.
+    """
+    if student is None:
+        return None
+    from django.apps import apps as django_apps
+    StudentProfile = django_apps.get_model("identity", "StudentProfile")
+    sp = (
+        StudentProfile.objects
+        .filter(legacy_student=student)
+        .select_related("person")
+        .first()
+    )
+    return sp.person if sp else None
+
+
 # # --- Private: resolve today's occurrence that contains ts (inclusive) --- (this one gets the ones with the lowest order number and only returns the 1st one.
 # def _resolve_occurrence(ts):
 #     ts_local = timezone.localtime(ts if ts else timezone.now())

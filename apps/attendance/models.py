@@ -360,6 +360,19 @@ class FaceEmbedding(models.Model):
         related_name="embeddings",
         help_text="The student this embedding belongs to."
     )
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="embeddings",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Identity Person this embedding belongs to. "
+            "Backfilled from student via StudentProfile.legacy_student. "
+            "Nullable during the dual-FK transition window."
+        ),
+    )
     dim = models.PositiveSmallIntegerField(
         default=512,
         help_text="Embedding dimensionality. We use 512 for ArcFace."
@@ -475,6 +488,11 @@ class FaceEmbedding(models.Model):
                 fields=("student",),
                 condition=Q(is_active=True),
                 name="uniq_active_embedding_per_student",
+            ),
+            UniqueConstraint(
+                fields=("person",),
+                condition=Q(is_active=True),
+                name="uniq_active_embedding_per_person",
             ),
         ]
 

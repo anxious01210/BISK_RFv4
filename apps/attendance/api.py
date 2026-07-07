@@ -381,6 +381,11 @@ class EnrollView(APIView):
         if not student:
             return Response({"detail": "unknown student"}, status=404)
 
+        # M1 identity adoption: resolve Person for dual-write.
+        # None when the student is not yet migrated to identity (legacy path).
+        from apps.attendance.services import _resolve_person_from_student
+        person = _resolve_person_from_student(student)
+
         cam = None
         cam_id = data.get("camera_id")
         if cam_id is not None:
@@ -388,6 +393,7 @@ class EnrollView(APIView):
 
         emb = FaceEmbedding.objects.create(
             student=student,
+            person=person,
             dim=dim,
             vector=raw,
             camera=cam,
