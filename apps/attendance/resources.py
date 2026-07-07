@@ -25,15 +25,42 @@ class AttendanceRecordResource(resources.ModelResource):
     best_score = fields.Field(attribute="best_score", column_name="Best score")
     confirmed = fields.Field(attribute="confirmed", column_name="Confirmed")
 
-    # Meal snapshot fields (the important part)
-    meal_eligible_at_time = fields.Field(attribute="meal_eligible_at_time", column_name="Meal eligible at time")
-    meal_reason_code = fields.Field(attribute="meal_reason_code", column_name="Meal reason code")
-    meal_reason_notes = fields.Field(attribute="meal_reason_notes", column_name="Meal reason notes")
-    meal_subscription_id = fields.Field(attribute="meal_subscription_id", column_name="Meal subscription ID")
+    # Meal snapshot fields — sourced from the reverse OneToOne MealRecord
+    # relation (obj.meal_record). These are NOT direct attributes on
+    # AttendanceRecord. The dehydrate_* methods safely return None when no
+    # MealRecord exists for the record.
+    meal_eligible_at_time = fields.Field(column_name="Meal eligible at time")
+    meal_reason_code = fields.Field(column_name="Meal reason code")
+    meal_reason_notes = fields.Field(column_name="Meal reason notes")
+    meal_subscription_id = fields.Field(column_name="Meal subscription ID")
 
     def dehydrate_student_full_name(self, obj):
         # Student.full_name is a METHOD, so we call it
         return obj.student.full_name()
+
+    def dehydrate_meal_eligible_at_time(self, obj):
+        mr = getattr(obj, "meal_record", None)
+        if mr is None:
+            return None
+        return mr.eligible_at_time
+
+    def dehydrate_meal_reason_code(self, obj):
+        mr = getattr(obj, "meal_record", None)
+        if mr is None:
+            return ""
+        return mr.reason_code or ""
+
+    def dehydrate_meal_reason_notes(self, obj):
+        mr = getattr(obj, "meal_record", None)
+        if mr is None:
+            return ""
+        return mr.reason_notes or ""
+
+    def dehydrate_meal_subscription_id(self, obj):
+        mr = getattr(obj, "meal_record", None)
+        if mr is None:
+            return None
+        return mr.meal_subscription_id
 
     class Meta:
         model = AttendanceRecord
