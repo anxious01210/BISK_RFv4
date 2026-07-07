@@ -591,3 +591,78 @@ class BulkNoAttendanceMutationTests(BulkMigrationBaseData):
         migrate_all_students()
         for s in self.students:
             self.assertTrue(LegacyStudent.objects.filter(pk=s.pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# Inactive student migration
+# ---------------------------------------------------------------------------
+
+
+class InactiveStudentMigrationTests(MigrationExecutionBaseData):
+    """Regression tests for migrating inactive legacy Students.
+
+    The bug: inactive students (is_active=False) caused a ValidationError
+    because the PersonRole validator (validate_role_active_window) requires
+    end_date when is_active=False, but migrate_student did not pass
+    end_date to get_or_create_role.
+
+    Fix: migrate_student now passes end_date=timezone.localdate() for
+    inactive students.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.inactive_student = self._create_student(
+            h_code="H-INACT01",
+            first_name="Ina",
+            last_name="CTive",
+            is_active=False,
+        )
+
+    def test_inactive_student_migrates_without_error(self):
+        """The original bug: this raised ValidationError because
+        end_date was not set on the PersonRole for inactive students."""
+        result = migrate_student(self.inactive_student)
+        self.assertIsInstance(result, MigrationExecutionResult)
+
+    def test_inactive_student_role_is_inactive(self):
+        result = migrate_student(self.inactive_student)
+        self.assertFalse(result.person_role.is_active)
+
+    def test_inactive_student_role_has_end_date(self):
+        result = migrate_student(self.inactive_student)
+        self.assertIsNotNone(result.person_role.end_date)
+
+    def test_inactive_student_role_end_date_is_today(self):
+        from django.utils import timezone
+        result = migrate_student(self.inactive_student)
+        self.assertEqual(result.person_role.end_date, timezone.localdate())
+
+    def test_inactive_student_person_is_inactive(self):
+        result = migrate_student(self.inactive_student)
+        self.assertFalse(result.person.is_active)
+
+    def test_active_student_role_has_no_end_date(self):
+        """Active students should keep end_date=None (unchanged behavior)."""
+        result = migrate_student(self.student)
+        self.assertTrue(result.person_role.is_active)
+        self.assertIsNone(result.person_role.end_date)
+
+    def test_inactive_student_idempotent(self):
+        """Re-running migrate_student on an already-migrated inactive
+        student should not raise (the already-migrated path must also
+        handle the end_date correctly)."""
+        result1 = migrate_student(self.inactive_student)
+        self.assertFalse(result1.already_migrated)
+
+        result2 = migrate_student(self.inactive_student)
+        self.assertTrue(result2.already_migrated)
+        self.assertFalse(result2.person_role.is_active)
+        self.assertIsNotNone(result2.person_role.end_date)
+
+    def test_bulk_migration_handles_inactive(self):
+        """Bulk migration should handle mixed active/inactive students."""
+        from apps.identity.migration_execution import migrate_all_students
+        result = migrate_all_students()
+        self.assertEqual(result.failed, 0)
+        self.assertEqual(result.migrated, 2)  # both active + inactive

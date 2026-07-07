@@ -59,6 +59,7 @@ from typing import Optional
 from django.apps import apps as django_apps
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.utils import timezone
 
 from .migration_planning import (
     _normalize_gender,
@@ -198,11 +199,17 @@ def migrate_student(student) -> MigrationExecutionResult:
 
     # ---------------------------------------------------------------
     # 6. Create or reuse PersonRole.
+    #    For inactive students, set end_date so the role-active-window
+    #    validator (validate_role_active_window) does not reject the
+    #    creation. Active students keep end_date=None.
     # ---------------------------------------------------------------
+    student_is_active = getattr(student, "is_active", True)
+    role_end_date = None if student_is_active else timezone.localdate()
     role, created_role = get_or_create_role(
         person=person,
         role_type=role_type,
-        is_active=getattr(student, "is_active", True),
+        is_active=student_is_active,
+        end_date=role_end_date,
     )
 
     # ---------------------------------------------------------------
@@ -270,10 +277,13 @@ def _build_already_migrated_result(student) -> MigrationExecutionResult:
                 "RoleType with code='student' not found. "
                 "Run the 0002_seed_roletypes migration first."
             )
+        student_is_active = getattr(student, "is_active", True)
+        role_end_date = None if student_is_active else timezone.localdate()
         role, created_role = get_or_create_role(
             person=person,
             role_type=role_type,
-            is_active=getattr(student, "is_active", True),
+            is_active=student_is_active,
+            end_date=role_end_date,
         )
     else:
         created_role = False
