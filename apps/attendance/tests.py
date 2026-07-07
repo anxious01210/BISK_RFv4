@@ -1928,3 +1928,84 @@ class ReconciliationCommandTests(ReconciliationBase):
             "ar": AttendanceRecord.objects.count(),
         }
         self.assertEqual(before, after)
+
+
+# ===========================================================================
+# S0.3 — _to_media_rel regression tests
+# ===========================================================================
+
+
+class ToMediaRelTests(TestCase):
+    """Regression tests for the _to_media_rel helper.
+
+    The bug: _to_media_rel("") returned None, but AttendanceEvent.crop_path
+    and AttendanceRecord.best_crop are CharField(blank=True, default="")
+    (NOT null=True). Passing None to create(crop_path=None) raised
+    IntegrityError on a fresh DB.
+    """
+
+    def test_empty_string_returns_empty_string(self):
+        from apps.attendance.services import _to_media_rel
+        self.assertEqual(_to_media_rel(""), "")
+
+    def test_none_returns_empty_string(self):
+        from apps.attendance.services import _to_media_rel
+        self.assertEqual(_to_media_rel(None), "")
+
+    def test_valid_relative_path_unchanged(self):
+        from apps.attendance.services import _to_media_rel
+        result = _to_media_rel("captures/test.jpg")
+        self.assertEqual(result, "captures/test.jpg")
+
+    def test_absolute_path_under_media_root_converted(self):
+        from apps.attendance.services import _to_media_rel
+        from django.conf import settings
+        import os
+        abs_path = os.path.join(settings.MEDIA_ROOT, "captures", "test.jpg")
+        result = _to_media_rel(abs_path)
+        self.assertEqual(result, "captures/test.jpg")
+
+    def test_ingest_match_with_empty_crop_path_does_not_crash(self):
+        """The original bug: ingest_match with crop_path='' raised
+        IntegrityError because _to_media_rel('') returned None, and
+        AttendanceEvent.crop_path is NOT NULL."""
+        from apps.attendance.services import ingest_match
+        # Set up minimal fixtures for the ingest path.
+        role, _ = RoleType.objects.get_or_create(
+            code="student", defaults={"name": "Student", "is_system": True}
+        )
+        student = Student.objects.create(
+            h_code="H-MEDIA01", first_name="Med", last_name="Test",
+            is_active=True,
+        )
+        person = Person.objects.create(
+            code="H-MEDIA01", first_name="Med", last_name="Test",
+        )
+        StudentProfile.objects.create(
+            person=person, code="H-MEDIA01", legacy_student=student,
+        )
+        template = PeriodTemplate.objects.create(
+            name="Media Test Block", order=1,
+            start_time=timezone.datetime.min.time(),
+            end_time=timezone.datetime.max.time(),
+            weekdays_mask=127, is_enabled=True,
+        )
+        now = timezone.localtime().replace(hour=12, minute=0, second=0, microsecond=0)
+        occ = PeriodOccurrence.objects.create(
+            template=template, date=now.date(),
+            start_dt=now - timedelta(hours=1),
+            end_dt=now + timedelta(hours=1),
+            is_school_day=True,
+        )
+        rs, _ = RecognitionSettings.objects.get_or_create(pk=1)
+        rs.min_score = 0.75
+        rs.save()
+
+        res = ingest_match(
+            h_code="H-MEDIA01", score=0.95, camera=None, ts=now,
+            crop_path="",
+        )
+        self.assertTrue(res.get("ok"), res)
+        ev = AttendanceEvent.objects.get(student=student)
+        # crop_path should be "" (empty string), not NULL.
+        self.assertEqual(ev.crop_path, "")

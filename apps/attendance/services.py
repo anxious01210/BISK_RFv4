@@ -391,9 +391,9 @@ def _resolve_open_occurrence(ts):
         .first()
     )
 
-def _to_media_rel(path: str | None) -> str | None:
+def _to_media_rel(path: str | None) -> str:
     if not path:
-        return None
+        return ""
     import os
     p = os.path.normpath(str(path))
     mr = os.path.normpath(str(settings.MEDIA_ROOT or ""))
