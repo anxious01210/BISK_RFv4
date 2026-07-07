@@ -201,6 +201,18 @@ class AttendanceRecord(models.Model):
 
 class AttendanceEvent(models.Model):
     student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    person = models.ForeignKey(
+        "identity.Person",
+        on_delete=models.CASCADE,
+        related_name="attendance_events",
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=(
+            "Identity Person this event belongs to. Backfilled from student via "
+            "StudentProfile.legacy_student. Nullable during the dual-FK transition window."
+        ),
+    )
     period = models.ForeignKey(PeriodOccurrence, on_delete=models.SET_NULL, null=True, blank=True)
     camera = models.ForeignKey("cameras.Camera", on_delete=models.SET_NULL, null=True, blank=True)
     ts = models.DateTimeField(

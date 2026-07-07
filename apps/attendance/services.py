@@ -126,10 +126,14 @@ def _write_from_match(
 
     rs = RecognitionSettings.get_solo() if use_policies else None
 
+    # M2 identity adoption: resolve Person for dual-write.
+    # None when the student is not yet migrated to identity (legacy path).
+    person = _resolve_person_from_student(student)
+
     # Policy: below threshold → audit event only (no record), as before
     if rs and rs.min_score and score is not None and score < float(rs.min_score):
         ev = AttendanceEvent.objects.create(
-            student=student, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
+            student=student, person=person, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
         )
         return ev, None, {"accepted": False, "reason": "below_min_score"}
 
@@ -138,7 +142,7 @@ def _write_from_match(
     # If no period window is open, keep the old behavior: event with no period.
     if not winners:
         ev = AttendanceEvent.objects.create(
-            student=student, period=None, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
+            student=student, person=person, period=None, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
         )
         return ev, None, {"accepted": False, "reason": "no_period"}
 
@@ -166,7 +170,7 @@ def _write_from_match(
 
         # Create the event; dedup only if you want to be extra strict (we keep one per occ)
         ev = AttendanceEvent.objects.create(
-            student=student, period=occ, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
+            student=student, person=person, period=occ, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
         )
 
         # Upsert the per-period record
@@ -246,7 +250,7 @@ def _write_from_match(
     # Fallback: if something prevented writes (cap, etc.), still return an event w/out period
     if wrote == 0:
         ev = AttendanceEvent.objects.create(
-            student=student, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
+            student=student, person=person, camera=camera, ts=ts_local, score=score, crop_path=rel_crop
         )
         return ev, None, {"accepted": False, "reason": "max_periods_reached"}
 

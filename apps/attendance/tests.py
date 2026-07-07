@@ -1,22 +1,53 @@
 # apps/attendance/tests.py
-"""M1 tests — FaceEmbedding person FK (attendance identity adoption).
+"""Attendance identity adoption tests.
 
-Covers:
+M1 — FaceEmbedding person FK:
+
   * The new nullable ``person`` FK on ``FaceEmbedding``.
   * The ``uniq_active_embedding_per_person`` partial unique constraint.
   * Dual-write behavior in ``EnrollView`` (and resolver helper).
   * The 0033 backfill migration (idempotent, noop reverse, skips unmigrated).
   * Read-path regression (``GalleryView`` response shape unchanged).
 
+M2 — AttendanceEvent person FK:
+
+  * The new nullable ``person`` FK on ``AttendanceEvent``.
+  * No new unique constraint on ``AttendanceEvent`` (append-only audit log).
+  * Resolver helper reuse (read-only).
+  * Dual-write in ``_write_from_match`` across all four
+    ``AttendanceEvent.objects.create`` branches (below_min_score, no_period,
+    winners loop, max_periods_reached fallback), via the public entrypoints
+    ``ingest_match`` and ``record_recognition``.
+  * The 0035 backfill migration (idempotent, batched, noop reverse,
+    skips unmigrated students).
+  * Read-path regression: ``latest_event_qs`` subqueries still key on
+    ``student_id``; admin list_display still references ``student__*`` only;
+    camera health query unaffected.
+  * Meals bridge fallback regression: the bridge resolves Person via the
+    ``attendance_event.student → StudentProfile.legacy_student → Person``
+    backlink when ``attendance_event.person`` is NULL or set (M2 keeps the
+    bridge on the fallback chain; switching it to prefer the event column is
+    design step S11).
+  * ``IngestView`` wire contract regression (no ``person_id`` in response).
+
 Tests follow the ``TestCase`` pattern established by ``apps/identity/tests_*``,
 using ``LegacyStudent`` + ``Person`` + ``StudentProfile`` fixtures.
 """
 import base64
+from datetime import timedelta
 
 from django.test import TestCase, override_settings
 from django.db import IntegrityError
+from django.utils import timezone
 
-from apps.attendance.models import FaceEmbedding, Student
+from apps.attendance.models import (
+    AttendanceEvent,
+    FaceEmbedding,
+    PeriodOccurrence,
+    PeriodTemplate,
+    RecognitionSettings,
+    Student,
+)
 from apps.identity.models import Person, RoleType, StudentProfile
 
 
@@ -330,3 +361,579 @@ class GalleryViewRegressionTests(FaceEmbeddingPersonBase):
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["count"], 1)
+
+
+# ===========================================================================
+# M2 — AttendanceEvent person FK
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# M2 Shared fixtures
+# ---------------------------------------------------------------------------
+
+
+class AttendanceEventPersonBase(TestCase):
+    """Shared fixtures for AttendanceEvent person-FK tests (M2)."""
+
+    @classmethod
+    def setUpTestData(cls):
+        # RoleType "student" is seeded by an identity data migration.
+        cls.role_student, _ = RoleType.objects.get_or_create(
+            code="student", defaults={"name": "Student", "is_system": True}
+        )
+        # Migrated legacy Student
+        cls.student = Student.objects.create(
+            h_code="H-EVT01", first_name="Eve", last_name="Ent",
+            is_active=True,
+        )
+        cls.person = Person.objects.create(
+            code="H-EVT01", first_name="Eve", last_name="Ent",
+        )
+        cls.profile = StudentProfile.objects.create(
+            person=cls.person, code="H-EVT01", legacy_student=cls.student,
+        )
+        # Unmigrated legacy Student (no StudentProfile link)
+        cls.unmigrated = Student.objects.create(
+            h_code="H-EVT02", first_name="Un", last_name="Mig",
+            is_active=True,
+        )
+        # Minimal period template + occurrence that is "always open" so tests
+        # can deterministically trigger the winners-loop branch of
+        # ``_write_from_match``.
+        cls.template = PeriodTemplate.objects.create(
+            name="Test Block", order=1,
+            start_time=timezone.datetime.min.time(),
+            end_time=timezone.datetime.max.time(),
+            weekdays_mask=127,  # every day
+            is_enabled=True,
+        )
+        cls.now = timezone.localtime()
+        cls.occ = PeriodOccurrence.objects.create(
+            template=cls.template, date=cls.now.date(),
+            start_dt=cls.now - timedelta(hours=1),
+            end_dt=cls.now + timedelta(hours=1),
+            is_school_day=True,
+        )
+
+    def _make_event(self, *, student=None, person=None, period=None,
+                    camera=None, ts=None, score=0.9, crop_path=""):
+        """Create an AttendanceEvent directly (bypasses the service layer,
+        mirroring the ``apps.meals.tests_integrations_attendance`` helper)."""
+        return AttendanceEvent.objects.create(
+            student=student if student is not None else self.student,
+            person=person,
+            period=period,
+            camera=camera,
+            ts=ts or self.now,
+            score=score,
+            crop_path=crop_path,
+        )
+
+    def _reset_settings(self, **overrides):
+        """Reset the RecognitionSettings singleton to deterministic defaults
+        for tests that mutate it. Must be called from ``setUp`` (not
+        ``setUpTestData``) because the singleton is shared across tests."""
+        rs, _ = RecognitionSettings.objects.get_or_create(pk=1)
+        rs.min_score = 0.75
+        rs.re_register_window_sec = 10
+        rs.min_improve_delta = 0.01
+        rs.max_periods_per_day = None
+        rs.save()
+        return rs
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 7 — Schema correctness
+# ---------------------------------------------------------------------------
+
+
+class AttendanceEventPersonFKTests(AttendanceEventPersonBase):
+    """Verify the person FK field and the unchanged student FK."""
+
+    def test_person_field_exists_and_nullable(self):
+        field = AttendanceEvent._meta.get_field("person")
+        self.assertTrue(field.null)
+        self.assertTrue(field.blank)
+        self.assertEqual(field.remote_field.on_delete.__name__, "CASCADE")
+        self.assertEqual(field.remote_field.related_name, "attendance_events")
+        self.assertEqual(field.remote_field.model.__name__, "Person")
+
+    def test_person_field_db_index(self):
+        field = AttendanceEvent._meta.get_field("person")
+        self.assertTrue(field.db_index)
+
+    def test_person_field_related_name(self):
+        ev = self._make_event(person=self.person)
+        self.assertIn(ev, self.person.attendance_events.all())
+
+    def test_existing_event_defaults_person_null(self):
+        ev = self._make_event(person=None)
+        self.assertIsNone(ev.person_id)
+
+    def test_create_event_with_person(self):
+        ev = self._make_event(person=self.person)
+        self.assertEqual(ev.person_id, self.person.pk)
+        self.assertEqual(ev.student_id, self.student.pk)
+
+    def test_student_fk_unchanged(self):
+        field = AttendanceEvent._meta.get_field("student")
+        self.assertEqual(field.remote_field.on_delete.__name__, "CASCADE")
+        # Legacy student FK has no related_name override (Django default).
+        self.assertFalse(field.remote_field.related_name)
+
+    def test_no_new_constraint_on_event(self):
+        # M2 adds NO constraint (events are append-only audit log; no upsert
+        # invariant, no is_active flag). Mirror M1's uniq_active_embedding
+        # _per_person is NOT done here.
+        names = {c.name for c in AttendanceEvent._meta.constraints}
+        self.assertEqual(names, set())
+
+    def test_no_unique_together_on_event(self):
+        # AttendanceEvent has no unique_together (neither on student nor person).
+        self.assertEqual(tuple(AttendanceEvent._meta.unique_together), ())
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 8 — Resolver reuse
+# ---------------------------------------------------------------------------
+
+
+class ResolvePersonFromStudentReuseTests(AttendanceEventPersonBase):
+    """Verify the M1 resolver helper still works for event-side students.
+    Guards against accidental refactors of the helper breaking M2."""
+
+    def test_resolver_returns_person_for_migrated_student(self):
+        from apps.attendance.services import _resolve_person_from_student
+        p = _resolve_person_from_student(self.student)
+        self.assertEqual(p, self.person)
+
+    def test_resolver_returns_none_for_unmigrated_student(self):
+        from apps.attendance.services import _resolve_person_from_student
+        self.assertIsNone(_resolve_person_from_student(self.unmigrated))
+
+    def test_resolver_returns_none_for_none_input(self):
+        from apps.attendance.services import _resolve_person_from_student
+        self.assertIsNone(_resolve_person_from_student(None))
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 9 — _write_from_match dual-write
+# ---------------------------------------------------------------------------
+
+
+@override_settings(ATTENDANCE_DEDUP_SECONDS=0, RUNNER_HEARTBEAT_KEY="")
+class WriteFromMatchDualWriteTests(AttendanceEventPersonBase):
+    """Verify the dual-write path in ``_write_from_match`` across all four
+    ``AttendanceEvent.objects.create`` branches. Uses the public entrypoints
+    ``ingest_match`` (resolves Student by h_code) and ``record_recognition``
+    (accepts a Student instance) to exercise the full path."""
+
+    def setUp(self):
+        super().setUp()
+        # Reset the singleton to deterministic defaults for every test.
+        self._reset_settings()
+
+    # -- winners loop (line 170) via ingest_match ----------------------------
+
+    def test_ingest_match_dual_writes_person_when_migrated(self):
+        from apps.attendance.services import ingest_match
+        res = ingest_match(
+            h_code="H-EVT01", score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertTrue(res.get("ok"), res)
+        ev = AttendanceEvent.objects.get(student=self.student)
+        self.assertEqual(ev.student_id, self.student.pk)
+        self.assertEqual(ev.person_id, self.person.pk)
+
+    def test_ingest_match_person_null_when_unmigrated(self):
+        from apps.attendance.services import ingest_match
+        res = ingest_match(
+            h_code="H-EVT02", score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertTrue(res.get("ok"), res)
+        ev = AttendanceEvent.objects.get(student=self.unmigrated)
+        self.assertEqual(ev.student_id, self.unmigrated.pk)
+        self.assertIsNone(ev.person_id)
+
+    def test_ingest_match_unknown_h_code_returns_error(self):
+        from apps.attendance.services import ingest_match
+        res = ingest_match(
+            h_code="H-NOPE", score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertFalse(res.get("ok"))
+        self.assertEqual(res.get("error"), "student_not_found")
+        self.assertFalse(AttendanceEvent.objects.filter(student__h_code="H-NOPE").exists())
+
+    # -- below_min_score (line 131) ------------------------------------------
+
+    def test_below_min_score_branch_dual_writes_person(self):
+        from apps.attendance.services import ingest_match
+        rs = RecognitionSettings.get_solo()
+        rs.min_score = 0.99  # score 0.50 will be below threshold
+        rs.save()
+        res = ingest_match(
+            h_code="H-EVT01", score=0.50, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertFalse(res.get("accepted"))
+        self.assertEqual(res.get("reason"), "below_min_score")
+        ev = AttendanceEvent.objects.get(student=self.student)
+        # Audit event still dual-writes person (the M2 invariant).
+        self.assertEqual(ev.person_id, self.person.pk)
+        self.assertIsNone(ev.period_id)  # no record created
+
+    # -- no_period (line 142) ------------------------------------------------
+
+    def test_no_period_branch_dual_writes_person(self):
+        from apps.attendance.services import ingest_match
+        # Delete the only occurrence so no period window is open at self.now.
+        PeriodOccurrence.objects.all().delete()
+        res = ingest_match(
+            h_code="H-EVT01", score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertFalse(res.get("accepted"))
+        self.assertEqual(res.get("reason"), "no_period")
+        ev = AttendanceEvent.objects.get(student=self.student)
+        self.assertEqual(ev.person_id, self.person.pk)
+        self.assertIsNone(ev.period_id)
+
+    # -- max_periods_reached fallback (line 250) -----------------------------
+
+    def test_max_periods_reached_branch_dual_writes_person(self):
+        from apps.attendance.services import ingest_match
+        rs = RecognitionSettings.get_solo()
+        rs.max_periods_per_day = 1  # cap to one distinct period/day
+        rs.save()
+
+        # First call: creates a record on self.occ.
+        res1 = ingest_match(
+            h_code="H-EVT01", score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertTrue(res1.get("accepted"))
+
+        # Create a second distinct occurrence for the same day. The cap
+        # forces _write_from_match into the max_periods_reached fallback.
+        # PeriodOccurrence has unique_together(template, date) so we need a
+        # second template.
+        template2 = PeriodTemplate.objects.create(
+            name="Test Block 2", order=2,
+            start_time=timezone.datetime.min.time(),
+            end_time=timezone.datetime.max.time(),
+            weekdays_mask=127,
+            is_enabled=True,
+        )
+        occ2 = PeriodOccurrence.objects.create(
+            template=template2, date=self.now.date(),
+            start_dt=self.now + timedelta(hours=2),
+            end_dt=self.now + timedelta(hours=3),
+            is_school_day=True,
+        )
+        res2 = ingest_match(
+            h_code="H-EVT01", score=0.90, camera=None, ts=occ2.start_dt + timedelta(minutes=5),
+            crop_path="captures/test.jpg",
+        )
+        self.assertFalse(res2.get("accepted"))
+        self.assertEqual(res2.get("reason"), "max_periods_reached")
+
+        # The fallback event must also have person set.
+        fallback_events = AttendanceEvent.objects.filter(
+            student=self.student, period__isnull=True
+        )
+        self.assertGreaterEqual(fallback_events.count(), 1)
+        self.assertEqual(fallback_events.first().person_id, self.person.pk)
+
+    # -- record_recognition path (Student instance, not h_code) --------------
+
+    def test_record_recognition_dual_writes_person(self):
+        from apps.attendance.services import record_recognition
+        ev, rec = record_recognition(
+            student=self.student, score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev.student_id, self.student.pk)
+        self.assertEqual(ev.person_id, self.person.pk)
+
+    def test_record_recognition_person_null_unmigrated(self):
+        from apps.attendance.services import record_recognition
+        ev, rec = record_recognition(
+            student=self.unmigrated, score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertIsNotNone(ev)
+        self.assertEqual(ev.student_id, self.unmigrated.pk)
+        self.assertIsNone(ev.person_id)
+
+    # -- multi-period tie: each event must have person set ------------------
+
+    @override_settings(MULTI_PERIOD_ON_TIES=True)
+    def test_multi_period_tie_each_event_has_person(self):
+        from apps.attendance.services import ingest_match
+        # Create a second winning occurrence for the same date and same
+        # lowest order. MULTI_PERIOD_ON_TIES=True writes an event per winner.
+        template2 = PeriodTemplate.objects.create(
+            name="Test Block 2", order=1,  # same lowest order
+            start_time=timezone.datetime.min.time(),
+            end_time=timezone.datetime.max.time(),
+            weekdays_mask=127,
+            is_enabled=True,
+        )
+        occ2 = PeriodOccurrence.objects.create(
+            template=template2, date=self.now.date(),
+            start_dt=self.now - timedelta(hours=1),
+            end_dt=self.now + timedelta(hours=1),
+            is_school_day=True,
+        )
+        res = ingest_match(
+            h_code="H-EVT01", score=0.95, camera=None, ts=self.now, crop_path="captures/test.jpg",
+        )
+        self.assertTrue(res.get("accepted"))
+        self.assertEqual(res.get("winners"), 2)
+        events = list(AttendanceEvent.objects.filter(student=self.student))
+        # Should have written one event per winner (2 events here).
+        self.assertGreaterEqual(len(events), 2)
+        for ev in events:
+            self.assertEqual(ev.person_id, self.person.pk)
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 10 — Backfill migration 0035
+# ---------------------------------------------------------------------------
+
+
+class EventBackfillMigrationTests(AttendanceEventPersonBase):
+    """Verify the 0035 backfill RunPython directly (idempotent, noop reverse,
+    skips unmigrated students, batches correctly)."""
+
+    def _run_backfill(self):
+        from apps.attendance.migrations._0035_helper import forwards, backwards
+        from django.apps import apps
+        forwards(apps, None)
+
+    def _run_backfill_backwards(self):
+        from apps.attendance.migrations._0035_helper import backwards
+        from django.apps import apps
+        backwards(apps, None)
+
+    def test_backfill_sets_person_id(self):
+        ev = self._make_event(person=None)
+        self.assertIsNone(ev.person_id)
+        self._run_backfill()
+        ev.refresh_from_db()
+        self.assertEqual(ev.person_id, self.person.pk)
+
+    def test_backfill_skips_already_backfilled(self):
+        ev = self._make_event(person=self.person)
+        original_person_id = ev.person_id
+        self._run_backfill()
+        ev.refresh_from_db()
+        self.assertEqual(ev.person_id, original_person_id)
+
+    def test_backfill_skips_unmigrated_students(self):
+        ev = self._make_event(student=self.unmigrated, person=None)
+        self._run_backfill()
+        ev.refresh_from_db()
+        self.assertIsNone(ev.person_id)
+
+    def test_backfill_skips_null_student(self):
+        # Edge case: events with student=None cannot exist (student FK is
+        # non-null), but the backfill defends via .exclude(student__isnull=True).
+        # Verify no crash when there are no rows needing backfill.
+        self._run_backfill()  # should not raise
+
+    def test_backfill_reverse_is_noop(self):
+        ev = self._make_event(person=self.person)
+        self._run_backfill_backwards()  # must not raise or change data
+        ev.refresh_from_db()
+        self.assertEqual(ev.person_id, self.person.pk)
+
+    def test_backfill_idempotent(self):
+        ev = self._make_event(person=None)
+        self._run_backfill()
+        ev.refresh_from_db()
+        first = ev.person_id
+        # Second run must not change anything (filter person__isnull=True).
+        self._run_backfill()
+        ev.refresh_from_db()
+        self.assertEqual(ev.person_id, first)
+
+    def test_backfill_batches_large_event_set(self):
+        # Create 12 events with mixed migrated/unmigrated students to
+        # exercise the batch flush logic (BATCH_SIZE=500 internally, so
+        # this fits in one batch — but the test guards the grouping path).
+        for _ in range(7):
+            self._make_event(student=self.student, person=None)
+        for _ in range(5):
+            self._make_event(student=self.unmigrated, person=None)
+        before = AttendanceEvent.objects.filter(student=self.student).count()
+        self.assertEqual(before, 7)
+        self._run_backfill()
+        migrated_count = (
+            AttendanceEvent.objects.filter(student=self.student)
+            .exclude(person__isnull=True).count()
+        )
+        self.assertEqual(migrated_count, 7)
+        unmigrated_count = (
+            AttendanceEvent.objects.filter(student=self.unmigrated, person__isnull=True).count()
+        )
+        self.assertEqual(unmigrated_count, 5)
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 11 — Read-path regression
+# ---------------------------------------------------------------------------
+
+
+class ReadPathRegressionTests(AttendanceEventPersonBase):
+    """Verify legacy read paths still work after M2 (student FK intact)."""
+
+    def test_latest_event_subquery_still_filters_on_student_id(self):
+        # Mirror the subquery used in apps.attendance.views.meal_period_cards
+        # and meal_stream_rows:
+        #   AttendanceEvent.objects
+        #     .filter(student_id=OuterRef("student_id"), period_id=OuterRef("period_id"))
+        #     .order_by("-ts", "-id")
+        from django.db.models import OuterRef, Subquery
+        ev1 = self._make_event(student=self.student, person=self.person,
+                                period=self.occ, ts=self.now - timedelta(minutes=10),
+                                score=0.80)
+        ev2 = self._make_event(student=self.student, person=self.person,
+                                period=self.occ, ts=self.now, score=0.95)
+        # The subquery returns the latest event's score for this (student, period).
+        latest_score_sq = (
+            AttendanceEvent.objects
+            .filter(student_id=OuterRef("student_id"), period_id=OuterRef("period_id"))
+            .order_by("-ts", "-id")
+            .values("score")[:1]
+        )
+        from apps.attendance.models import AttendanceRecord
+        # Create a record so we have something to annotate onto.
+        rec = AttendanceRecord.objects.create(
+            student=self.student, period=self.occ,
+            first_seen=self.now, last_seen=self.now, best_seen=self.now,
+            best_score=0.95, status="present",
+        )
+        recs = list(
+            AttendanceRecord.objects
+            .annotate(latest_event_score=Subquery(latest_score_sq))
+            .values("pk", "latest_event_score")
+        )
+        self.assertEqual(len(recs), 1)
+        self.assertEqual(recs[0]["latest_event_score"], 0.95)
+
+    def test_admin_event_list_unchanged(self):
+        # M2 must NOT add person to AttendanceEventAdmin.list_display /
+        # search_fields / list_filter. Only student__* should appear.
+        from apps.attendance.admin import AttendanceEventAdmin
+        self.assertNotIn("person", AttendanceEventAdmin.list_display)
+        self.assertFalse(
+            any("person" in str(f) for f in AttendanceEventAdmin.search_fields)
+        )
+        self.assertFalse(
+            any(str(f).startswith("person") for f in AttendanceEventAdmin.list_filter)
+        )
+
+    def test_camera_health_query_still_works(self):
+        # meal_camera_health filters AttendanceEvent by camera only. M2 does
+        # not touch that path. Verify a plain camera-filtered query works.
+        ev = self._make_event(student=self.student, person=self.person,
+                               period=None, ts=self.now, camera=None)
+        # No camera set in fixtures; just confirm the query does not raise
+        # and that .filter(camera=cam).order_by("-ts","-id").first() works
+        # for the None camera case.
+        latest = (
+            AttendanceEvent.objects.filter(camera=None)
+            .order_by("-ts", "-id").first()
+        )
+        self.assertEqual(latest, ev)
+
+    def test_no_unique_constraint_on_event_person(self):
+        # Anti-test: M2 must NOT add a uniq constraint on AttendanceEvent.person
+        # (unlike M1's uniq_active_embedding_per_person).
+        names = {c.name for c in AttendanceEvent._meta.constraints}
+        self.assertEqual(names, set())
+
+    def test_no_person_filter_in_admin_event_list(self):
+        # Anti-test: M2 must NOT add a person filter to the admin.
+        from apps.attendance.admin import AttendanceEventAdmin
+        for f in AttendanceEventAdmin.list_filter:
+            self.assertFalse(str(f).startswith("person"), f"unexpected person filter: {f}")
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 12 — Meals bridge fallback regression
+# ---------------------------------------------------------------------------
+
+
+class BridgeFallbackRegressionTests(AttendanceEventPersonBase):
+    """Verify the meals bridge still resolves Person via the
+    ``attendance_event.student → StudentProfile.legacy_student → Person``
+    backlink when ``attendance_event.person`` is NULL or set.
+
+    M2 does NOT modify the bridge — these tests guard against accidental
+    premature S11 switching in this milestone."""
+
+    def test_bridge_resolves_person_when_event_person_null(self):
+        # Bypass the service layer (mirroring _create_attendance_event in
+        # apps.meals.tests_integrations_attendance) so person stays NULL.
+        ev = self._make_event(student=self.student, person=None)
+        self.assertIsNone(ev.person_id)
+        from apps.meals.integrations.attendance import resolve_person_from_student
+        resolved = resolve_person_from_student(ev.student)
+        self.assertEqual(resolved, self.person)
+
+    def test_bridge_resolves_person_when_event_person_set(self):
+        # Even when attendance_event.person is set, the bridge reads
+        # attendance_event.student and re-resolves via the backlink (M2 keeps
+        # the bridge on the fallback chain).
+        ev = self._make_event(student=self.student, person=self.person)
+        self.assertEqual(ev.person_id, self.person.pk)
+        from apps.meals.integrations.attendance import resolve_person_from_student
+        resolved = resolve_person_from_student(ev.student)
+        self.assertEqual(resolved, self.person)
+
+
+# ---------------------------------------------------------------------------
+# M2 Section 13 — IngestView wire contract regression
+# ---------------------------------------------------------------------------
+
+
+@override_settings(RUNNER_HEARTBEAT_KEY="")
+class IngestViewWireContractTests(AttendanceEventPersonBase):
+    """Verify the IngestView POST response shape is unchanged by M2 — no
+    ``person_id`` / ``person`` leaks into the response."""
+
+    def _post(self, h_code, score=0.95):
+        import json
+        from django.utils.http import urlencode
+        # IngestView reads request.data (DRF JSON parser). Use JSON body.
+        return self.client.post(
+            "/api/attendance/ingest/",
+            data=json.dumps({
+                "h_code": h_code, "score": score, "ts": self.now.isoformat(),
+                "camera_id": None, "crop_path": "captures/test.jpg",
+            }),
+            content_type="application/json",
+        )
+
+    def setUp(self):
+        super().setUp()
+        self._reset_settings()
+
+    def test_ingest_view_response_shape_unchanged(self):
+        resp = self._post("H-EVT01")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        # The response dict contains the legacy keys (ok, event_id, ...).
+        self.assertTrue(body.get("ok"))
+        self.assertIn("event_id", body)
+        # M2 must NOT leak person_id / person into the response.
+        self.assertNotIn("person_id", body)
+        self.assertNotIn("person", body)
+
+    def test_ingest_view_unknown_student_response_unchanged(self):
+        resp = self._post("H-NOPE")
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        self.assertFalse(body.get("ok"))
+        self.assertEqual(body.get("error"), "student_not_found")
+        self.assertNotIn("person_id", body)
+        self.assertNotIn("person", body)
