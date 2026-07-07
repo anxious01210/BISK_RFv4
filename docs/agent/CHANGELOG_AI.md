@@ -418,3 +418,110 @@ reconciliation confirms every record whose Student is migrated has
 `person_id` set. See the design document §4.3 + §10 S9 and the M3 readiness
 review's special warning section.
 
+---
+
+## S12 — Attendance identity reconciliation (read-only)
+
+Date: 2026-07-07
+Branch: `feature/person-architecture`
+Phase: 1.5 (Person architecture) — Attendance Identity adoption, step S12.
+
+### Context
+
+After M1 (`FaceEmbedding.person`), M2 (`AttendanceEvent.person`), and M3
+(`AttendanceRecord.person`), a read-only reconciliation layer is needed to
+verify that all `person_id` values are correctly populated. This layer is the
+**S9 gate** — the `AttendanceRecord` upsert key switch from `(student, period)`
+to `(person, period)` cannot proceed until this reconciliation reports zero
+issues.
+
+### What was implemented
+
+- `apps/attendance/identity_reconciliation.py` — read-only service module
+  with dataclasses (`AttendanceIdentityIssue`,
+  `ModelReconciliationReport`, `AttendanceIdentityReconciliationReport`) and
+  four reconcile functions:
+  - `reconcile_face_embeddings()`
+  - `reconcile_attendance_events()`
+  - `reconcile_attendance_records()`
+  - `reconcile_all_attendance_identity()`
+- `apps/attendance/management/commands/reconcile_attendance_identity.py` —
+  thin CLI wrapper with `--json`, `--only-issues`, `--model` flags. Exit
+  codes: 0 (clean), 1 (issues found), 2 (unexpected error).
+
+### Checks implemented
+
+| Check | Models | Description |
+|---|---|---|
+| `missing_person_id` | All 3 | `person_id IS NULL` but `student_id` points to a migrated student |
+| `mismatched_person_id` | All 3 | `person_id` doesn't match the StudentProfile's person |
+| `orphan_person_no_student` | All 3 | `person_id` set but `student_id` is NULL (defensive) |
+| `dangling_person_id` | All 3 | `person_id` points to non-existent Person (defensive) |
+| `duplicate_person_periods` | AttendanceRecord | Duplicate `(person_id, period_id)` where person_id IS NOT NULL |
+| `duplicate_active_embeddings` | FaceEmbedding | Duplicate active embedding per `person_id` |
+
+### Read-only
+
+Both the service module and the command are **read-only**. No functions write
+to the database. There is no `--fix` flag. Auto-fix is explicitly forbidden in
+this milestone — `missing_person_id` is fixed by re-running the backfill
+migration, `mismatched_person_id` is a human decision, and duplicate removal
+is destructive.
+
+### S9 gate criteria
+
+Before switching the upsert key to `(person, period)`:
+1. `python manage.py reconcile_identity_migration` → exit 0 (identity migration complete).
+2. `python manage.py reconcile_attendance_identity` → exit 0 (all three models clean).
+3. Specifically: zero `missing_person_id`, zero `mismatched_person_id`, zero
+   duplicates.
+
+### No migrations
+
+This milestone creates **no migrations**. No models were modified. No
+service-layer code was changed. It is a pure additive module + command + tests.
+
+### Tests
+
+- `apps/attendance/tests.py` — 23 new tests across 5 classes:
+  - `FaceEmbeddingReconciliationTests` (5 tests) — clean, missing, mismatched,
+    skips unmigrated, duplicate active.
+  - `AttendanceEventReconciliationTests` (4 tests) — clean, missing,
+    mismatched, skips unmigrated.
+  - `AttendanceRecordReconciliationTests` (5 tests) — clean, missing,
+    mismatched, skips unmigrated, duplicate person_period.
+  - `AggregateReconciliationTests` (3 tests) — clean, has issues, report shape.
+  - `ReconciliationCommandTests` (6 tests) — clean exit 0, issues exit 1,
+    JSON output, only-issues, model filter, read-only verification.
+- Also fixed a pre-existing time-sensitivity bug in M2/M3 test base classes
+  (`cls.now = timezone.localtime()` → `cls.now.replace(hour=12, ...)`) that
+  caused `test_max_periods_reached_branch_dual_writes_person` to fail when
+  tests ran after 22:00 local time.
+
+### Verification
+
+- `python manage.py check` — clean.
+- `python manage.py makemigrations --check --dry-run` — no changes detected.
+- `apps.attendance.tests` — 124/124 tests OK (26 M1 + 36 M2 + 39 M3 + 23
+  reconciliation; no regression).
+- `apps.meals.tests_integrations_attendance` — 20/20 tests OK.
+- `python manage.py reconcile_attendance_identity --json` — exit 0, clean.
+- `python manage.py reconcile_attendance_identity --only-issues` — exit 0,
+  "No issues found. S9 gate passes."
+
+### Files modified
+
+- `apps/attendance/tests.py`
+- `docs/agent/CHANGELOG_AI.md`
+
+### Files added
+
+- `apps/attendance/identity_reconciliation.py`
+- `apps/attendance/management/commands/reconcile_attendance_identity.py`
+
+### Next milestone
+
+S9 — switch the `AttendanceRecord` upsert key from `(student, period)` to
+`(person, period)` when `person` is non-null. Must wait until
+`reconcile_attendance_identity` reports exit 0 on production.
+
